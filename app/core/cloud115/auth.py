@@ -26,8 +26,8 @@ class Cloud115Auth:
                         k, v = part.split("=", 1)
                         cookie_dict[k] = v
                         
-                # 尝试加载
-                self.client = P115Client(cookie_dict, check_for_relogin=True)
+                # 尝试加载，必须保持 app="alipaymini" 以防令牌平台不一致触发封控
+                self.client = P115Client(cookie_dict, app="alipaymini", check_for_relogin=True)
                 logger.info("115 Client initialized with existing cookie.")
             except Exception as e:
                 logger.error(f"Failed to initialize 115 Client: {e}")
@@ -50,12 +50,12 @@ class Cloud115Auth:
                     k, v = part.split("=", 1)
                     cookie_dict[k] = v
                     
-            self.client = P115Client(cookie_dict, check_for_relogin=True)
+            # 必须保持 app="alipaymini" 防止风控作废 cookie
+            self.client = P115Client(cookie_dict, app="alipaymini", check_for_relogin=True)
             # 保存回配置
-            config = get_config()
-            config.cloud115.cookie = cookie_str
-            # 这里后续可以更新到 config.yaml 或者数据库
-            logger.info("115 cookie updated successfully.")
+            from app.config import update_config
+            update_config({"cloud115": {"cookie": cookie_str}})
+            logger.info("115 cookie updated and persisted to config.yaml successfully.")
             return True
         except Exception as e:
             logger.error(f"Failed to update 115 cookie: {e}")
