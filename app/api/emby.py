@@ -4,7 +4,7 @@ from app.core.emby.manager import emby_manager
 from app.core.emby.proxy import emby_proxy
 from app.core.emby.client import emby_client
 
-router = APIRouter(prefix="/emby", tags=["Emby代理与管理"])
+router = APIRouter(prefix="/api/v1/emby", tags=["Emby代理与管理"])
 
 class EmbyInstanceReq(BaseModel):
     name: str
