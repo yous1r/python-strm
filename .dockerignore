@@ -1,0 +1,23 @@
+.git
+.gitignore
+.venv
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.log
+*.sqlite
+*.db
+
+# 排除本地数据和缓存，防止打包进镜像
+data/
+strm_output/
+.agents/
+.idea/
+.vscode/
+
+# 配置文件可通过宿主机挂载或容器内默认生成，也可以选择打包
+# config.yaml
