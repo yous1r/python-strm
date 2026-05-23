@@ -13,7 +13,7 @@ services:
       - ./data:/app/data
       # 持久化 STRM 生成产物 (映射给外层的 Emby/Jellyfin 读取)
       - ./strm_output:/app/strm_output
-      # 持久化配置文件 (可选，如果您希望在宿主机直接改 YAML 则取消注释)
-      # - ./config.yaml:/app/config.yaml
+      # 持久化配置文件 (前端修改的各种设置都在这里)
+      - ./config.yaml:/app/config.yaml
     environment:
       - TZ=Asia/Shanghai
