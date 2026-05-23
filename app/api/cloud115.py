@@ -58,6 +58,7 @@ async def list_dirs(dir_id: str = '0'):
     return res
 
 @router.get("/play/{pickcode}")
+@router.head("/play/{pickcode}")
 async def play_video(pickcode: str):
     """获取视频直链并302跳转 (这是STRM文件指向的地址)"""
     url = await client_115.get_download_url(pickcode)

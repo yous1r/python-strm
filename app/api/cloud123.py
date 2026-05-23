@@ -34,6 +34,7 @@ async def list_files(parent_id: str = '0', limit: int = 100, page: int = 1):
     return res
 
 @router.get("/play/{file_id}")
+@router.head("/play/{file_id}")
 async def play_video(file_id: str):
     """获取视频直链并302跳转"""
     url = await client_123.get_download_url(file_id)
