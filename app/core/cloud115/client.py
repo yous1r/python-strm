@@ -1,4 +1,5 @@
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
+import time
 from loguru import logger
 from app.core.cloud115.auth import auth_manager
 import asyncio
@@ -8,6 +9,8 @@ class Cloud115Client:
         self.auth = auth_manager
         # 限制并发
         self.semaphore = asyncio.Semaphore(5)
+        # 内存缓存：key为 'pickcode|user_agent'，value为 (到期时间戳, 直链url)
+        self._url_cache: Dict[str, Tuple[float, str]] = {}
 
     @property
     def client(self):
@@ -118,20 +121,44 @@ class Cloud115Client:
                 return False
 
     async def get_download_url(self, pickcode: str, user_agent: Optional[str] = None) -> str:
-        """获取直链 (可能包含RSA解密过程)"""
+        """获取直链 (可能包含RSA解密过程) 并提供2小时的内存缓存防封控"""
         if not self.client:
+            logger.error("get_download_url failed: client is not initialized")
             return ""
+            
+        # 检查缓存
+        cache_key = f"{pickcode}|{user_agent or ''}"
+        now = time.time()
+        if cache_key in self._url_cache:
+            expire_time, cached_url = self._url_cache[cache_key]
+            if now < expire_time:
+                logger.info(f"🎯 [CACHE HIT] Memory cache hit for pickcode: {pickcode} (UA: {user_agent})")
+                return cached_url
+            else:
+                logger.debug(f"🗑️ [CACHE EXPIRED] Memory cache expired for pickcode: {pickcode} (UA: {user_agent})")
+                # 缓存已过期，清理掉
+                del self._url_cache[cache_key]
+                
         async with self.semaphore:
             try:
+                logger.info(f"🚀 [API CALL] Requesting new download URL from 115 for pickcode: {pickcode} (UA: {user_agent})")
                 # 透传客户端真实的 UA，打破 115 的直链 UA 防盗链绑定机制
                 kwargs = {}
                 if user_agent:
                     kwargs['user_agent'] = user_agent
                 result = await asyncio.to_thread(self.client.download_url, pickcode, **kwargs)
-                # p115client 返回的是 P115URL 对象，强转为 string
-                return str(result)
+                url_str = str(result)
+                
+                # 请求成功，存入缓存，有效期设定为 2 小时 (7200秒)
+                if url_str:
+                    logger.success(f"✅ [SUCCESS] Generated new download URL for pickcode: {pickcode}")
+                    self._url_cache[cache_key] = (now + 7200, url_str)
+                else:
+                    logger.warning(f"⚠️ [WARNING] 115 API returned empty URL for pickcode: {pickcode}")
+                    
+                return url_str
             except Exception as e:
-                logger.error(f"Failed to get download url for {pickcode}: {e}")
+                logger.error(f"❌ [ERROR] Failed to get download url for pickcode {pickcode}: {e}")
                 return ""
 
 # 单例

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
+from loguru import logger
 from app.core.cloud115.client import client_115
 from app.core.cloud115.auth import auth_manager
 
@@ -61,8 +62,16 @@ async def list_dirs(dir_id: str = '0'):
 @router.head("/play/{pickcode}")
 async def play_video(pickcode: str, request: Request):
     """获取视频直链并302跳转 (这是STRM文件指向的地址)"""
-    ua = request.headers.get("user-agent")
+    method = request.method
+    ua = request.headers.get("user-agent", "Unknown")
+    client_ip = request.client.host if request.client else "Unknown IP"
+    
+    logger.info(f"▶️ [{method}] Playback requested for {pickcode} from {client_ip} (UA: {ua})")
+    
     url = await client_115.get_download_url(pickcode, user_agent=ua)
     if not url:
+        logger.error(f"❌ [{method}] Playback failed: No URL returned for {pickcode}")
         raise HTTPException(status_code=404, detail="Download URL not found")
+        
+    logger.debug(f"🔄 [{method}] Redirecting {pickcode} to: {url[:100]}...")
     return RedirectResponse(url=url, status_code=302)
