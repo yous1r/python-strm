@@ -24,7 +24,7 @@ strm:
   sync_metadata: true
   clean_invalid: true
 organize:
-  enabled: true
+  enabled: false
   categories:
   - 电影
   - 剧集
@@ -37,8 +37,8 @@ organize:
   - 日韩
   - 其他
   wash:
-    prefer_dolby: true
-    prefer_larger: true
+    prefer_dolby: false
+    prefer_larger: false
 monitor:
   telegram:
     enabled: false

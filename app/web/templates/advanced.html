@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+
+{% block subtitle %}全局高阶配置 (危险操作){% endblock %}
+
+{% block content %}
+<link href="https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/9.10.0/jsoneditor.min.css" rel="stylesheet" type="text/css">
+<style>
+.danger-banner {
+    background: rgba(255, 59, 48, 0.1);
+    border-left: 4px solid var(--error);
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+    border-radius: 0 0.5rem 0.5rem 0;
+}
+#jsoneditor {
+    height: 600px;
+    margin-bottom: 1.5rem;
+    border-radius: 0.5rem;
+    overflow: hidden;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+/* Adjust internal jsoneditor styles slightly for dark mode vibe */
+.jsoneditor { border: 1px solid rgba(255,255,255,0.1); }
+</style>
+
+<div class="glass-panel animate-fade-in delay-1" style="max-width: 1000px;">
+    <div class="danger-banner">
+        <h3 style="color: var(--error); margin-bottom: 0.5rem;"><i class="fa-solid fa-triangle-exclamation"></i> 危险操作区域</h3>
+        <p style="color: var(--text-secondary); margin: 0; line-height: 1.5;">
+            在此进行的修改将直接覆写底层 <code>config.yaml</code> 并实时热重载生效。<br>
+            随意删改结构可能导致核心服务崩溃、模块停摆或无法启动。除非您完全理解各项参数的定义，否则请勿轻易尝试。
+        </p>
+    </div>
+    
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h2 style="margin: 0;"><i class="fa-solid fa-file-code"></i> 核心配置编辑器</h2>
+        <div style="display: flex; gap: 0.5rem;">
+            <button class="btn btn-secondary" onclick="loadConfig()"><i class="fa-solid fa-rotate-right"></i> 重新读取</button>
+            <button id="saveBtn" class="btn btn-primary" style="background: var(--error); border-color: var(--error);" onclick="confirmSave()"><i class="fa-solid fa-fire"></i> 强制热加载</button>
+        </div>
+    </div>
+    
+    <div id="jsoneditor"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/9.10.0/jsoneditor.min.js"></script>
+<script>
+let editor;
+
+document.addEventListener('DOMContentLoaded', () => {
+    const container = document.getElementById('jsoneditor');
+    const options = {
+        mode: 'code',
+        modes: ['code', 'tree', 'view'], 
+        search: true,
+        indentation: 4
+    };
+    editor = new JSONEditor(container, options);
+    loadConfig();
+});
+
+async function loadConfig() {
+    try {
+        const res = await fetch('/api/v1/system/config');
+        if (res.ok) {
+            const config = await res.json();
+            editor.set(config);
+        } else {
+            alert("读取系统配置失败！");
+        }
+    } catch (e) {
+        alert("网络错误，无法连接配置服务。");
+    }
+}
+
+async function confirmSave() {
+    if(!confirm("⚠️ 警告：越权修改系统底层结构。\n\n您确定要暴力覆盖全局配置并立即生效吗？\n如果填写错误的数据类型，系统可能抛出严重异常。")) {
+        return;
+    }
+    
+    const btn = document.getElementById('saveBtn');
+    const originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 正在注入底层...';
+    
+    try {
+        const updatedJson = editor.get();
+        const res = await fetch('/api/v1/system/config', {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(updatedJson)
+        });
+        
+        if (res.ok) {
+            btn.innerHTML = '<i class="fa-solid fa-check-double"></i> 热重载成功！';
+            btn.style.background = 'var(--success)';
+            btn.style.borderColor = 'var(--success)';
+            setTimeout(() => {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+                btn.style.background = 'var(--error)';
+                btn.style.borderColor = 'var(--error)';
+            }, 3000);
+        } else {
+            const err = await res.json();
+            alert("底层拒绝应用该修改，校验未通过:\n" + JSON.stringify(err, null, 2));
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        }
+    } catch(e) {
+        alert("数据格式语法错误，或者网络中断！");
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+    }
+}
+</script>
+{% endblock %}

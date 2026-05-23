@@ -23,6 +23,12 @@ class EmbyManager:
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
 
+    async def delete_instance(self, instance_id: str) -> bool:
+        async with get_db_conn() as db:
+            await db.execute('DELETE FROM emby_instances WHERE id = ?', (instance_id,))
+            await db.commit()
+            return True
+
     async def get_instance(self, instance_id: str) -> dict:
         async with get_db_conn() as db:
             async with db.execute('SELECT * FROM emby_instances WHERE id = ?', (instance_id,)) as cursor:

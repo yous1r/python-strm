@@ -3,13 +3,50 @@
 {% block subtitle %}浏览与管理您的 Emby 媒体库{% endblock %}
 
 {% block content %}
-<div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 2rem;">
-    <h2 style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
-        <i class="fa-solid fa-server" style="color: var(--accent-primary);"></i> 服务器选择
-    </h2>
-    <select id="instanceSelect" class="form-control" style="width: auto; min-width: 250px;" onchange="loadSeries()">
-        <option value="">正在加载服务器列表...</option>
-    </select>
+<div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 2rem; justify-content: space-between;">
+    <div style="display: flex; align-items: center; gap: 1rem;">
+        <h2 style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
+            <i class="fa-solid fa-server" style="color: var(--accent-primary);"></i> 服务器选择
+        </h2>
+        <select id="instanceSelect" class="form-control" style="width: auto; min-width: 250px;" onchange="loadSeries()">
+            <option value="">正在加载服务器列表...</option>
+        </select>
+        <button id="deleteInstanceBtn" class="btn btn-secondary" style="color: var(--error); border-color: var(--error); display: none;" onclick="deleteCurrentInstance()" title="删除当前选中的服务器">
+            <i class="fa-solid fa-trash"></i>
+        </button>
+    </div>
+    <button class="btn btn-primary" onclick="openAddInstanceModal()">
+        <i class="fa-solid fa-plus"></i> 添加新服务器
+    </button>
+</div>
+
+<!-- 添加服务器 Modal -->
+<div id="addInstanceModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(8px); z-index: 1000; align-items: center; justify-content: center;">
+    <div class="glass-panel animate-slide-up" style="width: 90%; max-width: 500px; padding: 2rem; display: flex; flex-direction: column;">
+        <h3 style="margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 1rem;">
+            <span><i class="fa-solid fa-server"></i> 绑定 Emby 实例</span>
+            <i class="fa-solid fa-xmark" style="cursor: pointer; color: var(--text-secondary);" onclick="closeAddInstanceModal()"></i>
+        </h3>
+        
+        <form id="addInstanceForm" onsubmit="submitAddInstance(event)">
+            <div class="form-group">
+                <label class="form-label">标识名称</label>
+                <input type="text" id="add_name" class="form-control" placeholder="例如: 家庭主服" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">服务器地址 (URL)</label>
+                <input type="url" id="add_url" class="form-control" placeholder="http://192.168.1.10:8096" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">API Key</label>
+                <input type="text" id="add_apikey" class="form-control" placeholder="输入 Emby API Key" required>
+            </div>
+            <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 1.5rem;">
+                <button type="button" class="btn btn-secondary" onclick="closeAddInstanceModal()">取消</button>
+                <button type="submit" id="addSubmitBtn" class="btn btn-primary"><i class="fa-solid fa-check"></i> 绑定</button>
+            </div>
+        </form>
+    </div>
 </div>
 
 <!-- 剧集海报墙 -->
@@ -200,17 +237,22 @@ let currentInstanceId = null;
 
 async function loadInstances() {
     const select = document.getElementById('instanceSelect');
+    const deleteBtn = document.getElementById('deleteInstanceBtn');
     try {
         const res = await fetch('/api/v1/emby/instances');
         const data = await res.json();
         
         select.innerHTML = '';
         if (data.length === 0) {
-            select.innerHTML = '<option value="">请先在首页添加 Emby 实例</option>';
+            select.innerHTML = '<option value="">(暂无服务器，请先添加)</option>';
             select.disabled = true;
+            deleteBtn.style.display = 'none';
+            document.getElementById('mediaGrid').innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-secondary); padding: 3rem;"><i class="fa-solid fa-server fa-3x" style="margin-bottom: 1rem; opacity: 0.5"></i><br>请点击右上角添加您的第一个 Emby 服务器</div>';
             return;
         }
         
+        select.disabled = false;
+        deleteBtn.style.display = 'block';
         data.forEach(inst => {
             const opt = document.createElement('option');
             opt.value = inst.id;
@@ -222,6 +264,76 @@ async function loadInstances() {
         loadSeries();
     } catch (e) {
         select.innerHTML = '<option value="">加载失败</option>';
+        deleteBtn.style.display = 'none';
+    }
+}
+
+// ================= Modal Actions =================
+function openAddInstanceModal() {
+    document.getElementById('addInstanceModal').style.display = 'flex';
+    document.getElementById('addInstanceForm').reset();
+}
+
+function closeAddInstanceModal() {
+    document.getElementById('addInstanceModal').style.display = 'none';
+}
+
+async function submitAddInstance(e) {
+    e.preventDefault();
+    const btn = document.getElementById('addSubmitBtn');
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 绑定中...';
+    
+    const payload = {
+        name: document.getElementById('add_name').value.trim(),
+        url: document.getElementById('add_url').value.trim(),
+        api_key: document.getElementById('add_apikey').value.trim()
+    };
+    
+    try {
+        const res = await fetch('/api/v1/emby/instances', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+            closeAddInstanceModal();
+            await loadInstances();
+        } else {
+            const data = await res.json();
+            alert("绑定失败: " + data.detail);
+        }
+    } catch(e) {
+        alert("网络错误");
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = original;
+    }
+}
+
+async function deleteCurrentInstance() {
+    if(!currentInstanceId) return;
+    if(!confirm("确定要解绑并删除当前选中的 Emby 服务器吗？")) return;
+    
+    const deleteBtn = document.getElementById('deleteInstanceBtn');
+    deleteBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+    deleteBtn.disabled = true;
+    
+    try {
+        const res = await fetch(`/api/v1/emby/instances/${currentInstanceId}`, {
+            method: 'DELETE'
+        });
+        if (res.ok) {
+            await loadInstances();
+        } else {
+            alert("删除失败");
+        }
+    } catch(e) {
+        alert("网络错误");
+    } finally {
+        deleteBtn.innerHTML = '<i class="fa-solid fa-trash"></i>';
+        deleteBtn.disabled = false;
     }
 }
 

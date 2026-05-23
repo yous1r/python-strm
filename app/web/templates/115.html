@@ -3,12 +3,27 @@
 {% block subtitle %}管理 115 网盘账号与存储配置{% endblock %}
 
 {% block content %}
-<div class="glass-panel animate-fade-in delay-1" style="max-width: 600px;">
-    <h2 style="margin-bottom: 1.5rem;">Cookie 配置</h2>
+<div class="glass-panel animate-fade-in delay-1" style="max-width: 800px;">
+    <h2 style="margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: space-between;">
+        <span><i class="fa-solid fa-cloud"></i> 115 网盘配置</span>
+        <label class="switch">
+            <input type="checkbox" id="c115_enabled">
+            <span class="slider round"></span>
+        </label>
+    </h2>
     <form id="cookieForm">
+        <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+            <div class="form-group" style="flex: 1;">
+                <label class="form-label">STRM 生成模式</label>
+                <select id="c115_strm_type" class="form-control">
+                    <option value="pickcode">Pickcode 代理中转 (推荐)</option>
+                    <option value="direct">Direct 官方直链 (防封禁)</option>
+                </select>
+            </div>
+        </div>
         <div class="form-group">
             <label class="form-label">Cookie (115.com)</label>
-            <textarea id="cookieInput" class="form-control" rows="5" placeholder="UID=...; CID=...; SEID=...">{{ config.cloud115.cookie }}</textarea>
+            <textarea id="cookieInput" class="form-control" rows="5" placeholder="UID=...; CID=...; SEID=..."></textarea>
         </div>
         <button type="button" class="btn btn-primary" onclick="saveCookie()">
             <i class="fa-solid fa-save"></i> 保存配置
@@ -35,24 +50,93 @@
 {% endblock %}
 
 {% block scripts %}
+<style>
+/* iOS Style Toggle Switch */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 50px;
+  height: 24px;
+}
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider {
+  position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+  background-color: rgba(255,255,255,0.1); transition: .4s;
+}
+.slider:before {
+  position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px;
+  background-color: var(--text-primary); transition: .4s;
+}
+input:checked + .slider { background-color: var(--success); }
+input:focus + .slider { box-shadow: 0 0 1px var(--success); }
+input:checked + .slider:before { transform: translateX(26px); }
+.slider.round { border-radius: 24px; }
+.slider.round:before { border-radius: 50%; }
+</style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script>
-async function saveCookie() {
-    const cookie = document.getElementById('cookieInput').value;
+// 页面加载时自动获取配置
+document.addEventListener('DOMContentLoaded', async () => {
     try {
-        const res = await fetch('/api/v1/115/auth', {
+        const res = await fetch('/api/v1/system/config');
+        if (res.ok) {
+            const config = await res.json();
+            document.getElementById('c115_enabled').checked = config.cloud115.enabled;
+            document.getElementById('c115_strm_type').value = config.cloud115.strm_type;
+            document.getElementById('cookieInput').value = config.cloud115.cookie;
+        }
+    } catch (e) {
+        console.error('Failed to load config', e);
+    }
+});
+
+async function saveCookie() {
+    const btn = event.currentTarget;
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 保存中...';
+    
+    const payload = {
+        cloud115: {
+            enabled: document.getElementById('c115_enabled').checked,
+            strm_type: document.getElementById('c115_strm_type').value,
+            cookie: document.getElementById('cookieInput').value
+        }
+    };
+    
+    try {
+        // 使用统一的 PATCH 接口热更新
+        const res = await fetch('/api/v1/system/config', {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        
+        // 尝试向原有 auth 接口同步（如果需要的话，也可以不用，直接依赖系统配置更新）
+        await fetch('/api/v1/115/auth', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({cookie})
-        });
-        if(res.ok) {
-            alert('Cookie 保存成功');
+            body: JSON.stringify({cookie: payload.cloud115.cookie})
+        }).catch(() => {});
+        
+        if (res.ok) {
+            btn.innerHTML = '<i class="fa-solid fa-check"></i> 保存成功！已热加载';
+            btn.style.background = 'var(--success)';
+            setTimeout(() => {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+                btn.style.background = '';
+            }, 2000);
         } else {
             const data = await res.json();
             alert('失败: ' + data.detail);
+            btn.disabled = false;
+            btn.innerHTML = originalText;
         }
     } catch(e) {
         alert('网络错误');
+        btn.disabled = false;
+        btn.innerHTML = originalText;
     }
 }
 

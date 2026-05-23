@@ -53,3 +53,11 @@ async def page_organize(request: Request):
     return templates.TemplateResponse(request, "organize.html", {
         "title": "刮削与整理"
     })
+
+@router.get("/advanced")
+async def page_advanced(request: Request):
+    config = get_config()
+    return templates.TemplateResponse(request, "advanced.html", {
+        "config": config,
+        "title": "全局高阶配置"
+    })

@@ -21,6 +21,14 @@ async def list_instances():
     """列表Emby实例"""
     return await emby_manager.get_instances()
 
+@router.delete("/instances/{instance_id}")
+async def delete_instance(instance_id: str):
+    """删除Emby实例"""
+    success = await emby_manager.delete_instance(instance_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    return {"status": "success"}
+
 @router.get("/instances/{instance_id}/series")
 async def get_instance_series(instance_id: str):
     """获取实例下的剧集/电影库"""
