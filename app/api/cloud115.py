@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from app.core.cloud115.client import client_115
@@ -59,9 +59,10 @@ async def list_dirs(dir_id: str = '0'):
 
 @router.get("/play/{pickcode}")
 @router.head("/play/{pickcode}")
-async def play_video(pickcode: str):
+async def play_video(pickcode: str, request: Request):
     """获取视频直链并302跳转 (这是STRM文件指向的地址)"""
-    url = await client_115.get_download_url(pickcode)
+    ua = request.headers.get("user-agent")
+    url = await client_115.get_download_url(pickcode, user_agent=ua)
     if not url:
         raise HTTPException(status_code=404, detail="Download URL not found")
     return RedirectResponse(url=url, status_code=302)

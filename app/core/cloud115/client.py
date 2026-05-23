@@ -117,15 +117,19 @@ class Cloud115Client:
                 logger.error(f"Failed to delete files {file_ids}: {e}")
                 return False
 
-    async def get_download_url(self, pickcode: str) -> str:
+    async def get_download_url(self, pickcode: str, user_agent: Optional[str] = None) -> str:
         """获取直链 (可能包含RSA解密过程)"""
         if not self.client:
             return ""
         async with self.semaphore:
             try:
-                # 使用 P115Client 自带的方法获取直链
-                result = await asyncio.to_thread(self.client.download_url, pickcode)
-                return result
+                # 透传客户端真实的 UA，打破 115 的直链 UA 防盗链绑定机制
+                kwargs = {}
+                if user_agent:
+                    kwargs['user_agent'] = user_agent
+                result = await asyncio.to_thread(self.client.download_url, pickcode, **kwargs)
+                # p115client 返回的是 P115URL 对象，强转为 string
+                return str(result)
             except Exception as e:
                 logger.error(f"Failed to get download url for {pickcode}: {e}")
                 return ""
