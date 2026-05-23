@@ -12,15 +12,21 @@ class ServerConfig(BaseModel):
 class DatabaseConfig(BaseModel):
     path: str = "data/python_strm.db"
 
+class SyncDirConfig(BaseModel):
+    dir_id: str
+    name: str
+
 class Cloud115Config(BaseModel):
     enabled: bool = False
     cookie: str = ""
     strm_type: str = "pickcode"
+    sync_dirs: List[SyncDirConfig] = []
 
 class Cloud123Config(BaseModel):
     enabled: bool = False
     access_token: str = ""
     strm_type: str = "fileid"
+    sync_dirs: List[SyncDirConfig] = []
 
 class TmdbConfig(BaseModel):
     api_key: str = ""

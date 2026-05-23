@@ -24,24 +24,31 @@ class SyncEngine:
             # 1. 扫描 115 网盘
             if config.cloud115.enabled and config.cloud115.cookie:
                 logger.info("Scanning 115 cloud drive...")
-                # 默认从根目录 '0' 开始扫描
-                generated_115 = await generator_115.batch_generate(
-                    dir_id='0',
-                    output_dir=config.strm.output_dir,
-                    base_url=config.strm.base_url,
-                    recursive=True
-                )
-                count = len(generated_115)
-                total_generated += count
-                details.append(f"115: generated {count} files")
+                if not config.cloud115.sync_dirs:
+                    logger.warning("No sync directories configured for 115. Skipping.")
+                
+                for sync_dir in config.cloud115.sync_dirs:
+                    logger.info(f"Scanning 115 directory: {sync_dir.name} ({sync_dir.dir_id})")
+                    # 将该目录名作为隔离输出的子文件夹
+                    import os
+                    target_out = os.path.join(config.strm.output_dir, sync_dir.name)
+                    
+                    generated_115 = await generator_115.batch_generate(
+                        dir_id=sync_dir.dir_id,
+                        output_dir=target_out,
+                        base_url=config.strm.base_url,
+                        recursive=True,
+                        root_output_dir=config.strm.output_dir
+                    )
+                    count = len(generated_115)
+                    total_generated += count
+                    details.append(f"115 [{sync_dir.name}]: {count} files")
                 
             # 2. 扫描 123 网盘 (预留扩展)
             if config.cloud123.enabled and config.cloud123.access_token:
                 logger.info("Scanning 123 cloud drive... (Placeholder)")
-                # generated_123 = await generator_123.batch_generate(0, config.strm.output_dir, config.strm.base_url)
-                # count = len(generated_123)
-                # total_generated += count
-                # details.append(f"123: generated {count} files")
+                if config.cloud123.sync_dirs:
+                    details.append("123: Placeholder implementation")
 
             # 3. 唤醒 Emby 刷新
             instances = await emby_manager.get_instances()

@@ -113,6 +113,20 @@
     </div>
     </div>
 </div>
+
+<!-- 自动化监控目录面板 -->
+<div class="glass-panel animate-fade-in delay-3" style="margin-top: 1.5rem; max-width: 1200px;">
+    <h2 style="margin-bottom: 1.5rem;"><i class="fa-solid fa-list-check"></i> 115网盘 自动化监控目录配置</h2>
+    <p style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.9rem;">
+        添加到这里的目录将会被后台自动轮询任务 `sync_engine` 监控。发现新视频将自动拉取元数据生成 NFO 及 STRM，并分发至隔离的子文件夹中。
+    </p>
+    <ul id="syncDirsList" style="list-style: none; padding: 0; margin-bottom: 1rem;">
+        <!-- 动态渲染 -->
+    </ul>
+    <button type="button" class="btn btn-secondary" onclick="openFolderPickerForSync()">
+        <i class="fa-solid fa-plus"></i> 添加监控目录
+    </button>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -165,6 +179,8 @@ let currentFolderId = '0';
 let currentParentId = '0';
 let selectedFolderId = null;
 let selectedFolderName = '';
+let currentSyncDirs = [];
+let pickerTarget = 'batch'; // 'batch' 或 'sync'
 
 // 加载全局配置
 document.addEventListener('DOMContentLoaded', async () => {
@@ -176,11 +192,64 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('strm_base_url').value = config.strm.base_url;
             document.getElementById('strm_sync_metadata').checked = config.strm.sync_metadata;
             document.getElementById('strm_clean_invalid').checked = config.strm.clean_invalid;
+            
+            if (config.cloud115 && config.cloud115.sync_dirs) {
+                currentSyncDirs = config.cloud115.sync_dirs;
+                renderSyncDirs();
+            }
         }
     } catch (e) {
         console.error('Failed to load config', e);
     }
 });
+
+function renderSyncDirs() {
+    const list = document.getElementById('syncDirsList');
+    list.innerHTML = '';
+    if (currentSyncDirs.length === 0) {
+        list.innerHTML = '<li style="color: var(--text-secondary); margin-bottom: 0.5rem;"><i class="fa-solid fa-circle-info"></i> 暂无配置监控目录，后台任务将跳过 115 网盘。</li>';
+        return;
+    }
+    currentSyncDirs.forEach((dir, idx) => {
+        const li = document.createElement('li');
+        li.style.cssText = 'display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2); padding: 0.75rem 1rem; border-radius: 0.5rem; margin-bottom: 0.5rem;';
+        li.innerHTML = `
+            <div>
+                <strong style="color: var(--accent-primary);"><i class="fa-solid fa-folder"></i> ${dir.name}</strong>
+                <span style="color: var(--text-secondary); font-size: 0.85rem; margin-left: 0.5rem;">(CID: ${dir.dir_id})</span>
+            </div>
+            <button class="btn btn-secondary" style="color: var(--error); padding: 0.25rem 0.75rem; font-size: 0.85rem;" onclick="removeSyncDir(${idx})">
+                <i class="fa-solid fa-trash"></i> 移除
+            </button>
+        `;
+        list.appendChild(li);
+    });
+}
+
+function removeSyncDir(idx) {
+    if(confirm('确定移除该监控目录吗？移除后后台将不再扫描该目录。')) {
+        currentSyncDirs.splice(idx, 1);
+        saveSyncDirs();
+    }
+}
+
+async function saveSyncDirs() {
+    try {
+        const res = await fetch('/api/v1/system/config', {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ cloud115: { sync_dirs: currentSyncDirs } })
+        });
+        if(res.ok) {
+            renderSyncDirs();
+        } else {
+            const data = await res.json();
+            alert('保存监控目录失败: ' + data.detail);
+        }
+    } catch(e) {
+        alert('网络错误');
+    }
+}
 
 async function saveStrmSettings() {
     const btn = document.getElementById('saveStrmBtn');
@@ -228,6 +297,7 @@ async function saveStrmSettings() {
 }
 
 async function openFolderPicker() {
+    pickerTarget = 'batch';
     const cloudType = document.getElementById('cloudType').value;
     if (cloudType !== '115') {
         alert('该功能目前仅支持 115网盘');
@@ -237,8 +307,17 @@ async function openFolderPicker() {
     document.getElementById('folderPickerModal').style.display = 'flex';
     const inputVal = document.getElementById('dirId').value.trim();
     selectedFolderId = null;
+    selectedFolderName = '';
     
     await loadFolder(inputVal || '0');
+}
+
+async function openFolderPickerForSync() {
+    pickerTarget = 'sync';
+    document.getElementById('folderPickerModal').style.display = 'flex';
+    selectedFolderId = null;
+    selectedFolderName = '';
+    await loadFolder('0');
 }
 
 function closeFolderPicker() {
@@ -306,11 +385,29 @@ async function loadFolder(dirId) {
 }
 
 function confirmFolderSelection() {
-    if (selectedFolderId) {
-        document.getElementById('dirId').value = selectedFolderId;
+    if(pickerTarget === 'batch') {
+        if (selectedFolderId) {
+            document.getElementById('dirId').value = selectedFolderId;
+        } else {
+            document.getElementById('dirId').value = currentFolderId;
+        }
         closeFolderPicker();
-    } else {
-        document.getElementById('dirId').value = currentFolderId;
+    } else if(pickerTarget === 'sync') {
+        const dId = selectedFolderId || currentFolderId;
+        const dName = selectedFolderName || (dId === '0' ? '根目录' : '未命名目录');
+        
+        if (dId === '0') {
+            alert('根目录过于庞大，请选择具体的剧集或电影文件夹。');
+            return;
+        }
+        
+        if(currentSyncDirs.find(d => d.dir_id === dId)) {
+            alert('该目录已存在监控列表中！');
+            return;
+        }
+        
+        currentSyncDirs.push({dir_id: dId, name: dName});
+        saveSyncDirs();
         closeFolderPicker();
     }
 }
