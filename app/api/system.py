@@ -45,3 +45,28 @@ async def test_notify(channel: str):
         return {"status": "success", "message": "测试请求已触发"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/sync/history")
+async def fetch_sync_history():
+    """获取最近的 50 条自动化同步流水"""
+    from app.database import get_db_conn
+    try:
+        async with get_db_conn() as db:
+            async with db.execute(
+                "SELECT id, task_name, status, duration, processed_count, error_details, created_at FROM sync_history ORDER BY id DESC LIMIT 50"
+            ) as cursor:
+                rows = await cursor.fetchall()
+                results = []
+                for row in rows:
+                    results.append({
+                        "id": row["id"],
+                        "task_name": row["task_name"],
+                        "status": row["status"],
+                        "duration": round(row["duration"], 2) if row["duration"] else 0,
+                        "processed_count": row["processed_count"],
+                        "error_details": row["error_details"],
+                        "created_at": row["created_at"]
+                    })
+                return {"status": "success", "data": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

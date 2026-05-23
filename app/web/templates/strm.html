@@ -123,9 +123,45 @@
     <ul id="syncDirsList" style="list-style: none; padding: 0; margin-bottom: 1rem;">
         <!-- 动态渲染 -->
     </ul>
-    <button type="button" class="btn btn-secondary" onclick="openFolderPickerForSync()">
-        <i class="fa-solid fa-plus"></i> 添加监控目录
-    </button>
+    <div style="display: flex; gap: 0.5rem;">
+        <button type="button" class="btn btn-secondary" onclick="openFolderPickerForSync()">
+            <i class="fa-solid fa-plus"></i> 添加监控目录
+        </button>
+        <button type="button" class="btn btn-secondary" onclick="openSyncHistory()" style="background: rgba(255,255,255,0.05); border-color: transparent;">
+            <i class="fa-solid fa-clock-rotate-left"></i> 查看同步历史
+        </button>
+    </div>
+</div>
+
+<!-- 自动化同步历史记录 Modal -->
+<div id="syncHistoryModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 1000; align-items: center; justify-content: center;">
+    <div class="glass-panel animate-fade-in" style="width: 90%; max-width: 800px; padding: 1.5rem; display: flex; flex-direction: column; max-height: 85vh;">
+        <h3 style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center;">
+            <span><i class="fa-solid fa-clock-rotate-left"></i> 后台自动同步记录 (最近 50 次)</span>
+            <i class="fa-solid fa-xmark" style="cursor: pointer; color: var(--text-secondary);" onclick="closeSyncHistory()"></i>
+        </h3>
+        
+        <div style="flex: 1; overflow-y: auto; background: rgba(0,0,0,0.2); border-radius: 0.5rem; border: 1px solid var(--border);">
+            <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.85rem;">
+                <thead style="background: rgba(255,255,255,0.05); position: sticky; top: 0;">
+                    <tr>
+                        <th style="padding: 0.75rem 1rem; border-bottom: 1px solid var(--border);">执行时间</th>
+                        <th style="padding: 0.75rem 1rem; border-bottom: 1px solid var(--border);">状态</th>
+                        <th style="padding: 0.75rem 1rem; border-bottom: 1px solid var(--border);">新增文件</th>
+                        <th style="padding: 0.75rem 1rem; border-bottom: 1px solid var(--border);">耗时</th>
+                        <th style="padding: 0.75rem 1rem; border-bottom: 1px solid var(--border);">详情</th>
+                    </tr>
+                </thead>
+                <tbody id="syncHistoryTbody">
+                    <!-- 动态渲染 -->
+                </tbody>
+            </table>
+        </div>
+        
+        <div style="margin-top: 1rem; display: flex; justify-content: flex-end;">
+            <button class="btn btn-primary" onclick="closeSyncHistory()">关闭面板</button>
+        </div>
+    </div>
 </div>
 {% endblock %}
 
@@ -470,6 +506,51 @@ async function generateSTRM() {
         btn.disabled = false;
         btn.innerHTML = '<i class="fa-solid fa-play"></i> 开始生成';
     }
+}
+
+async function openSyncHistory() {
+    document.getElementById('syncHistoryModal').style.display = 'flex';
+    const tbody = document.getElementById('syncHistoryTbody');
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem;"><i class="fa-solid fa-spinner fa-spin"></i> 正在拉取日志...</td></tr>';
+    
+    try {
+        const res = await fetch('/api/v1/system/sync/history');
+        if(res.ok) {
+            const result = await res.json();
+            const data = result.data || [];
+            if(data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem; color: var(--text-secondary);">暂无任何同步历史记录。</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = '';
+            data.forEach(row => {
+                const tr = document.createElement('tr');
+                tr.style.borderBottom = '1px solid rgba(255,255,255,0.05)';
+                const isFail = row.status === 'failed';
+                const statusHtml = isFail 
+                    ? '<span style="color: var(--error);"><i class="fa-solid fa-circle-xmark"></i> 失败</span>'
+                    : '<span style="color: var(--success);"><i class="fa-solid fa-circle-check"></i> 成功</span>';
+                    
+                tr.innerHTML = `
+                    <td style="padding: 0.75rem 1rem; color: var(--text-secondary); white-space: nowrap;">${row.created_at}</td>
+                    <td style="padding: 0.75rem 1rem;">${statusHtml}</td>
+                    <td style="padding: 0.75rem 1rem;">${row.processed_count}</td>
+                    <td style="padding: 0.75rem 1rem;">${row.duration}s</td>
+                    <td style="padding: 0.75rem 1rem; max-width: 300px; word-break: break-all; color: ${isFail ? 'var(--error)' : 'var(--text-secondary)'};">${row.error_details || '-'}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        } else {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem; color: var(--error);">获取日志失败</td></tr>';
+        }
+    } catch(e) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem; color: var(--error);">网络请求异常</td></tr>';
+    }
+}
+
+function closeSyncHistory() {
+    document.getElementById('syncHistoryModal').style.display = 'none';
 }
 </script>
 {% endblock %}

@@ -9,6 +9,7 @@ from app.core.cloud115.strm import generator_115
 # from app.core.cloud123.strm import generator_123 # 如果 123 的生成器尚未实现，这里预留
 from app.core.emby.manager import emby_manager
 from app.core.emby.client import emby_client
+from app.core.notify.manager import notify_manager
 
 class SyncEngine:
     async def run_sync_task(self):
@@ -57,13 +58,26 @@ class SyncEngine:
                 await emby_client.refresh_library(inst['id'])
 
             duration = time.time() - start_time
-            await self._record_history("AutoSync", "success", duration, total_generated, "; ".join(details))
+            detail_str = "; ".join(details)
+            await self._record_history("AutoSync", "success", duration, total_generated, detail_str)
             logger.info(f"Sync pipeline completed in {duration:.2f}s, generated {total_generated} STRM files.")
+            
+            # 推送成功通知
+            await notify_manager.notify(
+                title="[Python-STRM] 自动同步报告",
+                content=f"状态: 执行成功 ✅\n耗时: {duration:.2f}s\n新增文件: {total_generated} 个\n详情: {detail_str if detail_str else '无变动'}"
+            )
 
         except Exception as e:
             duration = time.time() - start_time
             logger.error(f"Sync pipeline failed: {e}")
             await self._record_history("AutoSync", "failed", duration, total_generated, str(e))
+            
+            # 推送失败通知
+            await notify_manager.notify(
+                title="[Python-STRM] 自动同步报告",
+                content=f"状态: 执行失败 ❌\n耗时: {duration:.2f}s\n报错详情: {str(e)}"
+            )
 
     async def _record_history(self, task_name: str, status: str, duration: float, count: int, error_details: str):
         """将同步结果存入数据库，供前端历史追踪使用"""
