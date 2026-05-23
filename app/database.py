@@ -9,11 +9,6 @@ async def init_db():
     config = get_config()
     db_path = config.database.path
     
-    # 如果已有数据（数据库文件存在且有内容），则不再进行初始化
-    if os.path.exists(db_path) and os.path.getsize(db_path) > 0:
-        logger.info(f"Database {db_path} already exists, skipping initialization.")
-        return
-    
     # 确保目录存在
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     
