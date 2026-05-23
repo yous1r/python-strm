@@ -1,0 +1,73 @@
+server:
+  host: 0.0.0.0
+  port: 8095
+  debug: false
+database:
+  path: data/python_strm.db
+cloud115:
+  enabled: false
+  cookie: ''
+  strm_type: pickcode
+cloud123:
+  enabled: false
+  access_token: ''
+  strm_type: fileid
+tmdb:
+  api_key: ''
+  language: zh-CN
+  proxy: ''
+emby:
+  instances: []
+strm:
+  output_dir: strm_output
+  base_url: http://localhost:8095
+  sync_metadata: true
+  clean_invalid: true
+organize:
+  enabled: true
+  categories:
+  - 电影
+  - 剧集
+  - 动漫
+  - 纪录片
+  - 综艺
+  regions:
+  - 国产
+  - 欧美
+  - 日韩
+  - 其他
+  wash:
+    prefer_dolby: true
+    prefer_larger: true
+monitor:
+  telegram:
+    enabled: false
+    api_id: ''
+    api_hash: ''
+    channels: []
+  poll_interval: 60
+notify:
+  wecom:
+    enabled: false
+    corp_id: ''
+    corp_secret: ''
+    agent_id: ''
+  telegram:
+    enabled: false
+    bot_token: ''
+    chat_id: ''
+  bark:
+    enabled: true
+    server: http://10.0.0.50:28080
+    device_key: 7w8MZLv7629e2y97CeiVRS
+    encryption_key: 05nNpJ9CNtLVdIMJDwcVbG1X0DdYhLXy
+    encryption_iv: b5rxXhjheWxD
+    encryption_algorithm: AES-256-GCM
+proxy:
+  http: ''
+  https: ''
+log:
+  level: DEBUG
+  file: data/logs/app.log
+  rotation: 10 MB
+  retention: 7 days

@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }} - Python-STRM</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <aside class="sidebar">
+        <div class="brand">
+            <i class="fa-solid fa-play"></i>
+            STRM Hub
+        </div>
+        <ul class="nav-links">
+            <li>
+                <a href="/" class="nav-link {% if request.url.path == '/' %}active{% endif %}">
+                    <i class="fa-solid fa-chart-pie"></i> 仪表盘
+                </a>
+            </li>
+            <li>
+                <a href="/115" class="nav-link {% if request.url.path.startswith('/115') %}active{% endif %}">
+                    <i class="fa-solid fa-cloud"></i> 115网盘
+                </a>
+            </li>
+            <li>
+                <a href="/123" class="nav-link {% if request.url.path.startswith('/123') %}active{% endif %}">
+                    <i class="fa-solid fa-cloud-arrow-down"></i> 123网盘
+                </a>
+            </li>
+            <li>
+                <a href="/strm" class="nav-link {% if request.url.path.startswith('/strm') %}active{% endif %}">
+                    <i class="fa-solid fa-file-video"></i> STRM 管理
+                </a>
+            </li>
+            <li>
+                <a href="/emby" class="nav-link {% if request.url.path.startswith('/emby') %}active{% endif %}">
+                    <i class="fa-solid fa-tv"></i> Emby 媒体库
+                </a>
+            </li>
+            <li style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+                <span style="padding: 0 1.5rem; font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.1em;">核心设置</span>
+            </li>
+            <li>
+                <a href="/notify" class="nav-link {% if request.url.path.startswith('/notify') %}active{% endif %}">
+                    <i class="fa-solid fa-bell"></i> 消息推送
+                </a>
+            </li>
+            <li>
+                <a href="/organize" class="nav-link {% if request.url.path.startswith('/organize') %}active{% endif %}">
+                    <i class="fa-solid fa-film"></i> 刮削与整理
+                </a>
+            </li>
+        </ul>
+    </aside>
+
+    <main class="main-content">
+        <header class="page-header animate-fade-in">
+            <h1 class="page-title">{{ title }}</h1>
+            <p class="page-subtitle">{% block subtitle %}{% endblock %}</p>
+        </header>
+
+        <div class="content-wrapper">
+            {% block content %}{% endblock %}
+        </div>
+    </main>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

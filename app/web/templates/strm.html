@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+
+{% block subtitle %}批量生成与管理 STRM 映射文件{% endblock %}
+
+{% block content %}
+<div class="glass-panel animate-fade-in delay-1" style="max-width: 600px;">
+    <h2 style="margin-bottom: 1.5rem;">批量生成</h2>
+    <form id="strmForm">
+        <div class="form-group">
+            <label class="form-label">网盘类型</label>
+            <select id="cloudType" class="form-control">
+                <option value="115">115 网盘</option>
+                <option value="123">123 网盘</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label class="form-label">目标目录 CID (115网盘中的文件夹ID)</label>
+            <div style="display: flex; gap: 0.5rem;">
+                <input type="text" id="dirId" class="form-control" placeholder="例如: 1234567890">
+                <button type="button" class="btn btn-secondary" onclick="openFolderPicker()" style="white-space: nowrap; padding: 0.5rem 1rem;">
+                    <i class="fa-solid fa-folder-open"></i> 选择目录
+                </button>
+            </div>
+        </div>
+        <div class="form-group">
+            <label style="display: flex; align-items: center; gap: 0.5rem; color: var(--text-primary); cursor: pointer;">
+                <input type="checkbox" id="recursive" checked>
+                包含子目录 (递归)
+            </label>
+        </div>
+        <button type="button" class="btn btn-primary" onclick="generateSTRM()" id="genBtn">
+            <i class="fa-solid fa-play"></i> 开始生成
+        </button>
+    </form>
+    
+    <!-- 目录选择器 Modal -->
+    <div id="folderPickerModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 1000; align-items: center; justify-content: center;">
+        <div class="glass-panel animate-fade-in" style="width: 90%; max-width: 500px; padding: 1.5rem; display: flex; flex-direction: column; max-height: 80vh;">
+            <h3 style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center;">
+                <span><i class="fa-solid fa-folder-tree"></i> 选择目录</span>
+                <i class="fa-solid fa-xmark" style="cursor: pointer; color: var(--text-secondary);" onclick="closeFolderPicker()"></i>
+            </h3>
+            
+            <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem; align-items: center; background: rgba(0,0,0,0.2); padding: 0.5rem; border-radius: 0.5rem;">
+                <button class="btn btn-secondary" id="fpBackBtn" style="padding: 0.25rem 0.75rem; font-size: 0.875rem;" onclick="loadFolder(currentParentId)">
+                    <i class="fa-solid fa-arrow-up"></i> 返回上级
+                </button>
+                <span id="fpCurrentPath" style="font-size: 0.875rem; font-weight: 500; color: var(--accent-primary); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">加载中...</span>
+            </div>
+            
+            <div id="fpList" style="flex: 1; overflow-y: auto; background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 0.5rem; min-height: 250px; padding: 0.5rem;">
+                <!-- 文件夹列表渲染区域 -->
+            </div>
+            
+            <div style="margin-top: 1rem; display: flex; justify-content: flex-end; gap: 0.5rem;">
+                <button class="btn btn-secondary" onclick="closeFolderPicker()">取消</button>
+                <button class="btn btn-primary" onclick="confirmFolderSelection()">确认选择</button>
+            </div>
+        </div>
+    </div>
+    
+    <div id="genResult" style="margin-top: 1.5rem; display: none;">
+        <h3 style="margin-bottom: 0.5rem;">生成结果</h3>
+        <p id="genCount" style="color: var(--success); margin-bottom: 1rem;"></p>
+        <div style="background: rgba(0,0,0,0.3); padding: 1rem; border-radius: 0.5rem; font-family: monospace; font-size: 0.85rem; max-height: 200px; overflow-y: auto;">
+            <ul id="genList" style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.25rem;">
+            </ul>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.folder-item {
+    padding: 0.75rem 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    cursor: pointer;
+    border-radius: 0.5rem;
+    transition: background 0.2s;
+    user-select: none;
+}
+.folder-item:hover {
+    background: rgba(255,255,255,0.08);
+}
+.folder-item.selected {
+    background: var(--accent-glow);
+    border: 1px solid var(--accent-primary);
+}
+.folder-item i {
+    color: var(--warning);
+    font-size: 1.25rem;
+}
+</style>
+<script>
+let currentFolderId = '0';
+let currentParentId = '0';
+let selectedFolderId = null;
+let selectedFolderName = '';
+
+async function openFolderPicker() {
+    const cloudType = document.getElementById('cloudType').value;
+    if (cloudType !== '115') {
+        alert('该功能目前仅支持 115网盘');
+        return;
+    }
+    
+    document.getElementById('folderPickerModal').style.display = 'flex';
+    const inputVal = document.getElementById('dirId').value.trim();
+    selectedFolderId = null;
+    
+    await loadFolder(inputVal || '0');
+}
+
+function closeFolderPicker() {
+    document.getElementById('folderPickerModal').style.display = 'none';
+}
+
+async function loadFolder(dirId) {
+    const listDiv = document.getElementById('fpList');
+    const pathSpan = document.getElementById('fpCurrentPath');
+    const backBtn = document.getElementById('fpBackBtn');
+    
+    listDiv.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> 加载中...</div>';
+    
+    try {
+        const res = await fetch(`/api/v1/115/dirs?dir_id=${dirId}`);
+        if (!res.ok) {
+            if (dirId !== '0') {
+                return loadFolder('0');
+            }
+            const err = await res.json();
+            listDiv.innerHTML = `<div style="text-align: center; padding: 2rem; color: var(--error);"><i class="fa-solid fa-triangle-exclamation"></i> ${err.detail || '加载失败'}</div>`;
+            return;
+        }
+        
+        const data = await res.json();
+        currentFolderId = dirId;
+        currentParentId = data.parent_id;
+        
+        pathSpan.textContent = data.current_dir;
+        backBtn.style.display = dirId === '0' ? 'none' : 'inline-flex';
+        
+        listDiv.innerHTML = '';
+        if (data.dirs.length === 0) {
+            listDiv.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-secondary);">该目录下没有子文件夹</div>';
+        } else {
+            data.dirs.forEach(d => {
+                const item = document.createElement('div');
+                item.className = 'folder-item';
+                if (selectedFolderId === d.cid) item.classList.add('selected');
+                
+                item.innerHTML = `<i class="fa-solid fa-folder"></i> <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${d.n}</span>`;
+                
+                let clickTimer = null;
+                item.onclick = (e) => {
+                    if (clickTimer) {
+                        clearTimeout(clickTimer);
+                        clickTimer = null;
+                        loadFolder(d.cid);
+                    } else {
+                        clickTimer = setTimeout(() => {
+                            clickTimer = null;
+                            document.querySelectorAll('.folder-item').forEach(el => el.classList.remove('selected'));
+                            item.classList.add('selected');
+                            selectedFolderId = d.cid;
+                            selectedFolderName = d.n;
+                        }, 250);
+                    }
+                };
+                listDiv.appendChild(item);
+            });
+        }
+    } catch (e) {
+        listDiv.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--error);"><i class="fa-solid fa-triangle-exclamation"></i> 网络错误</div>';
+    }
+}
+
+function confirmFolderSelection() {
+    if (selectedFolderId) {
+        document.getElementById('dirId').value = selectedFolderId;
+        closeFolderPicker();
+    } else {
+        document.getElementById('dirId').value = currentFolderId;
+        closeFolderPicker();
+    }
+}
+
+async function generateSTRM() {
+    const btn = document.getElementById('genBtn');
+    const cloudType = document.getElementById('cloudType').value;
+    const dirId = document.getElementById('dirId').value;
+    const recursive = document.getElementById('recursive').checked;
+    
+    if(!dirId) {
+        alert('请输入目录 CID');
+        return;
+    }
+    
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 生成中...';
+    
+    try {
+        const res = await fetch('/api/v1/strm/generate', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                cloud_type: cloudType,
+                dir_id: dirId,
+                recursive: recursive
+            })
+        });
+        
+        const resultDiv = document.getElementById('genResult');
+        const countP = document.getElementById('genCount');
+        const listUl = document.getElementById('genList');
+        
+        if(res.ok) {
+            const data = await res.json();
+            resultDiv.style.display = 'block';
+            countP.innerHTML = `<i class="fa-solid fa-check-circle"></i> 成功生成 ${data.generated_count} 个 STRM 文件`;
+            listUl.innerHTML = '';
+            
+            data.files.forEach(file => {
+                const li = document.createElement('li');
+                li.textContent = file;
+                li.style.color = 'var(--text-secondary)';
+                listUl.appendChild(li);
+            });
+            
+            if(data.generated_count > data.files.length) {
+                const li = document.createElement('li');
+                li.textContent = `... 等 ${data.generated_count - data.files.length} 个文件`;
+                li.style.color = 'var(--text-secondary)';
+                listUl.appendChild(li);
+            }
+        } else {
+            const data = await res.json();
+            alert('失败: ' + (data.detail || '未知错误'));
+        }
+    } catch(e) {
+        alert('网络错误');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-play"></i> 开始生成';
+    }
+}
+</script>
+{% endblock %}

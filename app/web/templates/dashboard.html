@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block subtitle %}影视库自动化整理与 STRM 映射中心{% endblock %}
+
+{% block content %}
+<div class="grid-3 animate-fade-in delay-1">
+    <div class="status-card">
+        <div class="status-icon blue">
+            <i class="fa-solid fa-cloud-arrow-up"></i>
+        </div>
+        <div class="status-info">
+            <h3>115 网盘</h3>
+            <p>已连接 · 离线任务 0</p>
+        </div>
+    </div>
+    
+    <div class="status-card">
+        <div class="status-icon green">
+            <i class="fa-solid fa-server"></i>
+        </div>
+        <div class="status-info">
+            <h3>Emby / Jellyfin</h3>
+            <p>1 个实例运行中</p>
+        </div>
+    </div>
+    
+    <div class="status-card">
+        <div class="status-icon purple">
+            <i class="fa-solid fa-film"></i>
+        </div>
+        <div class="status-info">
+            <h3>影视库</h3>
+            <p>共 0 部电影 · 0 部剧集</p>
+        </div>
+    </div>
+</div>
+
+<div class="grid-2" style="margin-top: 2rem;">
+    <div class="glass-panel animate-fade-in delay-2">
+        <h2 style="margin-bottom: 1.5rem;"><i class="fa-solid fa-bolt" style="color: var(--warning);"></i> 快速操作</h2>
+        <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+            <button class="btn btn-primary" onclick="alert('TODO')">
+                <i class="fa-solid fa-wand-magic-sparkles"></i> 一键整理 115
+            </button>
+            <button class="btn btn-secondary" onclick="alert('TODO')">
+                <i class="fa-solid fa-file-export"></i> 全量生成 STRM
+            </button>
+            <button class="btn btn-secondary" onclick="alert('TODO')">
+                <i class="fa-solid fa-rotate-right"></i> 同步 TMDB
+            </button>
+        </div>
+    </div>
+    
+    <div class="glass-panel animate-fade-in delay-3">
+        <h2 style="margin-bottom: 1.5rem;"><i class="fa-solid fa-clock-rotate-left"></i> 最近活动</h2>
+        <ul style="list-style: none; display: flex; flex-direction: column; gap: 1rem;">
+            <li style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem;">
+                <div>
+                    <span style="color: var(--success);"><i class="fa-solid fa-check-circle"></i></span>
+                    <span style="margin-left: 0.5rem;">系统初始化</span>
+                </div>
+                <span style="color: var(--text-secondary); font-size: 0.875rem;">刚刚</span>
+            </li>
+            <li style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem;">
+                <div>
+                    <span style="color: var(--accent-primary);"><i class="fa-solid fa-info-circle"></i></span>
+                    <span style="margin-left: 0.5rem;">加载配置文件</span>
+                </div>
+                <span style="color: var(--text-secondary); font-size: 0.875rem;">刚刚</span>
+            </li>
+        </ul>
+    </div>
+</div>
+{% endblock %}

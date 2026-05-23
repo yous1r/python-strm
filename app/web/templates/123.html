@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block subtitle %}管理 123 网盘账号与访问凭据{% endblock %}
+
+{% block content %}
+<div class="glass-panel animate-fade-in delay-1" style="max-width: 600px;">
+    <h2 style="margin-bottom: 1.5rem;">Token 配置</h2>
+    <form id="tokenForm">
+        <div class="form-group">
+            <label class="form-label">Access Token</label>
+            <textarea id="tokenInput" class="form-control" rows="5" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...">{{ config.cloud123.access_token }}</textarea>
+        </div>
+        <button type="button" class="btn btn-primary" onclick="saveToken()">
+            <i class="fa-solid fa-save"></i> 保存配置
+        </button>
+        <button type="button" class="btn btn-secondary" onclick="checkUser()">
+            <i class="fa-solid fa-user-check"></i> 检查状态
+        </button>
+    </form>
+    
+    <div id="userStatus" style="margin-top: 1.5rem; padding: 1rem; background: rgba(255,255,255,0.05); border-radius: 0.75rem; display: none;">
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function saveToken() {
+    const token = document.getElementById('tokenInput').value;
+    try {
+        const res = await fetch('/api/v1/123/auth', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({token})
+        });
+        if(res.ok) {
+            alert('Token 保存成功');
+        } else {
+            const data = await res.json();
+            alert('失败: ' + data.detail);
+        }
+    } catch(e) {
+        alert('网络错误');
+    }
+}
+
+async function checkUser() {
+    try {
+        const res = await fetch('/api/v1/123/user');
+        const statusDiv = document.getElementById('userStatus');
+        if(res.ok) {
+            const data = await res.json();
+            statusDiv.style.display = 'block';
+            statusDiv.innerHTML = `
+                <div style="display: flex; gap: 1rem; align-items: center;">
+                    <div style="font-size: 2rem; color: var(--success);"><i class="fa-solid fa-circle-check"></i></div>
+                    <div>
+                        <div style="font-weight: bold; font-size: 1.1rem;">${data.name || '已认证用户'}</div>
+                        <div style="color: var(--text-secondary); font-size: 0.9rem;">VIP: ${data.vip ? '是' : '否'}</div>
+                    </div>
+                </div>
+            `;
+        } else {
+            statusDiv.style.display = 'block';
+            statusDiv.innerHTML = `<div style="color: var(--error);"><i class="fa-solid fa-circle-xmark"></i> Token 无效或已过期</div>`;
+        }
+    } catch(e) {
+        alert('网络错误');
+    }
+}
+</script>
+{% endblock %}

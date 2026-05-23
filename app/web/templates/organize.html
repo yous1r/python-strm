@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+
+{% block subtitle %}自动刮削 TMDB 资料与媒体库清洗归档规则{% endblock %}
+
+{% block content %}
+<div class="glass-panel animate-fade-in delay-1" style="max-width: 800px; margin-bottom: 2rem;">
+    <h2 style="margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: space-between;">
+        <span><i class="fa-solid fa-film"></i> TMDB 刮削设置</span>
+        <label class="switch">
+            <input type="checkbox" id="org_enabled">
+            <span class="slider round"></span>
+        </label>
+    </h2>
+    <p style="color: var(--text-secondary); margin-bottom: 1.5rem; font-size: 0.9rem;">
+        开启后，网盘内容转存为 STRM 时将自动搜索 TMDB 并重构为标准剧集结构，同时生成 NFO 供 Emby 秒刮削。
+    </p>
+    
+    <div class="form-group">
+        <label class="form-label">TMDB API Key</label>
+        <input type="password" id="tmdb_api_key" class="form-control" placeholder="The Movie Database 的 API Key">
+    </div>
+    
+    <div class="form-group">
+        <label class="form-label">元数据语言</label>
+        <select id="tmdb_language" class="form-control">
+            <option value="zh-CN">简体中文 (zh-CN)</option>
+            <option value="zh-TW">繁体中文 (zh-TW)</option>
+            <option value="en-US">English (en-US)</option>
+        </select>
+    </div>
+    
+    <div class="form-group">
+        <label class="form-label">TMDB 请求代理 (可选，如需翻墙)</label>
+        <input type="text" id="tmdb_proxy" class="form-control" placeholder="http://127.0.0.1:7890">
+    </div>
+</div>
+
+<div class="glass-panel animate-fade-in delay-2" style="max-width: 800px; margin-bottom: 2rem;">
+    <h2 style="margin-bottom: 1.5rem;"><i class="fa-solid fa-folder-tree"></i> 整理分类规则映射</h2>
+    <p style="color: var(--text-secondary); margin-bottom: 1.5rem; font-size: 0.9rem;">
+        解析出的影片将按照以下大类与地区建立目录结构：<code>分类/地区/片名/片名.strm</code>
+    </p>
+    
+    <div style="display: flex; gap: 1.5rem;">
+        <div class="form-group" style="flex: 1;">
+            <label class="form-label">主分类目录 (每行一个)</label>
+            <textarea id="org_categories" class="form-control" rows="6" placeholder="电影&#10;剧集&#10;动漫"></textarea>
+        </div>
+        <div class="form-group" style="flex: 1;">
+            <label class="form-label">地区分类子目录 (每行一个)</label>
+            <textarea id="org_regions" class="form-control" rows="6" placeholder="国产&#10;欧美&#10;日韩"></textarea>
+        </div>
+    </div>
+    
+    <h3 style="margin-top: 1rem; margin-bottom: 1rem; font-size: 1.1rem; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 1rem;">
+        洗版策略 (Wash Config)
+    </h3>
+    <div style="display: flex; gap: 2rem;">
+        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+            <input type="checkbox" id="wash_dolby"> 优先杜比视界 (Dolby Vision)
+        </label>
+        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+            <input type="checkbox" id="wash_larger"> 相同资源优先保留大体积
+        </label>
+    </div>
+</div>
+
+<div style="max-width: 800px; display: flex; justify-content: flex-end;">
+    <button class="btn btn-primary" style="padding: 0.75rem 2rem; font-size: 1.1rem; box-shadow: 0 0 15px rgba(99,102,241,0.4);" onclick="saveOrganizeConfig()" id="saveBtn">
+        <i class="fa-solid fa-floppy-disk"></i> 保存并热加载
+    </button>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+/* iOS Style Toggle Switch */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 50px;
+  height: 24px;
+}
+.switch input { 
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: rgba(255,255,255,0.1);
+  transition: .4s;
+}
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: var(--text-primary);
+  transition: .4s;
+}
+input:checked + .slider {
+  background-color: var(--success);
+}
+input:focus + .slider {
+  box-shadow: 0 0 1px var(--success);
+}
+input:checked + .slider:before {
+  transform: translateX(26px);
+}
+.slider.round {
+  border-radius: 24px;
+}
+.slider.round:before {
+  border-radius: 50%;
+}
+</style>
+
+<script>
+// 页面加载时自动获取配置
+document.addEventListener('DOMContentLoaded', async () => {
+    try {
+        const res = await fetch('/api/v1/system/config');
+        if (res.ok) {
+            const config = await res.json();
+            
+            // TMDB
+            document.getElementById('tmdb_api_key').value = config.tmdb.api_key;
+            document.getElementById('tmdb_language').value = config.tmdb.language;
+            document.getElementById('tmdb_proxy').value = config.tmdb.proxy;
+            
+            // Organize
+            document.getElementById('org_enabled').checked = config.organize.enabled;
+            document.getElementById('org_categories').value = config.organize.categories.join('\n');
+            document.getElementById('org_regions').value = config.organize.regions.join('\n');
+            
+            // Wash
+            document.getElementById('wash_dolby').checked = config.organize.wash.prefer_dolby;
+            document.getElementById('wash_larger').checked = config.organize.wash.prefer_larger;
+        }
+    } catch (e) {
+        console.error('Failed to load config', e);
+    }
+});
+
+async function saveOrganizeConfig() {
+    const btn = document.getElementById('saveBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 保存中...';
+    
+    // 提取列表并过滤空行
+    const parseList = (val) => val.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+        
+    const payload = {
+        tmdb: {
+            api_key: document.getElementById('tmdb_api_key').value,
+            language: document.getElementById('tmdb_language').value,
+            proxy: document.getElementById('tmdb_proxy').value
+        },
+        organize: {
+            enabled: document.getElementById('org_enabled').checked,
+            categories: parseList(document.getElementById('org_categories').value),
+            regions: parseList(document.getElementById('org_regions').value),
+            wash: {
+                prefer_dolby: document.getElementById('wash_dolby').checked,
+                prefer_larger: document.getElementById('wash_larger').checked
+            }
+        }
+    };
+    
+    try {
+        const res = await fetch('/api/v1/system/config', {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        
+        if (res.ok) {
+            btn.innerHTML = '<i class="fa-solid fa-check"></i> 保存成功！已热加载';
+            btn.style.background = 'var(--success)';
+            setTimeout(() => {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> 保存并热加载';
+                btn.style.background = '';
+            }, 2000);
+        } else {
+            const err = await res.json();
+            alert('保存失败: ' + err.detail);
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> 保存并热加载';
+        }
+    } catch (e) {
+        alert('网络请求失败');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> 保存并热加载';
+    }
+}
+</script>
+{% endblock %}

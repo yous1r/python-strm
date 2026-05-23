@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+
+{% block subtitle %}管理 115 网盘账号与存储配置{% endblock %}
+
+{% block content %}
+<div class="glass-panel animate-fade-in delay-1" style="max-width: 600px;">
+    <h2 style="margin-bottom: 1.5rem;">Cookie 配置</h2>
+    <form id="cookieForm">
+        <div class="form-group">
+            <label class="form-label">Cookie (115.com)</label>
+            <textarea id="cookieInput" class="form-control" rows="5" placeholder="UID=...; CID=...; SEID=...">{{ config.cloud115.cookie }}</textarea>
+        </div>
+        <button type="button" class="btn btn-primary" onclick="saveCookie()">
+            <i class="fa-solid fa-save"></i> 保存配置
+        </button>
+        <button type="button" class="btn btn-secondary" onclick="startQrLogin()">
+            <i class="fa-solid fa-qrcode"></i> 扫码登录
+        </button>
+        <button type="button" class="btn btn-secondary" onclick="checkUser()">
+            <i class="fa-solid fa-user-check"></i> 检查状态
+        </button>
+    </form>
+    
+    <!-- 二维码显示区 -->
+    <div id="qrContainer" style="display: none; text-align: center; margin-top: 1.5rem; padding: 2rem; background: rgba(255,255,255,0.05); border-radius: 0.75rem;">
+        <h3 style="margin-bottom: 1rem;">请使用 115 App 扫码</h3>
+        <div id="qrcode" style="display: inline-block; background: white; padding: 1rem; border-radius: 0.5rem;"></div>
+        <p id="qrStatusText" style="margin-top: 1rem; color: var(--text-secondary);">等待扫码...</p>
+    </div>
+    
+    <div id="userStatus" style="margin-top: 1.5rem; padding: 1rem; background: rgba(255,255,255,0.05); border-radius: 0.75rem; display: none;">
+        <!-- User info will be rendered here -->
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+async function saveCookie() {
+    const cookie = document.getElementById('cookieInput').value;
+    try {
+        const res = await fetch('/api/v1/115/auth', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({cookie})
+        });
+        if(res.ok) {
+            alert('Cookie 保存成功');
+        } else {
+            const data = await res.json();
+            alert('失败: ' + data.detail);
+        }
+    } catch(e) {
+        alert('网络错误');
+    }
+}
+
+async function checkUser() {
+    try {
+        const res = await fetch('/api/v1/115/user');
+        const statusDiv = document.getElementById('userStatus');
+        if(res.ok) {
+            const data = await res.json();
+            statusDiv.style.display = 'block';
+            statusDiv.innerHTML = `
+                <div style="display: flex; gap: 1rem; align-items: center;">
+                    <div style="font-size: 2rem; color: var(--success);"><i class="fa-solid fa-circle-check"></i></div>
+                    <div>
+                        <div style="font-weight: bold; font-size: 1.1rem;">${data.name}</div>
+                        <div style="color: var(--text-secondary); font-size: 0.9rem;">VIP 等级: ${data.level || '普通用户'}</div>
+                    </div>
+                </div>
+            `;
+        } else {
+            statusDiv.style.display = 'block';
+            statusDiv.innerHTML = `<div style="color: var(--error);"><i class="fa-solid fa-circle-xmark"></i> Cookie 无效或已过期</div>`;
+        }
+    } catch(e) {
+        alert('网络错误');
+    }
+}
+
+let qrPollInterval = null;
+
+async function startQrLogin() {
+    const qrContainer = document.getElementById('qrContainer');
+    const qrcodeDiv = document.getElementById('qrcode');
+    const qrStatusText = document.getElementById('qrStatusText');
+    const userStatus = document.getElementById('userStatus');
+    
+    // Reset
+    if (qrPollInterval) clearInterval(qrPollInterval);
+    qrcodeDiv.innerHTML = '';
+    qrContainer.style.display = 'block';
+    userStatus.style.display = 'none';
+    qrStatusText.textContent = "正在获取二维码...";
+    
+    try {
+        const res = await fetch('/api/v1/115/qr/token');
+        if (!res.ok) {
+            qrStatusText.textContent = "获取二维码失败";
+            return;
+        }
+        const data = await res.json();
+        
+        // Generate QR code
+        new QRCode(qrcodeDiv, {
+            text: data.qrcode,
+            width: 200,
+            height: 200
+        });
+        
+        qrStatusText.textContent = "等待扫码...";
+        
+        // Start polling
+        qrPollInterval = setInterval(() => pollQrStatus(data), 2000);
+    } catch (e) {
+        qrStatusText.textContent = "网络错误";
+    }
+}
+
+async function pollQrStatus(payload) {
+    const qrStatusText = document.getElementById('qrStatusText');
+    try {
+        const res = await fetch('/api/v1/115/qr/status', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        
+        if (!res.ok) return;
+        
+        const data = await res.json();
+        const status = data.status;
+        
+        if (status === 1) {
+            qrStatusText.textContent = "已扫码，请在手机上确认...";
+        } else if (status === 2) {
+            clearInterval(qrPollInterval);
+            qrStatusText.textContent = "登录成功！";
+            document.getElementById('cookieInput').value = data.cookie;
+            document.getElementById('qrContainer').style.display = 'none';
+            checkUser(); // Refresh user status
+        } else if (status === -1) {
+            clearInterval(qrPollInterval);
+            qrStatusText.textContent = "二维码已过期，请重新获取";
+        } else if (status === -2) {
+            clearInterval(qrPollInterval);
+            qrStatusText.textContent = data.msg || "登录失败，可能遇到了设备限制，请重试";
+            qrStatusText.style.color = "var(--error)";
+        }
+    } catch (e) {
+        console.error('Polling error', e);
+    }
+}
+</script>
+{% endblock %}

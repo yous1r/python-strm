@@ -1,0 +1,347 @@
+{% extends "base.html" %}
+
+{% block subtitle %}统一管理通知推送与 Telegram 自动监控节点{% endblock %}
+
+{% block content %}
+<div class="glass-panel animate-fade-in delay-1" style="max-width: 800px; margin-bottom: 2rem;">
+    <h2 style="margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: space-between;">
+        <span><i class="fa-solid fa-satellite-dish"></i> Telegram 监控节点设置</span>
+        <label class="switch">
+            <input type="checkbox" id="mon_tg_enabled">
+            <span class="slider round"></span>
+        </label>
+    </h2>
+    <form id="monitorForm">
+        <div class="form-group">
+            <label class="form-label">API ID (来自 my.telegram.org)</label>
+            <input type="text" id="mon_tg_api_id" class="form-control" placeholder="1234567">
+        </div>
+        <div class="form-group">
+            <label class="form-label">API Hash</label>
+            <input type="password" id="mon_tg_api_hash" class="form-control" placeholder="xxxxxxxxxxxxxxxxxxxxxx">
+        </div>
+        <div class="form-group">
+            <label class="form-label">监听频道列表 (每行一个 ID 或 Username)</label>
+            <textarea id="mon_tg_channels" class="form-control" rows="3" placeholder="-1001234567890&#10;my_share_channel"></textarea>
+        </div>
+    </form>
+</div>
+
+<div class="glass-panel animate-fade-in delay-2" style="max-width: 800px; margin-bottom: 2rem;">
+    <h2 style="margin-bottom: 1.5rem;"><i class="fa-solid fa-bell"></i> 消息推送通道设置</h2>
+    
+    <!-- WeCom -->
+    <div style="background: rgba(0,0,0,0.2); padding: 1.5rem; border-radius: 12px; margin-bottom: 1.5rem; border: 1px solid rgba(255,255,255,0.05);">
+        <h3 style="margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between;">
+            <span><i class="fa-brands fa-weixin"></i> 企业微信 (WeCom)</span>
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                <button type="button" class="btn btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.8rem;" onclick="testChannel('wecom', this)">
+                    <i class="fa-solid fa-paper-plane"></i> 测试
+                </button>
+                <label class="switch">
+                    <input type="checkbox" id="not_wecom_enabled">
+                    <span class="slider round"></span>
+                </label>
+            </div>
+        </h3>
+        <div class="form-group">
+            <label class="form-label">Corp ID (企业ID)</label>
+            <input type="text" id="not_wecom_corp_id" class="form-control">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Corp Secret (应用凭证密钥)</label>
+            <input type="password" id="not_wecom_corp_secret" class="form-control">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Agent ID (应用ID)</label>
+            <input type="text" id="not_wecom_agent_id" class="form-control">
+        </div>
+    </div>
+    
+    <!-- Telegram Bot -->
+    <div style="background: rgba(0,0,0,0.2); padding: 1.5rem; border-radius: 12px; margin-bottom: 1.5rem; border: 1px solid rgba(255,255,255,0.05);">
+        <h3 style="margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between;">
+            <span><i class="fa-brands fa-telegram"></i> Telegram Bot (推送通知)</span>
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                <button type="button" class="btn btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.8rem;" onclick="testChannel('telegram', this)">
+                    <i class="fa-solid fa-paper-plane"></i> 测试
+                </button>
+                <label class="switch">
+                    <input type="checkbox" id="not_tg_enabled">
+                    <span class="slider round"></span>
+                </label>
+            </div>
+        </h3>
+        <div class="form-group">
+            <label class="form-label">Bot Token (来自 BotFather)</label>
+            <input type="password" id="not_tg_bot_token" class="form-control">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Chat ID (接收人ID)</label>
+            <input type="text" id="not_tg_chat_id" class="form-control">
+        </div>
+    </div>
+    
+    <!-- Bark -->
+    <div style="background: rgba(0,0,0,0.2); padding: 1.5rem; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05);">
+        <h3 style="margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between;">
+            <span><i class="fa-solid fa-mobile-screen"></i> Bark (iOS)</span>
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                <button type="button" class="btn btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.8rem;" onclick="testChannel('bark', this)">
+                    <i class="fa-solid fa-paper-plane"></i> 测试
+                </button>
+                <label class="switch">
+                    <input type="checkbox" id="not_bark_enabled">
+                    <span class="slider round"></span>
+                </label>
+            </div>
+        </h3>
+        <div class="form-group">
+            <label class="form-label">Server (服务器地址)</label>
+            <input type="text" id="not_bark_server" class="form-control" placeholder="https://api.day.app">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Device Key (设备码)</label>
+            <input type="password" id="not_bark_device_key" class="form-control">
+        </div>
+        <div style="border-top: 1px solid rgba(255,255,255,0.1); margin: 1rem 0; padding-top: 1rem;">
+            <p style="color: var(--warning); font-size: 0.85rem; margin-bottom: 1rem;"><i class="fa-solid fa-shield-halved"></i> 隐私保护 (留空则发往中转服务器明文)</p>
+            <div class="form-group">
+                <label class="form-label">AES 密钥 (16/24/32位)</label>
+                <input type="password" id="not_bark_enc_key" class="form-control" placeholder="留空关闭加密">
+            </div>
+            <div style="display: flex; gap: 1rem;">
+                <div class="form-group" style="flex: 1;">
+                    <label class="form-label">AES IV 偏移量</label>
+                    <input type="text" id="not_bark_enc_iv" class="form-control" placeholder="ECB模式可不填">
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <label class="form-label">算法</label>
+                    <select id="not_bark_enc_algo" class="form-control">
+                        <option value="AES-128-CBC">AES-128-CBC</option>
+                        <option value="AES-128-ECB">AES-128-ECB</option>
+                        <option value="AES-192-CBC">AES-192-CBC</option>
+                        <option value="AES-192-ECB">AES-192-ECB</option>
+                        <option value="AES-256-CBC">AES-256-CBC</option>
+                        <option value="AES-256-ECB">AES-256-ECB</option>
+                        <option value="AES-128-GCM">AES-128-GCM</option>
+                        <option value="AES-192-GCM">AES-192-GCM</option>
+                        <option value="AES-256-GCM">AES-256-GCM</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div style="max-width: 800px; display: flex; justify-content: flex-end;">
+    <button class="btn btn-primary" style="padding: 0.75rem 2rem; font-size: 1.1rem; box-shadow: 0 0 15px rgba(99,102,241,0.4);" onclick="saveNotifyConfig()" id="saveBtn">
+        <i class="fa-solid fa-floppy-disk"></i> 保存并热加载
+    </button>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+/* iOS Style Toggle Switch */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 50px;
+  height: 24px;
+}
+.switch input { 
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: rgba(255,255,255,0.1);
+  transition: .4s;
+}
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: var(--text-primary);
+  transition: .4s;
+}
+input:checked + .slider {
+  background-color: var(--success);
+}
+input:focus + .slider {
+  box-shadow: 0 0 1px var(--success);
+}
+input:checked + .slider:before {
+  transform: translateX(26px);
+}
+.slider.round {
+  border-radius: 24px;
+}
+.slider.round:before {
+  border-radius: 50%;
+}
+</style>
+
+<script>
+// 页面加载时自动获取配置
+document.addEventListener('DOMContentLoaded', async () => {
+    try {
+        const res = await fetch('/api/v1/system/config');
+        if (res.ok) {
+            const config = await res.json();
+            
+            // 填充 Monitor Telegram
+            document.getElementById('mon_tg_enabled').checked = config.monitor.telegram.enabled;
+            document.getElementById('mon_tg_api_id').value = config.monitor.telegram.api_id;
+            document.getElementById('mon_tg_api_hash').value = config.monitor.telegram.api_hash;
+            document.getElementById('mon_tg_channels').value = config.monitor.telegram.channels.join('\n');
+            
+            // 填充 Notify WeCom
+            document.getElementById('not_wecom_enabled').checked = config.notify.wecom.enabled;
+            document.getElementById('not_wecom_corp_id').value = config.notify.wecom.corp_id;
+            document.getElementById('not_wecom_corp_secret').value = config.notify.wecom.corp_secret;
+            document.getElementById('not_wecom_agent_id').value = config.notify.wecom.agent_id;
+            
+            // 填充 Notify Telegram
+            document.getElementById('not_tg_enabled').checked = config.notify.telegram.enabled;
+            document.getElementById('not_tg_bot_token').value = config.notify.telegram.bot_token;
+            document.getElementById('not_tg_chat_id').value = config.notify.telegram.chat_id;
+            
+            // 填充 Notify Bark
+            document.getElementById('not_bark_enabled').checked = config.notify.bark.enabled;
+            document.getElementById('not_bark_server').value = config.notify.bark.server;
+            document.getElementById('not_bark_device_key').value = config.notify.bark.device_key;
+            document.getElementById('not_bark_enc_key').value = config.notify.bark.encryption_key || '';
+            document.getElementById('not_bark_enc_iv').value = config.notify.bark.encryption_iv || '';
+            document.getElementById('not_bark_enc_algo').value = config.notify.bark.encryption_algorithm || 'AES-128-CBC';
+        }
+    } catch (e) {
+        console.error('Failed to load config', e);
+    }
+});
+
+async function saveNotifyConfig(silent = false) {
+    const btn = document.getElementById('saveBtn');
+    if (!silent) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 保存中...';
+    }
+    
+    // 提取通道列表并过滤空行
+    const tgChannels = document.getElementById('mon_tg_channels').value
+        .split('\n')
+        .map(s => s.trim())
+        .filter(s => s.length > 0);
+        
+    const payload = {
+        monitor: {
+            telegram: {
+                enabled: document.getElementById('mon_tg_enabled').checked,
+                api_id: document.getElementById('mon_tg_api_id').value,
+                api_hash: document.getElementById('mon_tg_api_hash').value,
+                channels: tgChannels
+            }
+        },
+        notify: {
+            wecom: {
+                enabled: document.getElementById('not_wecom_enabled').checked,
+                corp_id: document.getElementById('not_wecom_corp_id').value,
+                corp_secret: document.getElementById('not_wecom_corp_secret').value,
+                agent_id: document.getElementById('not_wecom_agent_id').value
+            },
+            telegram: {
+                enabled: document.getElementById('not_tg_enabled').checked,
+                bot_token: document.getElementById('not_tg_bot_token').value,
+                chat_id: document.getElementById('not_tg_chat_id').value
+            },
+            bark: {
+                enabled: document.getElementById('not_bark_enabled').checked,
+                server: document.getElementById('not_bark_server').value,
+                device_key: document.getElementById('not_bark_device_key').value,
+                encryption_key: document.getElementById('not_bark_enc_key').value,
+                encryption_iv: document.getElementById('not_bark_enc_iv').value,
+                encryption_algorithm: document.getElementById('not_bark_enc_algo').value
+            }
+        }
+    };
+    
+    try {
+        const res = await fetch('/api/v1/system/config', {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        
+        if (res.ok) {
+            if (!silent) {
+                btn.innerHTML = '<i class="fa-solid fa-check"></i> 保存成功！已热加载';
+                btn.style.background = 'var(--success)';
+                setTimeout(() => {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> 保存并热加载';
+                    btn.style.background = '';
+                }, 2000);
+            }
+            return true;
+        } else {
+            const err = await res.json();
+            if (!silent) alert('保存失败: ' + err.detail);
+            return false;
+        }
+    } catch (e) {
+        if (!silent) alert('网络请求失败');
+        return false;
+    } finally {
+        if (!silent && btn.disabled && btn.style.background !== 'var(--success)') {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> 保存并热加载';
+        }
+    }
+}
+
+async function testChannel(channel, btn) {
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+    
+    // 先保存配置
+    const saved = await saveNotifyConfig(true);
+    if (!saved) {
+        alert("保存配置失败，无法进行测试！请检查配置格式。");
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+        return;
+    }
+    
+    try {
+        const res = await fetch(`/api/v1/system/test-notify/${channel}`, {
+            method: 'POST'
+        });
+        const data = await res.json();
+        
+        if (res.ok) {
+            btn.innerHTML = '<i class="fa-solid fa-check" style="color:var(--success);"></i>';
+            setTimeout(() => {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }, 2000);
+        } else {
+            alert('测试失败: ' + (data.detail || '未知错误'));
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+        }
+    } catch (e) {
+        alert('网络请求失败');
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+    }
+}
+</script>
+{% endblock %}

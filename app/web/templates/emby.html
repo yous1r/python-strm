@@ -1,0 +1,329 @@
+{% extends "base.html" %}
+
+{% block subtitle %}浏览与管理您的 Emby 媒体库{% endblock %}
+
+{% block content %}
+<div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 2rem;">
+    <h2 style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
+        <i class="fa-solid fa-server" style="color: var(--accent-primary);"></i> 服务器选择
+    </h2>
+    <select id="instanceSelect" class="form-control" style="width: auto; min-width: 250px;" onchange="loadSeries()">
+        <option value="">正在加载服务器列表...</option>
+    </select>
+</div>
+
+<!-- 剧集海报墙 -->
+<div id="loadingIndicator" style="display: none; text-align: center; padding: 3rem; color: var(--text-secondary);">
+    <i class="fa-solid fa-spinner fa-spin fa-2x"></i>
+    <p style="margin-top: 1rem;">正在拉取媒体库数据...</p>
+</div>
+
+<div id="mediaGrid" class="media-grid animate-fade-in delay-1">
+    <!-- 动态渲染 -->
+</div>
+
+<!-- 单集详情 Modal -->
+<div id="episodesModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(8px); z-index: 1000; align-items: center; justify-content: center;">
+    <div class="glass-panel animate-slide-up" style="width: 90%; max-width: 800px; padding: 2rem; display: flex; flex-direction: column; max-height: 85vh; overflow: hidden;">
+        <h3 style="margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 1rem;">
+            <span id="modalSeriesTitle" style="font-size: 1.5rem;">剧集名称</span>
+            <i class="fa-solid fa-xmark" style="cursor: pointer; color: var(--text-secondary); font-size: 1.5rem; transition: color 0.3s;" onclick="closeEpisodesModal()"></i>
+        </h3>
+        
+        <div id="episodesLoading" style="text-align: center; padding: 2rem; color: var(--text-secondary);">
+            <i class="fa-solid fa-circle-notch fa-spin fa-2x"></i>
+            <p>加载分集数据...</p>
+        </div>
+        
+        <div id="episodesList" style="flex: 1; overflow-y: auto; padding-right: 1rem; display: none; flex-direction: column; gap: 1rem;">
+            <!-- 分集动态渲染 -->
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.media-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 1.5rem;
+}
+
+.media-card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    cursor: pointer;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+}
+
+.media-card:hover {
+    transform: translateY(-8px);
+    border-color: var(--accent-primary);
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.4), 0 0 12px rgba(99, 102, 241, 0.2);
+}
+
+.poster-wrapper {
+    position: relative;
+    width: 100%;
+    padding-top: 150%; /* 2:3 aspect ratio */
+    background: var(--bg-secondary);
+    overflow: hidden;
+}
+
+.poster-img {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 0.5s ease;
+}
+
+.media-card:hover .poster-img {
+    transform: scale(1.05);
+}
+
+.no-poster {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    font-size: 3rem;
+}
+
+.media-info {
+    padding: 1rem;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.media-title {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.media-year {
+    font-size: 0.85rem;
+    color: var(--accent-secondary);
+}
+
+/* Episode Card Styles */
+.episode-card {
+    display: flex;
+    gap: 1.5rem;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    padding: 1rem;
+    transition: background 0.2s;
+}
+
+.episode-card:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.ep-poster {
+    width: 160px;
+    height: 90px;
+    border-radius: 8px;
+    object-fit: cover;
+    background: var(--bg-primary);
+    flex-shrink: 0;
+}
+
+.ep-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.ep-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+    color: var(--text-primary);
+}
+
+.ep-meta {
+    font-size: 0.85rem;
+    color: var(--accent-primary);
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+}
+
+.ep-overview {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1.5;
+}
+
+/* 滚动条美化 */
+#episodesList::-webkit-scrollbar {
+    width: 8px;
+}
+#episodesList::-webkit-scrollbar-track {
+    background: rgba(0,0,0,0.1);
+    border-radius: 4px;
+}
+#episodesList::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 4px;
+}
+#episodesList::-webkit-scrollbar-thumb:hover {
+    background: var(--text-secondary);
+}
+</style>
+
+<script>
+let currentInstanceId = null;
+
+async function loadInstances() {
+    const select = document.getElementById('instanceSelect');
+    try {
+        const res = await fetch('/api/v1/emby/instances');
+        const data = await res.json();
+        
+        select.innerHTML = '';
+        if (data.length === 0) {
+            select.innerHTML = '<option value="">请先在首页添加 Emby 实例</option>';
+            select.disabled = true;
+            return;
+        }
+        
+        data.forEach(inst => {
+            const opt = document.createElement('option');
+            opt.value = inst.id;
+            opt.textContent = `${inst.name} (${inst.url})`;
+            select.appendChild(opt);
+        });
+        
+        // 自动拉取第一个实例的数据
+        loadSeries();
+    } catch (e) {
+        select.innerHTML = '<option value="">加载失败</option>';
+    }
+}
+
+async function loadSeries() {
+    const select = document.getElementById('instanceSelect');
+    if (!select.value) return;
+    
+    currentInstanceId = select.value;
+    const grid = document.getElementById('mediaGrid');
+    const loading = document.getElementById('loadingIndicator');
+    
+    grid.innerHTML = '';
+    loading.style.display = 'block';
+    
+    try {
+        const res = await fetch(`/api/v1/emby/instances/${currentInstanceId}/series`);
+        const series = await res.json();
+        
+        loading.style.display = 'none';
+        
+        if (series.length === 0) {
+            grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-secondary); padding: 3rem;">未能拉取到剧集数据或您的媒体库为空。</div>';
+            return;
+        }
+        
+        series.forEach(item => {
+            const card = document.createElement('div');
+            card.className = 'media-card';
+            card.onclick = () => openEpisodesModal(item.id, item.name);
+            
+            const posterHtml = item.poster_url 
+                ? `<img src="/api/v1/emby/${currentInstanceId}/proxy${new URL(item.poster_url).pathname}${new URL(item.poster_url).search}" class="poster-img" loading="lazy" alt="${item.name}">`
+                : `<div class="no-poster"><i class="fa-solid fa-film"></i></div>`;
+                
+            card.innerHTML = `
+                <div class="poster-wrapper">
+                    ${posterHtml}
+                </div>
+                <div class="media-info">
+                    <div class="media-title" title="${item.name}">${item.name}</div>
+                    <div class="media-year">${item.year || '未知年份'}</div>
+                </div>
+            `;
+            grid.appendChild(card);
+        });
+    } catch (e) {
+        loading.style.display = 'none';
+        grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--error); padding: 3rem;"><i class="fa-solid fa-triangle-exclamation"></i> 拉取数据失败</div>';
+    }
+}
+
+async function openEpisodesModal(seriesId, seriesName) {
+    document.getElementById('episodesModal').style.display = 'flex';
+    document.getElementById('modalSeriesTitle').textContent = seriesName;
+    document.getElementById('episodesLoading').style.display = 'block';
+    document.getElementById('episodesList').style.display = 'none';
+    
+    const list = document.getElementById('episodesList');
+    list.innerHTML = '';
+    
+    try {
+        const res = await fetch(`/api/v1/emby/instances/${currentInstanceId}/series/${seriesId}/episodes`);
+        const eps = await res.json();
+        
+        document.getElementById('episodesLoading').style.display = 'none';
+        list.style.display = 'flex';
+        
+        if (eps.length === 0) {
+            list.innerHTML = '<div style="text-align: center; color: var(--text-secondary); padding: 2rem;">没有找到分集数据</div>';
+            return;
+        }
+        
+        eps.forEach(ep => {
+            const epCard = document.createElement('div');
+            epCard.className = 'episode-card';
+            
+            const posterHtml = ep.poster_url 
+                ? `<img src="/api/v1/emby/${currentInstanceId}/proxy${new URL(ep.poster_url).pathname}${new URL(ep.poster_url).search}" class="ep-poster" loading="lazy">`
+                : `<div class="ep-poster" style="display:flex;align-items:center;justify-content:center;font-size:2rem;color:var(--text-secondary);"><i class="fa-solid fa-tv"></i></div>`;
+                
+            epCard.innerHTML = `
+                ${posterHtml}
+                <div class="ep-info">
+                    <div class="ep-meta">第 ${ep.season} 季 第 ${ep.episode} 集</div>
+                    <div class="ep-title">${ep.name}</div>
+                    <div class="ep-overview" title="${ep.overview}">${ep.overview || '暂无简介...'}</div>
+                </div>
+            `;
+            list.appendChild(epCard);
+        });
+    } catch (e) {
+        document.getElementById('episodesLoading').style.display = 'none';
+        list.style.display = 'flex';
+        list.innerHTML = '<div style="text-align: center; color: var(--error); padding: 2rem;"><i class="fa-solid fa-triangle-exclamation"></i> 加载分集失败</div>';
+    }
+}
+
+function closeEpisodesModal() {
+    document.getElementById('episodesModal').style.display = 'none';
+}
+
+// 初始化
+document.addEventListener('DOMContentLoaded', loadInstances);
+</script>
+{% endblock %}
