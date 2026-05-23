@@ -46,6 +46,15 @@ async def test_notify(channel: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/sync/run")
+async def trigger_sync_now():
+    """立即在后台触发一次全量自动化同步任务"""
+    from app.core.sync.engine import sync_engine
+    import asyncio
+    # 放进后台任务执行，不阻塞当前的 API 请求
+    asyncio.create_task(sync_engine.run_sync_task())
+    return {"status": "success", "message": "全自动同步任务已在后台触发"}
+
 @router.get("/sync/history")
 async def fetch_sync_history():
     """获取最近的 50 条自动化同步流水"""
