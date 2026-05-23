@@ -3,8 +3,52 @@
 {% block subtitle %}批量生成与管理 STRM 映射文件{% endblock %}
 
 {% block content %}
-<div class="glass-panel animate-fade-in delay-1" style="max-width: 600px;">
-    <h2 style="margin-bottom: 1.5rem;">批量生成</h2>
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; max-width: 1200px;">
+    <!-- 左侧：全局设置 -->
+    <div class="glass-panel animate-fade-in delay-1">
+        <h2 style="margin-bottom: 1.5rem;"><i class="fa-solid fa-sliders"></i> 全局 STRM 设置</h2>
+        <form id="strmSettingsForm">
+            <div class="form-group">
+                <label class="form-label">输出根目录 (相对或绝对路径)</label>
+                <input type="text" id="strm_output_dir" class="form-control" placeholder="例如: strm_output">
+            </div>
+            <div class="form-group">
+                <label class="form-label">播放中转 Base URL</label>
+                <input type="text" id="strm_base_url" class="form-control" placeholder="http://192.168.1.10:8095">
+                <p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.25rem;">生成的 STRM 文件内部指向该地址进行网盘代理分发。</p>
+            </div>
+            
+            <div class="form-group" style="background: rgba(255,255,255,0.03); padding: 1rem; border-radius: 0.5rem; border: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                    <label class="form-label" style="margin: 0; font-size: 1rem;">同步刮削元数据</label>
+                    <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.25rem;">生成 STRM 时自动从 TMDB 拉取数据生成 NFO</div>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="strm_sync_metadata">
+                    <span class="slider round"></span>
+                </label>
+            </div>
+            
+            <div class="form-group" style="background: rgba(255,255,255,0.03); padding: 1rem; border-radius: 0.5rem; border: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                    <label class="form-label" style="margin: 0; font-size: 1rem;">自动清理失效文件</label>
+                    <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.25rem;">自动删除云盘中已不存在的本地 STRM</div>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="strm_clean_invalid">
+                    <span class="slider round"></span>
+                </label>
+            </div>
+            
+            <button type="button" id="saveStrmBtn" class="btn btn-primary" onclick="saveStrmSettings()">
+                <i class="fa-solid fa-save"></i> 保存全局设置
+            </button>
+        </form>
+    </div>
+
+    <!-- 右侧：手动触发 -->
+    <div class="glass-panel animate-fade-in delay-2">
+        <h2 style="margin-bottom: 1.5rem;"><i class="fa-solid fa-bolt"></i> 批量生成工具</h2>
     <form id="strmForm">
         <div class="form-group">
             <label class="form-label">网盘类型</label>
@@ -67,6 +111,7 @@
             </ul>
         </div>
     </div>
+    </div>
 </div>
 {% endblock %}
 
@@ -93,12 +138,94 @@
     color: var(--warning);
     font-size: 1.25rem;
 }
+/* iOS Style Toggle Switch */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 50px;
+  height: 24px;
+}
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider {
+  position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+  background-color: rgba(255,255,255,0.1); transition: .4s;
+}
+.slider:before {
+  position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px;
+  background-color: var(--text-primary); transition: .4s;
+}
+input:checked + .slider { background-color: var(--success); }
+input:focus + .slider { box-shadow: 0 0 1px var(--success); }
+input:checked + .slider:before { transform: translateX(26px); }
+.slider.round { border-radius: 24px; }
+.slider.round:before { border-radius: 50%; }
 </style>
 <script>
 let currentFolderId = '0';
 let currentParentId = '0';
 let selectedFolderId = null;
 let selectedFolderName = '';
+
+// 加载全局配置
+document.addEventListener('DOMContentLoaded', async () => {
+    try {
+        const res = await fetch('/api/v1/system/config');
+        if (res.ok) {
+            const config = await res.json();
+            document.getElementById('strm_output_dir').value = config.strm.output_dir;
+            document.getElementById('strm_base_url').value = config.strm.base_url;
+            document.getElementById('strm_sync_metadata').checked = config.strm.sync_metadata;
+            document.getElementById('strm_clean_invalid').checked = config.strm.clean_invalid;
+        }
+    } catch (e) {
+        console.error('Failed to load config', e);
+    }
+});
+
+async function saveStrmSettings() {
+    const btn = document.getElementById('saveStrmBtn');
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 保存中...';
+    
+    const payload = {
+        strm: {
+            output_dir: document.getElementById('strm_output_dir').value,
+            base_url: document.getElementById('strm_base_url').value,
+            sync_metadata: document.getElementById('strm_sync_metadata').checked,
+            clean_invalid: document.getElementById('strm_clean_invalid').checked
+        }
+    };
+
+    try {
+        const res = await fetch('/api/v1/system/config', {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        
+        if (res.ok) {
+            btn.innerHTML = '<i class="fa-solid fa-check"></i> 保存成功！已热加载';
+            btn.style.background = 'var(--success)';
+            btn.style.borderColor = 'var(--success)';
+            setTimeout(() => {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+                btn.style.background = '';
+                btn.style.borderColor = '';
+            }, 2000);
+        } else {
+            const data = await res.json();
+            alert('保存失败: ' + data.detail);
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+        }
+    } catch(e) {
+        alert('网络错误');
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+    }
+}
 
 async function openFolderPicker() {
     const cloudType = document.getElementById('cloudType').value;

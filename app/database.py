@@ -84,6 +84,19 @@ async def init_db():
             )
         ''')
         
+        # 同步自动化历史表
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS sync_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                duration REAL,
+                processed_count INTEGER DEFAULT 0,
+                error_details TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
         await db.commit()
         logger.info("Database initialized successfully")
 

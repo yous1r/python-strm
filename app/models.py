@@ -44,3 +44,12 @@ class EmbyInstance(BaseModel):
     url: str
     api_key: str
     created_at: Optional[datetime] = None
+
+class SyncHistory(BaseModel):
+    id: Optional[int] = None
+    task_name: str
+    status: str
+    duration: Optional[float] = 0.0
+    processed_count: Optional[int] = 0
+    error_details: Optional[str] = None
+    created_at: Optional[datetime] = None

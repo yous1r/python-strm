@@ -6,6 +6,8 @@ from app.config import get_config
 from app.utils.helpers import sanitize_filename
 from loguru import logger
 
+from app.core.tmdb.nfo_builder import nfo_builder
+
 class MediaOrganizer:
     def __init__(self):
         self.config = get_config().organize
@@ -83,51 +85,22 @@ class MediaOrganizer:
 
         base_name = os.path.splitext(target_name)[0]
         nfo_path = os.path.join(target_dir, f"{base_name}.nfo")
-        
-        title = tmdb_data.get("title") or tmdb_data.get("name", "")
-        original_title = tmdb_data.get("original_title") or tmdb_data.get("original_name", "")
-        plot = tmdb_data.get("overview", "")
-        year = tmdb_data.get("release_date", "")[:4] or tmdb_data.get("first_air_date", "")[:4]
-        tmdbid = tmdb_data.get("id", "")
 
         try:
-            os.makedirs(target_dir, exist_ok=True)
             if media_type == "movie":
-                xml_content = f'''<?xml version="1.0" encoding="utf-8" standalone="yes"?>
-<movie>
-  <title>{title}</title>
-  <originaltitle>{original_title}</originaltitle>
-  <year>{year}</year>
-  <plot>{plot}</plot>
-  <tmdbid>{tmdbid}</tmdbid>
-</movie>'''
-                async with aiofiles.open(nfo_path, 'w', encoding='utf-8') as f:
-                    await f.write(xml_content)
-                    
+                xml_content = nfo_builder.build_movie_nfo(tmdb_data)
+                await nfo_builder.write_nfo(xml_content, nfo_path)
+
             elif media_type == "episode":
-                # 分集 NFO (仅占位，Emby依靠tvshow.nfo和文件名就可刮出具体集信息)
-                xml_content = f'''<?xml version="1.0" encoding="utf-8" standalone="yes"?>
-<episodedetails>
-  <title>Episode</title>
-</episodedetails>'''
-                async with aiofiles.open(nfo_path, 'w', encoding='utf-8') as f:
-                    await f.write(xml_content)
-                
                 # 父级目录的 tvshow.nfo
-                tvshow_dir = os.path.dirname(target_dir) # 也就是 target_folder (去掉Season)
+                tvshow_dir = os.path.dirname(target_dir) # 去掉 Season 目录
                 tvshow_nfo_path = os.path.join(tvshow_dir, "tvshow.nfo")
                 if not os.path.exists(tvshow_nfo_path):
-                    tv_xml_content = f'''<?xml version="1.0" encoding="utf-8" standalone="yes"?>
-<tvshow>
-  <title>{title}</title>
-  <originaltitle>{original_title}</originaltitle>
-  <year>{year}</year>
-  <plot>{plot}</plot>
-  <tmdbid>{tmdbid}</tmdbid>
-</tvshow>'''
-                    async with aiofiles.open(tvshow_nfo_path, 'w', encoding='utf-8') as f:
-                        await f.write(tv_xml_content)
+                    tv_xml_content = nfo_builder.build_tvshow_nfo(tmdb_data)
+                    await nfo_builder.write_nfo(tv_xml_content, tvshow_nfo_path)
+                    
+                # 分集暂且由 Emby 自行根据季集号提取
         except Exception as e:
-            logger.error(f"Failed to write NFO for {title}: {e}")
+            logger.error(f"Failed to build NFO for {target_name}: {e}")
 
 organizer = MediaOrganizer()

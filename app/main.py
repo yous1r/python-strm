@@ -7,12 +7,13 @@ import os
 from app.config import get_config
 from app.database import init_db
 from app.utils.logger import setup_logger
-from app.utils.scheduler import start_scheduler, stop_scheduler
+from app.utils.scheduler import start_scheduler, stop_scheduler, add_job
 
 # 初始化日志
 logger = setup_logger()
 
 from app.core.monitor.telegram import telegram_monitor
+from app.core.sync.engine import sync_engine
 import asyncio
 
 @asynccontextmanager
@@ -21,8 +22,13 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Python-STRM application...")
     await init_db()
     start_scheduler()
-    
+
     config = get_config()
+    
+    # 注册核心自动化同步任务
+    interval_mins = config.monitor.poll_interval if getattr(config.monitor, 'poll_interval', None) else 60
+    add_job(sync_engine.run_sync_task, "interval", minutes=interval_mins, id="auto_sync", replace_existing=True)
+
     if config.monitor.telegram.enabled:
         # 异步后台启动
         asyncio.create_task(telegram_monitor.start())

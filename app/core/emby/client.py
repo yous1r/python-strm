@@ -117,4 +117,26 @@ class EmbyClient:
             logger.error(f"Failed to get emby episodes: {e}")
         return []
 
+    async def refresh_library(self, instance_id: str) -> bool:
+        """全局触发 Emby 扫描库"""
+        instance = await emby_manager.get_instance(instance_id)
+        if not instance:
+            return False
+
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                res = await client.post(
+                    f"{instance['url']}/emby/Library/Refresh",
+                    params={"api_key": instance['api_key']}
+                )
+                if res.status_code in (200, 204):
+                    logger.info(f"Successfully triggered Emby library refresh for instance {instance['name']}")
+                    return True
+                else:
+                    logger.warning(f"Emby library refresh returned status {res.status_code}")
+                    return False
+        except Exception as e:
+            logger.error(f"Failed to refresh Emby library: {e}")
+            return False
+
 emby_client = EmbyClient()
