@@ -1,82 +1,66 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="row mb-4">
-    <div class="col-12">
-        <div class="card shadow-sm border-0 bg-dark text-light">
-            <div class="card-body p-4">
-                <h2 class="card-title fw-bold mb-4">
-                    <i class="bi bi-search text-primary me-2"></i>全网盘搜引擎
-                </h2>
-                
-                <form id="searchForm" class="row g-3">
-                    <div class="col-md-8">
-                        <input type="text" class="form-control form-control-lg bg-dark text-light border-secondary" id="keyword" placeholder="输入你想找的电影或剧集..." required>
-                    </div>
-                    <div class="col-md-2">
-                        <select class="form-select form-select-lg bg-dark text-light border-secondary" id="sourceType">
-                            <option value="all" selected>全网搜索</option>
-                            <option value="plugin">公共 BT & 盘搜</option>
-                        </select>
-                    </div>
-                    <div class="col-md-2">
-                        <button type="submit" class="btn btn-primary btn-lg w-100" id="searchBtn">
-                            <i class="bi bi-search me-1"></i>搜索
-                        </button>
-                    </div>
-                </form>
-            </div>
+<div class="glass-panel animate-fade-in delay-1" style="margin-bottom: 2rem;">
+    <h2 style="margin-bottom: 1.5rem; display: flex; align-items: center;">
+        <i class="fa-solid fa-search" style="color: var(--accent-primary); margin-right: 0.75rem;"></i> 全网盘搜引擎
+    </h2>
+    
+    <form id="searchForm" style="display: flex; gap: 1rem; align-items: stretch; flex-wrap: wrap;">
+        <div style="flex: 3; min-width: 300px;">
+            <input type="text" class="form-control" id="keyword" placeholder="输入你想找的电影或剧集..." required style="height: 100%;">
         </div>
-    </div>
+        <div style="flex: 1; min-width: 150px;">
+            <select class="form-control" id="sourceType" style="height: 100%;">
+                <option value="all" selected>全网搜索</option>
+                <option value="plugin">公共 BT & 盘搜</option>
+            </select>
+        </div>
+        <button type="submit" class="btn btn-primary" id="searchBtn" style="white-space: nowrap; padding: 0 2rem;">
+            <i class="fa-solid fa-search"></i> 搜索
+        </button>
+    </form>
 </div>
 
-<div class="row">
-    <div class="col-12">
-        <div id="loadingIndicator" class="text-center my-5 d-none">
-            <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
-                <span class="visually-hidden">Loading...</span>
-            </div>
-            <h5 class="text-secondary mt-3">引擎正在全力拉取数据，这可能需要十秒钟左右...</h5>
-        </div>
-        
-        <div id="resultsContainer" class="row row-cols-1 g-4">
-            <!-- Results will be populated here -->
-        </div>
-    </div>
+<div id="loadingIndicator" style="text-align: center; margin: 4rem 0; display: none;">
+    <i class="fa-solid fa-spinner fa-spin fa-3x" style="color: var(--accent-primary); margin-bottom: 1.5rem;"></i>
+    <h4 style="color: var(--text-secondary); font-weight: 400;">引擎正在全力拉取数据，这可能需要十秒钟左右...</h4>
+</div>
+
+<div id="resultsContainer" class="grid-2 animate-fade-in delay-2">
+    <!-- Results will be populated here -->
 </div>
 
 <!-- Transfer Modal -->
 <div class="modal fade" id="transferModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered">
-    <div class="modal-content bg-dark text-light border-secondary">
-      <div class="modal-header border-secondary">
-        <h5 class="modal-title"><i class="bi bi-cloud-arrow-down me-2"></i>一键转存</h5>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+    <div class="glass-panel" style="padding: 0; width: 100%; border: 1px solid var(--border); overflow: hidden;">
+      <div style="padding: 1.5rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2);">
+        <h3 style="margin: 0; font-size: 1.25rem;"><i class="fa-solid fa-cloud-arrow-down" style="margin-right: 0.5rem; color: var(--accent-primary);"></i> 一键转存</h3>
+        <button type="button" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 1.2rem;" data-bs-dismiss="modal"><i class="fa-solid fa-times"></i></button>
       </div>
-      <div class="modal-body">
-        <p>将转存至您的 115 监控目录：</p>
-        <select class="form-select bg-dark text-light border-secondary mb-3" id="targetDirSelect">
+      <div style="padding: 1.5rem;">
+        <p style="margin-bottom: 1rem; color: var(--text-secondary);">将转存至您的 115 监控目录：</p>
+        <select class="form-control" id="targetDirSelect" style="margin-bottom: 1.5rem;">
             {% for d in config.cloud115.sync_dirs %}
             <option value="{{ d.dir_id }}">{{ d.name }}</option>
             {% endfor %}
         </select>
         
-        <div id="receiveCodeContainer" class="d-none">
-            <label class="form-label text-secondary">提取码（如有）</label>
-            <input type="text" class="form-control bg-dark text-light border-secondary mb-3" id="receiveCodeInput" placeholder="输入4位提取码">
+        <div id="receiveCodeContainer" style="display: none; margin-bottom: 1.5rem;">
+            <label class="form-label">提取码（如有）</label>
+            <input type="text" class="form-control" id="receiveCodeInput" placeholder="输入4位提取码">
         </div>
         
         <input type="hidden" id="transferUrlInput">
       </div>
-      <div class="modal-footer border-secondary">
-        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+      <div style="padding: 1.5rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 1rem; background: rgba(0,0,0,0.2);">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
         <button type="button" class="btn btn-primary" id="confirmTransferBtn" onclick="submitTransfer()">开始转存并洗版</button>
       </div>
     </div>
   </div>
 </div>
-
-<!-- Toast logic removed as it's now globally injected via base.html and window.alert -->
 
 <script>
     function showNotification(message, type = 'success') {
@@ -96,14 +80,16 @@
         const container = document.getElementById('resultsContainer');
         
         btn.disabled = true;
-        loading.classList.remove('d-none');
+        const oldBtnText = btn.innerHTML;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 搜索中';
+        loading.style.display = 'block';
         container.innerHTML = '';
         
         try {
             const res = await fetch(`/api/v1/search/?keyword=${encodeURIComponent(keyword)}&source_type=${sourceType}`);
             const data = await res.json();
             
-            loading.classList.add('d-none');
+            loading.style.display = 'none';
             
             if (data.results && data.results.length > 0) {
                 data.results.forEach(item => {
@@ -111,13 +97,13 @@
                     if (item.links && item.links.length > 0) {
                         item.links.forEach(link => {
                             let linkTypeStr = link.type.toUpperCase() || "链接";
-                            let passHtml = link.password ? `<span class="badge bg-secondary ms-1">提取码: ${link.password}</span>` : "";
+                            let passHtml = link.password ? `<span style="font-size: 0.75rem; background: rgba(255,255,255,0.1); padding: 4px 8px; border-radius: 4px; margin-left: 8px;">提取码: ${link.password}</span>` : "";
                             linksHtml += `
-                                <div class="d-flex align-items-center mb-2 p-2 bg-black bg-opacity-25 rounded border border-secondary border-opacity-25">
-                                    <span class="badge bg-info text-dark me-2">${linkTypeStr}</span>
-                                    <span class="text-truncate flex-grow-1 text-secondary small">${link.url}</span>
+                                <div style="display: flex; align-items: center; margin-bottom: 0.75rem; padding: 0.75rem; background: rgba(0,0,0,0.2); border-radius: 0.5rem; border: 1px solid var(--border);">
+                                    <span style="font-size: 0.75rem; font-weight: 600; background: var(--accent-primary); color: white; padding: 4px 8px; border-radius: 4px; margin-right: 12px; white-space: nowrap;">${linkTypeStr}</span>
+                                    <span style="flex-grow: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: 0.85rem;" title="${link.url}">${link.url}</span>
                                     ${passHtml}
-                                    <button class="btn btn-sm btn-outline-primary ms-2" onclick="openTransferModal('${link.url}', '${link.password || ''}')">
+                                    <button class="btn btn-secondary" style="padding: 0.4rem 0.75rem; font-size: 0.85rem; margin-left: 12px; white-space: nowrap;" onclick="openTransferModal('${link.url}', '${link.password || ''}')">
                                         一键转存
                                     </button>
                                 </div>
@@ -126,35 +112,40 @@
                     }
                     
                     const card = document.createElement('div');
-                    card.className = 'col';
+                    card.className = 'glass-panel';
+                    card.style.padding = '1.5rem';
+                    card.style.display = 'flex';
+                    card.style.flexDirection = 'column';
                     card.innerHTML = `
-                        <div class="card h-100 bg-dark text-light border-secondary shadow-sm hover-elevate">
-                            <div class="card-body">
-                                <div class="d-flex justify-content-between mb-2">
-                                    <span class="badge bg-secondary">${item.channel || '磁力'}</span>
-                                    <small class="text-muted">${new Date(item.datetime).toLocaleString()}</small>
-                                </div>
-                                <h5 class="card-title text-primary">${item.title}</h5>
-                                <p class="card-text text-secondary small">${item.content || ''}</p>
-                                <hr class="border-secondary">
-                                ${linksHtml}
-                            </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                            <span style="font-size: 0.75rem; background: rgba(255,255,255,0.1); padding: 4px 8px; border-radius: 4px; color: var(--text-secondary); font-weight: 600; letter-spacing: 0.05em;">${item.channel || '磁力'}</span>
+                            <small style="color: var(--text-secondary);">${new Date(item.datetime).toLocaleString()}</small>
                         </div>
+                        <h3 style="color: var(--text-primary); margin-bottom: 0.75rem; font-size: 1.1rem; line-height: 1.5; font-weight: 600;">${item.title}</h3>
+                        <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 1.5rem; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.6; flex-grow: 1;">${item.content || ''}</p>
+                        <div style="border-top: 1px solid var(--border); margin: 0 0 1rem 0;"></div>
+                        ${linksHtml}
                     `;
                     container.appendChild(card);
                 });
             } else {
-                container.innerHTML = '<div class="col-12 text-center text-secondary my-5"><i class="bi bi-inbox fs-1 d-block mb-3"></i>未搜索到任何结果</div>';
+                container.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; color: var(--text-secondary); padding: 4rem;"><i class="fa-solid fa-inbox fa-4x" style="margin-bottom: 1.5rem; opacity: 0.5;"></i><h3>未搜索到任何结果</h3></div>';
             }
         } catch (err) {
-            loading.classList.add('d-none');
-            container.innerHTML = `<div class="col-12 text-center text-danger my-5"><i class="bi bi-x-circle fs-1 d-block mb-3"></i>搜索请求失败: ${err.message}</div>`;
+            loading.style.display = 'none';
+            container.innerHTML = `<div style="grid-column: 1 / -1; text-align: center; color: var(--error); padding: 4rem;"><i class="fa-solid fa-circle-exclamation fa-4x" style="margin-bottom: 1.5rem;"></i><h3>搜索请求失败: ${err.message}</h3></div>`;
         } finally {
             btn.disabled = false;
+            btn.innerHTML = oldBtnText;
         }
     });
 
-    const transferModal = new bootstrap.Modal(document.getElementById('transferModal'));
+    let transferModal;
+    document.addEventListener('DOMContentLoaded', () => {
+        if (typeof bootstrap !== 'undefined') {
+            transferModal = new bootstrap.Modal(document.getElementById('transferModal'));
+        }
+    });
     
     function openTransferModal(url, password) {
         document.getElementById('transferUrlInput').value = url;
@@ -162,14 +153,14 @@
         const codeContainer = document.getElementById('receiveCodeContainer');
         
         if (url.includes('115.com/s/')) {
-            codeContainer.classList.remove('d-none');
+            codeContainer.style.display = 'block';
             codeInput.value = password || '';
         } else {
-            codeContainer.classList.add('d-none');
+            codeContainer.style.display = 'none';
             codeInput.value = '';
         }
         
-        transferModal.show();
+        if (transferModal) transferModal.show();
     }
     
     async function submitTransfer() {
@@ -184,7 +175,8 @@
         }
         
         btn.disabled = true;
-        btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 投递中...';
+        const oldText = btn.innerHTML;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 投递中...';
         
         try {
             const res = await fetch('/api/v1/search/transfer', {
@@ -200,7 +192,7 @@
             const data = await res.json();
             if (res.ok) {
                 showNotification(data.msg || '转存成功！', 'success');
-                transferModal.hide();
+                if (transferModal) transferModal.hide();
             } else {
                 showNotification('失败: ' + (data.detail || '未知错误'), 'error');
             }
@@ -208,19 +200,8 @@
             showNotification('网络错误: ' + e.message, 'error');
         } finally {
             btn.disabled = false;
-            btn.innerHTML = '开始转存并洗版';
+            btn.innerHTML = oldText;
         }
     }
 </script>
-
-<style>
-.hover-elevate {
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-.hover-elevate:hover {
-    transform: translateY(-5px);
-    box-shadow: 0 .5rem 1rem rgba(0,0,0,.3)!important;
-    border-color: #0d6efd!important;
-}
-</style>
 {% endblock %}
