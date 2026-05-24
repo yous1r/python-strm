@@ -1,5 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
+from starlette.background import BackgroundTask
+import httpx
 from pydantic import BaseModel
 from loguru import logger
 from app.core.cloud115.client import client_115
@@ -61,20 +63,53 @@ async def list_dirs(dir_id: str = '0'):
 @router.get("/play/{pickcode}")
 @router.head("/play/{pickcode}")
 async def play_video(pickcode: str, request: Request):
-    """获取视频直链并302跳转 (这是STRM文件指向的地址)"""
+    """获取视频直链并通过本地代理中转视频流 (解决播放器 UA 防盗链)"""
     method = request.method
-    ua = request.headers.get("user-agent", "Unknown")
     client_ip = request.client.host if request.client else "Unknown IP"
     
-    # 伪装为 iPad UA 从而规避风控告警，因为飞牛等播放器的原生 UA 容易触发 115 风控
+    # 伪装为 iPad UA，绕过 115 CDN 风控
     ipad_ua = "Mozilla/5.0 (iPad; CPU OS 13_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.4 Mobile/15E148 Safari/604.1"
     
-    logger.info(f"▶️ [{method}] Playback requested for {pickcode} from {client_ip} (Player UA: {ua})")
-    
+    # 请求 115 API 获取绑在 iPad UA 上的 CDN 直链
     url = await client_115.get_download_url(pickcode, user_agent=ipad_ua)
     if not url:
         logger.error(f"❌ [{method}] Playback failed: No URL returned for {pickcode}")
         raise HTTPException(status_code=404, detail="Download URL not found")
         
-    logger.debug(f"🔄 [{method}] Redirecting {pickcode} to: {url[:100]}...")
-    return RedirectResponse(url=url, status_code=302)
+    logger.info(f"🔁 [{method}] Proxying {pickcode} for {client_ip} via local stream...")
+    
+    # 构造发给 115 CDN 的 Header，注入强制的 iPad UA
+    proxy_headers = {"User-Agent": ipad_ua}
+    if "range" in request.headers:
+        proxy_headers["Range"] = request.headers["range"]
+    if "if-range" in request.headers:
+        proxy_headers["If-Range"] = request.headers["if-range"]
+
+    # 启动异步流式代理
+    client = httpx.AsyncClient(verify=False)
+    req = client.build_request(method, url, headers=proxy_headers)
+    
+    try:
+        resp = await client.send(req, stream=True)
+    except Exception as e:
+        logger.error(f"❌ [{method}] Proxy connection failed: {e}")
+        await client.aclose()
+        raise HTTPException(status_code=502, detail="Bad Gateway to 115 CDN")
+    
+    # 过滤掉 115 CDN 响应中可能引发代理冲突的头，将其余的原样发给播放器
+    resp_headers = {}
+    for k, v in resp.headers.items():
+        if k.lower() not in ["server", "date", "transfer-encoding", "content-encoding", "connection"]:
+            resp_headers[k] = v
+            
+    async def cleanup():
+        await resp.aclose()
+        await client.aclose()
+        logger.debug(f"🛑 Proxy stream closed for {pickcode}")
+
+    return StreamingResponse(
+        resp.aiter_raw(),
+        status_code=resp.status_code,
+        headers=resp_headers,
+        background=BackgroundTask(cleanup)
+    )
