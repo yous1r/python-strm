@@ -160,6 +160,17 @@
             return new Promise((resolve) => {
                 const overlay = document.createElement('div');
                 overlay.className = 'custom-modal-overlay show';
+                // 显式强制内联样式，彻底避免因 CSS 缓存导致的 static 布局（即页面重排问题）
+                overlay.style.position = 'fixed';
+                overlay.style.top = '0';
+                overlay.style.left = '0';
+                overlay.style.width = '100vw';
+                overlay.style.height = '100vh';
+                overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.6)';
+                overlay.style.backdropFilter = 'blur(4px)';
+                overlay.style.display = 'flex';
+                overlay.style.alignItems = 'center';
+                overlay.style.justifyContent = 'center';
                 overlay.style.zIndex = '10000';
                 
                 const dialog = document.createElement('div');
