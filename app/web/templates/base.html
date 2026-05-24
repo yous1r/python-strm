@@ -35,6 +35,11 @@
                 </a>
             </li>
             <li>
+                <a href="/search" class="nav-link {% if request.url.path.startswith('/search') %}active{% endif %}">
+                    <i class="fa-solid fa-search"></i> 资源盘搜
+                </a>
+            </li>
+            <li>
                 <a href="/emby" class="nav-link {% if request.url.path.startswith('/emby') %}active{% endif %}">
                     <i class="fa-solid fa-tv"></i> Emby 媒体库
                 </a>
