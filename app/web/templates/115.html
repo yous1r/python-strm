@@ -20,6 +20,17 @@
                     <option value="direct">Direct 官方直链 (防封禁)</option>
                 </select>
             </div>
+            <div class="form-group" style="flex: 2;">
+                <label class="form-label">播放 UA 伪装 (防风控)</label>
+                <select id="c115_play_ua" class="form-control">
+                    <option value="">不伪装 (使用播放器原生 UA)</option>
+                    <option value="Mozilla/5.0 (iPad; CPU OS 13_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.4 Mobile/15E148 Safari/604.1">iPad (推荐, 绕过风控)</option>
+                    <option value="Go-http-client/1.1">Go-http-client/1.1 (飞牛原生/极易封号)</option>
+                    <option value="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36">Windows Chrome</option>
+                    <option value="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Safari/605.1.15">Mac Safari</option>
+                    <option value="115disk/30.2.0 (Windows NT 10.0; Win64; x64)">115 官方客户端</option>
+                </select>
+            </div>
         </div>
         <div class="form-group">
             <label class="form-label">Cookie (115.com)</label>
@@ -83,6 +94,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const config = await res.json();
             document.getElementById('c115_enabled').checked = config.cloud115.enabled;
             document.getElementById('c115_strm_type').value = config.cloud115.strm_type;
+            document.getElementById('c115_play_ua').value = config.cloud115.play_ua || "";
             document.getElementById('cookieInput').value = config.cloud115.cookie;
         }
     } catch (e) {
@@ -100,6 +112,7 @@ async function saveCookie() {
         cloud115: {
             enabled: document.getElementById('c115_enabled').checked,
             strm_type: document.getElementById('c115_strm_type').value,
+            play_ua: document.getElementById('c115_play_ua').value,
             cookie: document.getElementById('cookieInput').value
         }
     };

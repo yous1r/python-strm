@@ -20,6 +20,7 @@ class Cloud115Config(BaseModel):
     enabled: bool = False
     cookie: str = ""
     strm_type: str = "pickcode"
+    play_ua: str = ""
     sync_dirs: List[SyncDirConfig] = []
 
 class Cloud123Config(BaseModel):

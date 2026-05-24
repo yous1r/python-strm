@@ -12,9 +12,12 @@ class StrmGenerator115:
 
     async def generate_strm(self, pickcode: str, file_name: str, current_dir: str, root_dir: str, base_url: str) -> str:
         """生成单个STRM文件，支持智能刮削打平"""
-        strm_content = f"{base_url.rstrip('/')}/api/v1/115/play/{pickcode}"
-        
         config = get_config()
+        
+        strm_content = f"{base_url.rstrip('/')}/api/v1/115/play/{pickcode}"
+        if config.cloud115.play_ua:
+            strm_content += f"|User-Agent={config.cloud115.play_ua}"
+        
         if config.organize.enabled:
             # 智能整理模式：忽略网盘原生路径，打平为 大类/地区/特定名称
             category, region, target_folder, target_name, tmdb_data = await organizer.get_organized_path(file_name)

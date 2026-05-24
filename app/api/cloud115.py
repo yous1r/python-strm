@@ -1,10 +1,10 @@
 from fastapi import APIRouter, HTTPException, Request, Response
-from fastapi.responses import RedirectResponse, StreamingResponse
-import httpx
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from loguru import logger
 from app.core.cloud115.client import client_115
 from app.core.cloud115.auth import auth_manager
+from app.config import get_config
 
 router = APIRouter(prefix="/api/v1/115", tags=["115网盘"])
 
@@ -59,76 +59,31 @@ async def list_dirs(dir_id: str = '0'):
         raise HTTPException(status_code=400, detail=res["error"])
     return res
 
-@router.get("/play/{pickcode}")
-@router.head("/play/{pickcode}")
+@router.get("/play/{pickcode:path}")
+@router.head("/play/{pickcode:path}")
 async def play_video(pickcode: str, request: Request):
-    """获取视频直链并通过本地代理中转视频流 (解决播放器 UA 防盗链)"""
+    """获取视频直链并302跳转 (兼容带 |User-Agent 的请求)"""
     method = request.method
     client_ip = request.client.host if request.client else "Unknown IP"
     
-    # 伪装为 iPad UA，绕过 115 CDN 风控
-    ipad_ua = "Mozilla/5.0 (iPad; CPU OS 13_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.4 Mobile/15E148 Safari/604.1"
+    # 兼容部分播放器将 |User-Agent 当作路径发过来的情况 (修复 404)
+    if "|" in pickcode:
+        pickcode = pickcode.split("|")[0]
     
-    # 请求 115 API 获取绑在 iPad UA 上的 CDN 直链
-    url = await client_115.get_download_url(pickcode, user_agent=ipad_ua)
+    # 读取用户配置的 UA
+    config = get_config()
+    target_ua = config.cloud115.play_ua
+    if not target_ua:
+        # 如果未强制配置，使用播放器原始 UA
+        target_ua = request.headers.get("user-agent", "Unknown")
+        
+    logger.info(f"▶️ [{method}] Playback requested for {pickcode} from {client_ip} (Target UA: {target_ua})")
+    
+    # 请求 115 API 获取绑在该 UA 上的 CDN 直链
+    url = await client_115.get_download_url(pickcode, user_agent=target_ua)
     if not url:
         logger.error(f"❌ [{method}] Playback failed: No URL returned for {pickcode}")
         raise HTTPException(status_code=404, detail="Download URL not found")
         
-    logger.info(f"🔁 [{method}] Proxying {pickcode} for {client_ip} via local stream...")
-    
-    # 构造发给 115 CDN 的 Header，注入强制的 iPad UA
-    proxy_headers = {"User-Agent": ipad_ua}
-    if "range" in request.headers:
-        proxy_headers["Range"] = request.headers["range"]
-    if "if-range" in request.headers:
-        proxy_headers["If-Range"] = request.headers["if-range"]
-
-    # 启动异步流式代理
-    client = httpx.AsyncClient(verify=False)
-    req = client.build_request(method, url, headers=proxy_headers)
-    
-    # 处理 HEAD 请求
-    if method == "HEAD":
-        try:
-            resp = await client.send(req)
-            resp_headers = {}
-            for k, v in resp.headers.items():
-                if k.lower() not in ["server", "date", "transfer-encoding", "content-encoding", "connection", "content-disposition"]:
-                    resp_headers[k] = v
-            await client.aclose()
-            return Response(status_code=resp.status_code, headers=resp_headers)
-        except Exception as e:
-            logger.error(f"❌ [{method}] HEAD proxy failed: {e}")
-            await client.aclose()
-            raise HTTPException(status_code=502, detail="Bad Gateway")
-
-    # 处理 GET 请求，流式转发
-    try:
-        resp = await client.send(req, stream=True, follow_redirects=True)
-    except Exception as e:
-        logger.error(f"❌ [{method}] Proxy connection failed: {e}")
-        await client.aclose()
-        raise HTTPException(status_code=502, detail="Bad Gateway to 115 CDN")
-    
-    # 过滤可能引发播放器冲突的头
-    resp_headers = {}
-    for k, v in resp.headers.items():
-        if k.lower() not in ["server", "date", "transfer-encoding", "content-encoding", "connection", "content-disposition"]:
-            resp_headers[k] = v
-            
-    async def stream_generator():
-        try:
-            async for chunk in resp.aiter_bytes(chunk_size=1024 * 1024):  # 1MB 块大小，优化视频缓冲
-                yield chunk
-        except Exception as e:
-            logger.debug(f"⚠️ Proxy stream interrupted for {pickcode}: {e}")
-        finally:
-            await resp.aclose()
-            await client.aclose()
-
-    return StreamingResponse(
-        stream_generator(),
-        status_code=resp.status_code,
-        headers=resp_headers
-    )
+    logger.debug(f"🔄 [{method}] Redirecting {pickcode} to: {url[:100]}...")
+    return RedirectResponse(url=url, status_code=302)
