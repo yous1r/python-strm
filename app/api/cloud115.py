@@ -59,10 +59,12 @@ async def list_dirs(dir_id: str = '0'):
         raise HTTPException(status_code=400, detail=res["error"])
     return res
 
-@router.get("/play/{pickcode:path}")
-@router.head("/play/{pickcode:path}")
-async def play_video(pickcode: str, request: Request):
-    """获取视频直链并302跳转 (兼容带 |User-Agent 的请求)"""
+@router.get("/play/{pickcode}")
+@router.head("/play/{pickcode}")
+@router.get("/play/{pickcode}/{filename:path}")
+@router.head("/play/{pickcode}/{filename:path}")
+async def play_video(pickcode: str, request: Request, filename: str = ""):
+    """获取视频直链并302跳转 (兼容带 |User-Agent 的请求，并支持附加文件名以欺骗播放器)"""
     method = request.method
     client_ip = request.client.host if request.client else "Unknown IP"
     

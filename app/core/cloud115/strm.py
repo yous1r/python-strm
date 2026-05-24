@@ -14,7 +14,9 @@ class StrmGenerator115:
         """生成单个STRM文件，支持智能刮削打平"""
         config = get_config()
         
-        strm_content = f"{base_url.rstrip('/')}/api/v1/115/play/{pickcode}"
+        import urllib.parse
+        encoded_name = urllib.parse.quote(file_name)
+        strm_content = f"{base_url.rstrip('/')}/api/v1/115/play/{pickcode}/{encoded_name}"
         if config.cloud115.play_ua:
             strm_content += f"|User-Agent={config.cloud115.play_ua}"
         
