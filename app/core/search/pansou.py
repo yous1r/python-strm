@@ -14,9 +14,9 @@ class PansouClient:
         source_type: "tg", "plugin", "all"
         """
         params = {
-            "keyword": keyword,
-            "source_type": source_type,
-            "result_type": "results" # 直接返回结果列表
+            "kw": keyword,
+            "src": source_type,
+            "res": "results" # 直接返回结果列表
         }
         
         logger.info(f"🔍 正在向 Pansou 引擎搜索关键字: {keyword}")
