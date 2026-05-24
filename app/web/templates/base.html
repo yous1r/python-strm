@@ -145,6 +145,58 @@
             }, 3000);
         };
 
+        // Custom Async Confirm Modal
+        window.customConfirm = function(msg) {
+            return new Promise((resolve) => {
+                const overlay = document.createElement('div');
+                overlay.className = 'custom-modal-overlay show';
+                overlay.style.zIndex = '10000';
+                
+                const dialog = document.createElement('div');
+                dialog.className = 'custom-modal-dialog glass-panel';
+                dialog.style.padding = '1.5rem';
+                dialog.style.display = 'flex';
+                dialog.style.flexDirection = 'column';
+                dialog.style.gap = '1.5rem';
+                
+                const text = document.createElement('div');
+                text.style.color = 'var(--text-primary)';
+                text.style.fontSize = '1.1rem';
+                text.style.whiteSpace = 'pre-wrap';
+                text.textContent = msg;
+                
+                const buttons = document.createElement('div');
+                buttons.style.display = 'flex';
+                buttons.style.justifyContent = 'flex-end';
+                buttons.style.gap = '1rem';
+                
+                const btnNo = document.createElement('button');
+                btnNo.className = 'btn btn-secondary';
+                btnNo.textContent = '取消';
+                btnNo.onclick = () => {
+                    overlay.classList.remove('show');
+                    setTimeout(() => overlay.remove(), 300);
+                    resolve(false);
+                };
+                
+                const btnYes = document.createElement('button');
+                btnYes.className = 'btn btn-primary';
+                btnYes.textContent = '确定';
+                btnYes.onclick = () => {
+                    overlay.classList.remove('show');
+                    setTimeout(() => overlay.remove(), 300);
+                    resolve(true);
+                };
+                
+                buttons.appendChild(btnNo);
+                buttons.appendChild(btnYes);
+                dialog.appendChild(text);
+                dialog.appendChild(buttons);
+                overlay.appendChild(dialog);
+                document.body.appendChild(overlay);
+            });
+        };
+
         // 劫持原生 alert
         window.alert = function(msg) {
             showToast(msg, 'warning');

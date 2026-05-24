@@ -314,9 +314,12 @@ async function submitAddInstance(e) {
 
 async function deleteCurrentInstance() {
     if(!currentInstanceId) return;
-    if(!confirm("确定要解绑并删除当前选中的 Emby 服务器吗？")) return;
+    
+    const isConfirmed = await customConfirm("确定要解绑并删除当前选中的 Emby 服务器吗？");
+    if(!isConfirmed) return;
     
     const deleteBtn = document.getElementById('deleteInstanceBtn');
+    const original = deleteBtn.innerHTML;
     deleteBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
     deleteBtn.disabled = true;
     

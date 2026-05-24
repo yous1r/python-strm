@@ -66,9 +66,12 @@ async def play_video(pickcode: str, request: Request):
     ua = request.headers.get("user-agent", "Unknown")
     client_ip = request.client.host if request.client else "Unknown IP"
     
-    logger.info(f"▶️ [{method}] Playback requested for {pickcode} from {client_ip} (UA: {ua})")
+    # 伪装为 iPad UA 从而规避风控告警，因为飞牛等播放器的原生 UA 容易触发 115 风控
+    ipad_ua = "Mozilla/5.0 (iPad; CPU OS 13_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.4 Mobile/15E148 Safari/604.1"
     
-    url = await client_115.get_download_url(pickcode, user_agent=ua)
+    logger.info(f"▶️ [{method}] Playback requested for {pickcode} from {client_ip} (Player UA: {ua})")
+    
+    url = await client_115.get_download_url(pickcode, user_agent=ipad_ua)
     if not url:
         logger.error(f"❌ [{method}] Playback failed: No URL returned for {pickcode}")
         raise HTTPException(status_code=404, detail="Download URL not found")

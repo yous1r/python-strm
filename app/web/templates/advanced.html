@@ -76,7 +76,8 @@ async function loadConfig() {
 }
 
 async function confirmSave() {
-    if(!confirm("⚠️ 警告：越权修改系统底层结构。\n\n您确定要暴力覆盖全局配置并立即生效吗？\n如果填写错误的数据类型，系统可能抛出严重异常。")) {
+    const isConfirmed = await customConfirm("⚠️ 警告：越权修改系统底层结构。\n\n您确定要暴力覆盖全局配置并立即生效吗？\n如果填写错误的数据类型，系统可能抛出严重异常。");
+    if(!isConfirmed) {
         return;
     }
     

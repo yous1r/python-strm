@@ -265,8 +265,9 @@ function renderSyncDirs() {
     });
 }
 
-function removeSyncDir(idx) {
-    if(confirm('确定移除该监控目录吗？移除后后台将不再扫描该目录。')) {
+async function removeSyncDir(idx) {
+    const isConfirmed = await customConfirm('确定移除该监控目录吗？移除后后台将不再扫描该目录。');
+    if(isConfirmed) {
         currentSyncDirs.splice(idx, 1);
         saveSyncDirs();
     }
@@ -557,7 +558,8 @@ function closeSyncHistory() {
 }
 
 async function triggerSyncNow() {
-    if(!confirm("确定要立即在后台唤醒引擎扫描所有监控目录吗？\n(这可能需要一些时间，完成后会通过推送通知您)")) return;
+    const isConfirmed = await customConfirm("确定要立即在后台唤醒引擎扫描所有监控目录吗？\n(这可能需要一些时间，完成后会通过推送通知您)");
+    if(!isConfirmed) return;
     
     try {
         const res = await fetch('/api/v1/system/sync/run', { method: 'POST' });

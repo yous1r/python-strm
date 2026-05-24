@@ -12,9 +12,7 @@ class StrmGenerator115:
 
     async def generate_strm(self, pickcode: str, file_name: str, current_dir: str, root_dir: str, base_url: str) -> str:
         """生成单个STRM文件，支持智能刮削打平"""
-        # 追加标准电脑端 UA，强制播放器使用此 UA，从而绕过 115 API 和 CDN 对特殊播放器 UA (如飞牛影视) 的风控
-        std_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        strm_content = f"{base_url.rstrip('/')}/api/v1/115/play/{pickcode}|User-Agent={std_ua}"
+        strm_content = f"{base_url.rstrip('/')}/api/v1/115/play/{pickcode}"
         
         config = get_config()
         if config.organize.enabled:
