@@ -32,12 +32,12 @@
 </div>
 
 <!-- Transfer Modal -->
-<div class="modal fade" id="transferModal" tabindex="-1">
-  <div class="modal-dialog modal-dialog-centered">
+<div class="custom-modal-overlay" id="transferModal">
+  <div class="custom-modal-dialog">
     <div class="glass-panel" style="padding: 0; width: 100%; border: 1px solid var(--border); overflow: hidden;">
       <div style="padding: 1.5rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2);">
         <h3 style="margin: 0; font-size: 1.25rem;"><i class="fa-solid fa-cloud-arrow-down" style="margin-right: 0.5rem; color: var(--accent-primary);"></i> 一键转存</h3>
-        <button type="button" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 1.2rem;" data-bs-dismiss="modal"><i class="fa-solid fa-times"></i></button>
+        <button type="button" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 1.2rem;" onclick="closeTransferModal()"><i class="fa-solid fa-times"></i></button>
       </div>
       <div style="padding: 1.5rem;">
         <p style="margin-bottom: 1rem; color: var(--text-secondary);">将转存至您的 115 监控目录：</p>
@@ -55,7 +55,7 @@
         <input type="hidden" id="transferUrlInput">
       </div>
       <div style="padding: 1.5rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 1rem; background: rgba(0,0,0,0.2);">
-        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+        <button type="button" class="btn btn-secondary" onclick="closeTransferModal()">取消</button>
         <button type="button" class="btn btn-primary" id="confirmTransferBtn" onclick="submitTransfer()">开始转存并洗版</button>
       </div>
     </div>
@@ -140,12 +140,12 @@
         }
     });
 
-    let transferModal;
-    document.addEventListener('DOMContentLoaded', () => {
-        if (typeof bootstrap !== 'undefined') {
-            transferModal = new bootstrap.Modal(document.getElementById('transferModal'));
+    function closeTransferModal() {
+        const modal = document.getElementById('transferModal');
+        if (modal) {
+            modal.classList.remove('show');
         }
-    });
+    }
     
     function openTransferModal(url, password) {
         document.getElementById('transferUrlInput').value = url;
@@ -160,7 +160,10 @@
             codeInput.value = '';
         }
         
-        if (transferModal) transferModal.show();
+        const modal = document.getElementById('transferModal');
+        if (modal) {
+            modal.classList.add('show');
+        }
     }
     
     async function submitTransfer() {
@@ -192,7 +195,7 @@
             const data = await res.json();
             if (res.ok) {
                 showNotification(data.msg || '转存成功！', 'success');
-                if (transferModal) transferModal.hide();
+                closeTransferModal();
             } else {
                 showNotification('失败: ' + (data.detail || '未知错误'), 'error');
             }

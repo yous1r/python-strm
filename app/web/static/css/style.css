@@ -15,6 +15,16 @@
     --border: rgba(255, 255, 255, 0.08);
 }
 
+:root[data-theme="light"] {
+    --bg-primary: #f1f5f9;
+    --bg-secondary: #ffffff;
+    --bg-panel: rgba(255, 255, 255, 0.8);
+    --text-primary: #0f1115;
+    --text-secondary: #475569;
+    --border: rgba(0, 0, 0, 0.1);
+    --accent-glow: rgba(59, 130, 246, 0.15);
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -261,3 +271,83 @@ h1, h2, h3, h4, h5, h6 {
 .delay-1 { animation-delay: 0.1s; opacity: 0; }
 .delay-2 { animation-delay: 0.2s; opacity: 0; }
 .delay-3 { animation-delay: 0.3s; opacity: 0; }
+
+/* Native Custom Toast */
+.custom-toast-container {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.custom-toast {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 250px;
+    background: var(--bg-secondary);
+    border-left: 4px solid var(--accent-primary);
+    border-radius: 8px;
+    padding: 16px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    color: var(--text-primary);
+    transform: translateX(120%);
+    opacity: 0;
+    transition: all 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+
+.custom-toast.show {
+    transform: translateX(0);
+    opacity: 1;
+}
+
+.custom-toast.toast-success { border-left-color: var(--success); }
+.custom-toast.toast-error { border-left-color: var(--error); }
+.custom-toast.toast-warning { border-left-color: var(--warning); }
+.custom-toast.toast-primary { border-left-color: var(--accent-primary); }
+
+.custom-toast-icon { font-size: 1.25rem; }
+.custom-toast.toast-success .custom-toast-icon { color: var(--success); }
+.custom-toast.toast-error .custom-toast-icon { color: var(--error); }
+.custom-toast.toast-warning .custom-toast-icon { color: var(--warning); }
+.custom-toast.toast-primary .custom-toast-icon { color: var(--accent-primary); }
+
+.custom-toast-message {
+    flex-grow: 1;
+    font-size: 0.95rem;
+    line-height: 1.4;
+}
+
+/* Native Modal Overlay */
+.custom-modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    z-index: 9990;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s ease;
+}
+
+.custom-modal-overlay.show {
+    opacity: 1;
+    visibility: visible;
+}
+
+.custom-modal-dialog {
+    width: 100%;
+    max-width: 500px;
+    transform: translateY(-20px);
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.custom-modal-overlay.show .custom-modal-dialog {
+    transform: translateY(0);
+}
