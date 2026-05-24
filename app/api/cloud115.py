@@ -1,6 +1,5 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse, StreamingResponse
-from starlette.background import BackgroundTask
 import httpx
 from pydantic import BaseModel
 from loguru import logger
@@ -89,27 +88,47 @@ async def play_video(pickcode: str, request: Request):
     client = httpx.AsyncClient(verify=False)
     req = client.build_request(method, url, headers=proxy_headers)
     
+    # 处理 HEAD 请求
+    if method == "HEAD":
+        try:
+            resp = await client.send(req)
+            resp_headers = {}
+            for k, v in resp.headers.items():
+                if k.lower() not in ["server", "date", "transfer-encoding", "content-encoding", "connection", "content-disposition"]:
+                    resp_headers[k] = v
+            await client.aclose()
+            return Response(status_code=resp.status_code, headers=resp_headers)
+        except Exception as e:
+            logger.error(f"❌ [{method}] HEAD proxy failed: {e}")
+            await client.aclose()
+            raise HTTPException(status_code=502, detail="Bad Gateway")
+
+    # 处理 GET 请求，流式转发
     try:
-        resp = await client.send(req, stream=True)
+        resp = await client.send(req, stream=True, follow_redirects=True)
     except Exception as e:
         logger.error(f"❌ [{method}] Proxy connection failed: {e}")
         await client.aclose()
         raise HTTPException(status_code=502, detail="Bad Gateway to 115 CDN")
     
-    # 过滤掉 115 CDN 响应中可能引发代理冲突的头，将其余的原样发给播放器
+    # 过滤可能引发播放器冲突的头
     resp_headers = {}
     for k, v in resp.headers.items():
-        if k.lower() not in ["server", "date", "transfer-encoding", "content-encoding", "connection"]:
+        if k.lower() not in ["server", "date", "transfer-encoding", "content-encoding", "connection", "content-disposition"]:
             resp_headers[k] = v
             
-    async def cleanup():
-        await resp.aclose()
-        await client.aclose()
-        logger.debug(f"🛑 Proxy stream closed for {pickcode}")
+    async def stream_generator():
+        try:
+            async for chunk in resp.aiter_bytes(chunk_size=1024 * 1024):  # 1MB 块大小，优化视频缓冲
+                yield chunk
+        except Exception as e:
+            logger.debug(f"⚠️ Proxy stream interrupted for {pickcode}: {e}")
+        finally:
+            await resp.aclose()
+            await client.aclose()
 
     return StreamingResponse(
-        resp.aiter_raw(),
+        stream_generator(),
         status_code=resp.status_code,
-        headers=resp_headers,
-        background=BackgroundTask(cleanup)
+        headers=resp_headers
     )
