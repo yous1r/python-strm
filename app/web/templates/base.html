@@ -63,6 +63,12 @@
                 </a>
             </li>
         </ul>
+        
+        <div style="margin-top: auto; padding-top: 1rem; border-top: 1px solid var(--border);">
+            <button id="themeToggleBtn" class="btn btn-secondary" style="width: 100%; justify-content: flex-start; background: transparent; border: none; padding: 0.875rem 1rem; color: var(--text-secondary);">
+                <i class="fa-solid fa-moon" id="themeIcon"></i> <span id="themeText">切换主题</span>
+            </button>
+        </div>
     </aside>
 
     <main class="main-content">
@@ -90,12 +96,14 @@
         function applyTheme(theme) {
             document.documentElement.setAttribute('data-theme', theme);
             localStorage.setItem('strm_theme', theme);
-            if (theme === 'light') {
-                themeIcon.className = 'fa-solid fa-sun';
-                themeText.textContent = '浅色模式';
-            } else {
-                themeIcon.className = 'fa-solid fa-moon';
-                themeText.textContent = '暗黑模式';
+            if(themeIcon && themeText) {
+                if (theme === 'light') {
+                    themeIcon.className = 'fa-solid fa-sun';
+                    themeText.textContent = '浅色模式';
+                } else {
+                    themeIcon.className = 'fa-solid fa-moon';
+                    themeText.textContent = '暗黑模式';
+                }
             }
         }
         
@@ -103,10 +111,12 @@
         const savedTheme = localStorage.getItem('strm_theme') || 'dark';
         applyTheme(savedTheme);
         
-        themeToggleBtn.addEventListener('click', () => {
-            const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
-            applyTheme(currentTheme === 'dark' ? 'light' : 'dark');
-        });
+        if (themeToggleBtn) {
+            themeToggleBtn.addEventListener('click', () => {
+                const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+                applyTheme(currentTheme === 'dark' ? 'light' : 'dark');
+            });
+        }
 
         // --- Custom Vanilla Toast Logic ---
         window.showToast = function(message, type = 'primary') {
