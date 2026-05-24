@@ -49,7 +49,7 @@ app = FastAPI(
 
 # 挂载静态文件
 os.makedirs("app/web/static", exist_ok=True)
-from app.api import cloud115, cloud123, emby, strm, organize, web, system
+from app.api import cloud115, cloud123, emby, strm, organize, search, web, system
 
 app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
 
@@ -62,7 +62,8 @@ app.include_router(cloud115.router)
 app.include_router(cloud123.router)
 app.include_router(emby.router)
 app.include_router(strm.router)
-app.include_router(organize.router)
+app.include_router(organize.router, prefix="/api/v1")
+app.include_router(search.router, prefix="/api/v1")
 app.include_router(system.router, prefix="/api/v1")
 app.include_router(web.router)
 

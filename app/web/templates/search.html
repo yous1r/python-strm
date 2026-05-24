@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card shadow-sm border-0 bg-dark text-light">
+            <div class="card-body p-4">
+                <h2 class="card-title fw-bold mb-4">
+                    <i class="bi bi-search text-primary me-2"></i>全网盘搜引擎
+                </h2>
+                
+                <form id="searchForm" class="row g-3">
+                    <div class="col-md-8">
+                        <input type="text" class="form-control form-control-lg bg-dark text-light border-secondary" id="keyword" placeholder="输入你想找的电影或剧集..." required>
+                    </div>
+                    <div class="col-md-2">
+                        <select class="form-select form-select-lg bg-dark text-light border-secondary" id="sourceType">
+                            <option value="all" selected>全网搜索</option>
+                            <option value="plugin">公共 BT & 盘搜</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <button type="submit" class="btn btn-primary btn-lg w-100" id="searchBtn">
+                            <i class="bi bi-search me-1"></i>搜索
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div id="loadingIndicator" class="text-center my-5 d-none">
+            <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <h5 class="text-secondary mt-3">引擎正在全力拉取数据，这可能需要十秒钟左右...</h5>
+        </div>
+        
+        <div id="resultsContainer" class="row row-cols-1 g-4">
+            <!-- Results will be populated here -->
+        </div>
+    </div>
+</div>
+
+<!-- Transfer Modal -->
+<div class="modal fade" id="transferModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content bg-dark text-light border-secondary">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title"><i class="bi bi-cloud-arrow-down me-2"></i>一键转存</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p>将转存至您的 115 监控目录：</p>
+        <select class="form-select bg-dark text-light border-secondary mb-3" id="targetDirSelect">
+            {% for d in config.cloud115.sync_dirs %}
+            <option value="{{ d.dir_id }}">{{ d.name }}</option>
+            {% endfor %}
+        </select>
+        
+        <div id="receiveCodeContainer" class="d-none">
+            <label class="form-label text-secondary">提取码（如有）</label>
+            <input type="text" class="form-control bg-dark text-light border-secondary mb-3" id="receiveCodeInput" placeholder="输入4位提取码">
+        </div>
+        
+        <input type="hidden" id="transferUrlInput">
+      </div>
+      <div class="modal-footer border-secondary">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+        <button type="button" class="btn btn-primary" id="confirmTransferBtn" onclick="submitTransfer()">开始转存并洗版</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+    document.getElementById('searchForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        const keyword = document.getElementById('keyword').value;
+        const sourceType = document.getElementById('sourceType').value;
+        const btn = document.getElementById('searchBtn');
+        const loading = document.getElementById('loadingIndicator');
+        const container = document.getElementById('resultsContainer');
+        
+        btn.disabled = true;
+        loading.classList.remove('d-none');
+        container.innerHTML = '';
+        
+        try {
+            const res = await fetch(`/api/v1/search/?keyword=${encodeURIComponent(keyword)}&source_type=${sourceType}`);
+            const data = await res.json();
+            
+            loading.classList.add('d-none');
+            
+            if (data.results && data.results.length > 0) {
+                data.results.forEach(item => {
+                    let linksHtml = '';
+                    if (item.links && item.links.length > 0) {
+                        item.links.forEach(link => {
+                            let linkTypeStr = link.type.toUpperCase() || "链接";
+                            let passHtml = link.password ? `<span class="badge bg-secondary ms-1">提取码: ${link.password}</span>` : "";
+                            linksHtml += `
+                                <div class="d-flex align-items-center mb-2 p-2 bg-black bg-opacity-25 rounded border border-secondary border-opacity-25">
+                                    <span class="badge bg-info text-dark me-2">${linkTypeStr}</span>
+                                    <span class="text-truncate flex-grow-1 text-secondary small">${link.url}</span>
+                                    ${passHtml}
+                                    <button class="btn btn-sm btn-outline-primary ms-2" onclick="openTransferModal('${link.url}', '${link.password || ''}')">
+                                        一键转存
+                                    </button>
+                                </div>
+                            `;
+                        });
+                    }
+                    
+                    const card = document.createElement('div');
+                    card.className = 'col';
+                    card.innerHTML = `
+                        <div class="card h-100 bg-dark text-light border-secondary shadow-sm hover-elevate">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between mb-2">
+                                    <span class="badge bg-secondary">${item.channel || '磁力'}</span>
+                                    <small class="text-muted">${new Date(item.datetime).toLocaleString()}</small>
+                                </div>
+                                <h5 class="card-title text-primary">${item.title}</h5>
+                                <p class="card-text text-secondary small">${item.content || ''}</p>
+                                <hr class="border-secondary">
+                                ${linksHtml}
+                            </div>
+                        </div>
+                    `;
+                    container.appendChild(card);
+                });
+            } else {
+                container.innerHTML = '<div class="col-12 text-center text-secondary my-5"><i class="bi bi-inbox fs-1 d-block mb-3"></i>未搜索到任何结果</div>';
+            }
+        } catch (err) {
+            loading.classList.add('d-none');
+            container.innerHTML = `<div class="col-12 text-center text-danger my-5"><i class="bi bi-x-circle fs-1 d-block mb-3"></i>搜索请求失败: ${err.message}</div>`;
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
+    const transferModal = new bootstrap.Modal(document.getElementById('transferModal'));
+    
+    function openTransferModal(url, password) {
+        document.getElementById('transferUrlInput').value = url;
+        const codeInput = document.getElementById('receiveCodeInput');
+        const codeContainer = document.getElementById('receiveCodeContainer');
+        
+        if (url.includes('115.com/s/')) {
+            codeContainer.classList.remove('d-none');
+            codeInput.value = password || '';
+        } else {
+            codeContainer.classList.add('d-none');
+            codeInput.value = '';
+        }
+        
+        transferModal.show();
+    }
+    
+    async function submitTransfer() {
+        const url = document.getElementById('transferUrlInput').value;
+        const dirId = document.getElementById('targetDirSelect').value;
+        const receiveCode = document.getElementById('receiveCodeInput').value;
+        const btn = document.getElementById('confirmTransferBtn');
+        
+        if (!dirId) {
+            alert('请选择目标目录');
+            return;
+        }
+        
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 投递中...';
+        
+        try {
+            const res = await fetch('/api/v1/search/transfer', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    url: url,
+                    target_dir_id: dirId,
+                    receive_code: receiveCode
+                })
+            });
+            
+            const data = await res.json();
+            if (res.ok) {
+                alert(data.msg);
+                transferModal.hide();
+            } else {
+                alert('失败: ' + (data.detail || '未知错误'));
+            }
+        } catch (e) {
+            alert('网络错误: ' + e.message);
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '开始转存并洗版';
+        }
+    }
+</script>
+
+<style>
+.hover-elevate {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.hover-elevate:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 .5rem 1rem rgba(0,0,0,.3)!important;
+    border-color: #0d6efd!important;
+}
+</style>
+{% endblock %}

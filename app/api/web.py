@@ -61,3 +61,11 @@ async def page_advanced(request: Request):
         "config": config,
         "title": "全局高阶配置"
     })
+
+@router.get("/search")
+async def page_search(request: Request):
+    config = get_config()
+    return templates.TemplateResponse(request, "search.html", {
+        "config": config,
+        "title": "资源盘搜"
+    })

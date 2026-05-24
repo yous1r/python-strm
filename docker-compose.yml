@@ -5,7 +5,6 @@ services:
     build: .
     container_name: python-strm
     restart: always
-    network_mode: bridge
     ports:
       - "8095:8095"
     volumes:
@@ -17,3 +16,22 @@ services:
       - ./config.yaml:/app/config.yaml
     environment:
       - TZ=Asia/Shanghai
+    depends_on:
+      - pansou
+
+  pansou:
+    image: ghcr.io/fish2018/pansou:latest
+    container_name: pansou
+    restart: always
+    ports:
+      - "8888:8888"
+    environment:
+      - PORT=8888
+      - ENABLED_PLUGINS=btdig,nyaa,thepiratebay,pan666,pansearch,panta,yunsou,qupansou,susu,zhizhen,alupan,xiaozhang,libvio,javdb,weibo,clmao,xiaoji
+      - CACHE_ENABLED=true
+      - ASYNC_PLUGIN_ENABLED=true
+    volumes:
+      - pansou-cache:/app/cache
+
+volumes:
+  pansou-cache:

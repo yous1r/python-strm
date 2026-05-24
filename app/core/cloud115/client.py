@@ -161,5 +161,97 @@ class Cloud115Client:
                 logger.error(f"❌ [ERROR] Failed to get download url for pickcode {pickcode}: {e}")
                 return ""
 
+    async def offline_add_url(self, url: str, target_dir_id: str = "0") -> Dict[str, Any]:
+        """将磁力链、种子链接或HTTP链接添加到115离线下载"""
+        if not self.client:
+            return {"state": False, "error": "Client not initialized"}
+        async with self.semaphore:
+            try:
+                # 115 离线下载要求传入 target_dir_id 为 string，如果是 "0" 代表根目录
+                logger.info(f"Adding offline task to 115: {url} -> dir: {target_dir_id}")
+                result = await asyncio.to_thread(
+                    self.client.offline_add_url,
+                    url,
+                    payload={"wp_path_id": target_dir_id}
+                )
+                if isinstance(result, dict) and result.get("state"):
+                    return {"state": True, "info_hash": result.get("info_hash"), "name": result.get("name")}
+                return {"state": False, "error": result.get("error_msg", "Unknown error"), "raw": result}
+            except Exception as e:
+                logger.error(f"Failed to add offline task: {e}")
+                return {"state": False, "error": str(e)}
+
+    async def share_receive(self, share_url: str, receive_code: str, target_dir_id: str = "0") -> Dict[str, Any]:
+        """转存115分享链接"""
+        if not self.client:
+            return {"state": False, "error": "Client not initialized"}
+        async with self.semaphore:
+            try:
+                logger.info(f"Receiving share link: {share_url}")
+                # p115client 的 share_receive 可能需要先解析出 share_code 和 receive_code，这里需要自行提取
+                # 但是 p115client 也提供了高级封装 share_receive_app 或直接传入 share_url，取决于版本
+                # 我们暂时使用 p115client.share_skip_login_down 或其他适合的 API，如果 p115client 支持一键转存的话
+                # 为了兼容性，使用底层的转存逻辑
+                from urllib.parse import urlparse, parse_qs
+                
+                # 提取 share_code
+                share_code = ""
+                if "s/" in share_url:
+                    share_code = share_url.split("s/")[1].split("?")[0]
+                elif "share_code=" in share_url:
+                    parsed_url = urlparse(share_url)
+                    qs = parse_qs(parsed_url.query)
+                    if "share_code" in qs:
+                        share_code = qs["share_code"][0]
+                
+                if not share_code:
+                    return {"state": False, "error": "Invalid share URL format"}
+                    
+                # 提取文件 ID：这通常需要先获取分享信息
+                share_info = await asyncio.to_thread(self.client.share_info, share_code, receive_code)
+                if not share_info.get("state"):
+                    return {"state": False, "error": share_info.get("error_msg", "Failed to get share info")}
+                    
+                # 获取根目录的所有 file_id
+                file_ids = []
+                for item in share_info.get("data", {}).get("list", []):
+                    file_ids.append(item.get("f", "") or item.get("fid", ""))
+                    
+                file_ids = [fid for fid in file_ids if fid]
+                
+                if not file_ids:
+                    return {"state": False, "error": "No files found in share"}
+                    
+                # 构造 payload 进行转存
+                payload = {
+                    "share_code": share_code,
+                    "receive_code": receive_code,
+                    "file_id": ",".join(file_ids),
+                    "cid": target_dir_id
+                }
+                result = await asyncio.to_thread(self.client.share_receive, payload)
+                if result.get("state"):
+                    return {"state": True, "msg": "转存成功"}
+                return {"state": False, "error": result.get("error_msg", "Transfer failed"), "raw": result}
+            except Exception as e:
+                logger.error(f"Failed to receive share: {e}")
+                return {"state": False, "error": str(e)}
+
+    async def get_offline_tasks(self) -> List[Dict]:
+        """获取正在进行的离线下载任务"""
+        if not self.client:
+            return []
+        async with self.semaphore:
+            try:
+                # 获取离线任务列表
+                result = await asyncio.to_thread(self.client.offline_list)
+                if isinstance(result, dict) and result.get("state"):
+                    tasks = result.get("tasks", [])
+                    return tasks
+                return []
+            except Exception as e:
+                logger.error(f"Failed to get offline tasks: {e}")
+                return []
+
 # 单例
 client_115 = Cloud115Client()
