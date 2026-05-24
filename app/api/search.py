@@ -4,7 +4,7 @@ from typing import Optional, Dict, Any, List
 from loguru import logger
 from app.core.search.pansou import pansou_client
 from app.core.cloud115.client import client_115
-from app.core.sync_engine import sync_engine
+from app.core.sync.engine import sync_engine
 import asyncio
 
 router = APIRouter(prefix="/search", tags=["search"])
