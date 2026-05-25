@@ -11,6 +11,19 @@ class TmdbClient:
         self.tmdb.language = self.config.language
         self.tmdb.debug = False
         
+        if self.config.proxy:
+            # 解决 tmdbv3api 内部使用 lru_cache 导致代理字典 unhashable 的 Bug
+            original_cached_request = TMDb.cached_request
+            
+            def patched_cached_request(method, url, data, json, proxies):
+                my_proxies = {
+                    "http": self.config.proxy,
+                    "https": self.config.proxy
+                }
+                return original_cached_request.__wrapped__(method, url, data, json, my_proxies)
+                
+            TMDb.cached_request = staticmethod(patched_cached_request)
+        
         self.movie_api = Movie()
         self.tv_api = TV()
         
