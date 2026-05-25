@@ -7,8 +7,11 @@ from app.core.cloud115.auth import auth_manager
 from app.config import get_config
 import httpx
 
-# 全局复用 HTTPX 客户端，启用 Keep-Alive，对代理流媒体（尤其是高频 Range 请求）性能提升巨大
-proxy_client = httpx.AsyncClient(verify=False, timeout=httpx.Timeout(connect=5.0, read=None, write=5.0, pool=10.0))
+# 全局代理客户端，启用 HTTP/2 极大优化 mpv 的并发探针！
+# HTTP/2 支持 RST_STREAM 帧，允许播放器在读取 64KB 后瞬间掐断数据流，同时保持底层 TCP/TLS 连接不断开！
+# 这是解决 mpv 狂暴嗅探 mkv 索引导致代理瘫痪的终极武器。
+limits = httpx.Limits(max_keepalive_connections=100, max_connections=200, keepalive_expiry=60.0)
+proxy_client = httpx.AsyncClient(verify=False, http2=True, limits=limits, timeout=httpx.Timeout(connect=5.0, read=None, write=5.0, pool=10.0))
 
 router = APIRouter(prefix="/api/v1/115", tags=["115网盘"])
 
