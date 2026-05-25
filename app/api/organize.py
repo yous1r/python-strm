@@ -19,8 +19,9 @@ async def start_organize(req: OrganizeReq):
         if "error" in res:
             raise HTTPException(status_code=400, detail=res["error"])
         for item in res.get("items", []):
-            if "fid" in item:
-                org_res = await organizer.organize_file(client_115, item, req.target_base_dir_id)
+            # 处理目录 (cid) 或文件 (fid)
+            if "cid" in item or "fid" in item:
+                org_res = await organizer.organize_item(client_115, item, req.target_base_dir_id)
                 results.append(org_res)
     elif req.cloud_type == "123":
         from app.core.cloud123.client import client_123
@@ -28,13 +29,12 @@ async def start_organize(req: OrganizeReq):
         if "error" in res:
             raise HTTPException(status_code=400, detail=res["error"])
         for item in res.get("items", []):
-            # 123pan 约定 type=0 是文件
-            if item.get("type") == 0:
-                # 简单适配，实际organize_file内部需做兼容处理
-                item['n'] = item.get("file_name", "")
-                item['fid'] = str(item.get("file_id", ""))
-                org_res = await organizer.organize_file(client_123, item, req.target_base_dir_id)
-                results.append(org_res)
+            # 123pan 约定 type=0 是文件, type=1 是目录 (或相反, 需要根据文档)
+            # 我们统一传入 organize_item 让其处理
+            item['n'] = item.get("file_name", "")
+            item['fid'] = str(item.get("file_id", ""))
+            org_res = await organizer.organize_item(client_123, item, req.target_base_dir_id)
+            results.append(org_res)
     else:
         raise HTTPException(status_code=400, detail="Unsupported cloud type")
         

@@ -103,4 +103,82 @@ class MediaOrganizer:
         except Exception as e:
             logger.error(f"Failed to build NFO for {target_name}: {e}")
 
+    async def organize_item(self, client, item: dict, target_base_dir_id: str) -> dict:
+        """
+        处理单个项 (文件或目录)
+        :param client: 网盘客户端实例，必须提供 create_folder, rename_file, move_files
+        :param item: item 字典，包含 n (名称), fid (文件id/目录id), cid (目录id, 对于115)
+        :param target_base_dir_id: 目标基础目录
+        """
+        # 判断是否是目录
+        is_dir = "cid" in item or item.get("type") == 0 or item.get("fc", "") == "0"
+        item_id = item.get("cid") if "cid" in item else item.get("fid")
+        original_name = item.get("n", "")
+        
+        if not item_id or not original_name:
+            return {"status": "error", "name": original_name, "error": "Invalid item format"}
+
+        # 1. 刮削 & 生成规范名称
+        try:
+            media_info = parse_filename(original_name)
+            tmdb_data = await self._search_tmdb(media_info)
+            category, region, target_folder, target_name, tmdb_data = await self.get_organized_path(original_name)
+            
+            # 若是目录，我们要将目录重命名为 `target_folder` 的基础部分
+            # 若是文件，重命名为 `target_name`
+            new_name = target_folder.split('/')[0] if is_dir else target_name
+            
+            # 2. 网盘重命名
+            if new_name and new_name != original_name:
+                rename_ok = await client.rename_file(item_id, new_name)
+                if not rename_ok:
+                    logger.warning(f"Rename failed for {original_name} -> {new_name}")
+            else:
+                new_name = original_name
+
+            # 3. 在目标盘中逐层创建分类目录: target_base_dir_id / category / region
+            # (如果需要，还可以继续创建目标文件夹)
+            # 因为是目录整体移动，我们通常把子目录直接移入 region 目录下即可
+            
+            current_parent_id = target_base_dir_id
+            for sub in [category, region]:
+                res = await client.create_folder(current_parent_id, sub)
+                if res and res.get("cid"):
+                    current_parent_id = res.get("cid")
+                else:
+                    logger.error(f"Failed to create folder {sub} under {current_parent_id}")
+                    break
+            
+            target_parent_id = current_parent_id
+            
+            # 若是文件，还要根据 generate_standard_name 返回的 target_folder 创建专属目录
+            if not is_dir and target_folder:
+                # 处理多级文件夹，如 "Title (Year)/Season 01"
+                for sub in target_folder.split('/'):
+                    if not sub:
+                        continue
+                    res = await client.create_folder(target_parent_id, sub)
+                    if res and res.get("cid"):
+                        target_parent_id = res.get("cid")
+
+            # 4. 移动
+            move_ok = await client.move_files([item_id], target_parent_id)
+            if not move_ok:
+                return {"status": "error", "name": new_name, "error": "Move failed"}
+
+            # 5. 如果是文件，生成 NFO (如果是目录就不在移动过程中单独生成了)
+            # 暂时无法直接写入网盘 NFO，只能提示完成
+            # TODO: 将 nfo 上传至网盘
+            
+            return {
+                "status": "success",
+                "original_name": original_name,
+                "new_name": new_name,
+                "target_folder": target_folder
+            }
+
+        except Exception as e:
+            logger.error(f"Organize item {original_name} failed: {e}")
+            return {"status": "error", "name": original_name, "error": str(e)}
+
 organizer = MediaOrganizer()

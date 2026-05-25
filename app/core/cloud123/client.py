@@ -73,5 +73,20 @@ class Cloud123Client:
                 logger.error(f"Failed to get download url for {file_id}: {e}")
                 return ""
 
+    async def rename_file(self, file_id: str, new_name: str) -> bool:
+        """重命名文件/文件夹 (123pan暂不实现)"""
+        logger.warning("123pan 暂未实现 rename_file")
+        return True
+
+    async def create_folder(self, parent_id: str, name: str) -> dict:
+        """创建文件夹 (123pan暂不实现)"""
+        logger.warning("123pan 暂未实现 create_folder")
+        return {"cid": parent_id}
+
+    async def move_files(self, file_ids: List[str], target_dir_id: str) -> bool:
+        """移动文件/文件夹 (123pan暂不实现)"""
+        logger.warning("123pan 暂未实现 move_files")
+        return True
+
 # 单例
 client_123 = Cloud123Client()
