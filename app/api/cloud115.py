@@ -145,6 +145,14 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     config = get_config()
     target_ua = config.cloud115.play_ua
 
+    # 强制为被 115 CDN WAF 黑名单的 UA（如 Lavf/FFmpeg）开启流式代理，即使未配置 play_ua
+    if not target_ua and ("Lavf/" in player_ua or "FFmpeg" in player_ua):
+        if client_115.client:
+            target_ua = client_115.client.headers.get("user-agent", "Mozilla/5.0")
+        else:
+            target_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        logger.info(f"🛡️ [WAF Bypass] Auto-enabling proxy mode for blacklisted UA: {player_ua} (Spoofed as API default: {target_ua})")
+
     # 如果用户没有配置伪装UA，采用最原生的 302 跳转模式
     if not target_ua:
         url = await client_115.get_download_url(pickcode, user_agent=player_ua)
@@ -174,16 +182,45 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
         "User-Agent": target_ua,
         "Accept-Encoding": "identity",  # 必须禁用压缩，否则 Range 请求的字节偏移量会因 gzip 导致错位，进而引发播放器无限断开重连死循环
     }
+
+    # ---------------- 终极代理优化策略：强制分块与内存缓冲 ----------------
+    # 核心痛点：mpv 嗅探 MKV 索引时会发起开放式 Range 请求 (bytes=X-)，读取 64KB 后立即掐断连接。
+    # 这会导致底层 httpx 的连接被强制 Cancel，进而摧毁 TLS 握手！20 次探针就会耗时数秒导致起播超时。
+    # 解决方案：我们将所有代理请求强制限制在最大 2MB！
+    # 1. 拦截播放器的 Range 请求。
+    # 2. 如果是开放式请求 (bytes=X-) 或跨度大于 2MB，我们强制改写为 bytes=X-(X+2MB)。
+    # 3. 将这 2MB 数据 *完整* 读取到内存中 (耗时极短)！
+    # 4. 此时 115 CDN 的连接被完美消费完毕，安全放回 Keep-Alive 连接池！
+    # 5. 最后，将内存中的 2MB 数据作为普通 Response 返回给播放器。播放器随时掐断都不会影响底层的 TLS 连接池！
+    
+    start_byte = 0
+    end_byte = None
+    CHUNK_LIMIT = 2 * 1024 * 1024  # 2MB 最佳平衡点 (兼顾 TTFB 与 连续播放时的吞吐量)
+    
     if "range" in request.headers:
+        range_str = request.headers["range"]
+        if range_str.startswith("bytes="):
+            parts = range_str[6:].split("-")
+            try:
+                if parts[0]:
+                    start_byte = int(parts[0])
+                if len(parts) > 1 and parts[1]:
+                    end_byte = int(parts[1])
+            except ValueError:
+                pass
+
+    if end_byte is None or (end_byte - start_byte > CHUNK_LIMIT):
+        # 强制限制最大请求范围为 2MB
+        forced_end = start_byte + CHUNK_LIMIT - 1
+        proxy_headers["Range"] = f"bytes={start_byte}-{forced_end}"
+    else:
         proxy_headers["Range"] = request.headers["range"]
+
     if "if-range" in request.headers:
         proxy_headers["If-Range"] = request.headers["if-range"]
 
-    # 极其重要：复用全局的 httpx 客户端以启用 HTTP Keep-Alive！
-    # 视频播放器（如 mpv）在起播时可能会发起数十次 Range 请求寻找关键帧。
-    # 如果每次请求都重新建立 TCP 和 TLS 连接，不仅会导致起播极慢（几十秒），还可能被 CDN 认为是恶意攻击而阻断连接。
     req = proxy_client.build_request(method, url, headers=proxy_headers)
-    
+
     if method == "HEAD":
         try:
             resp = await proxy_client.send(req)
@@ -198,58 +235,26 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     except Exception as e:
         logger.error(f"❌ [{method}] Proxy connection failed: {e}")
         raise HTTPException(status_code=502, detail="Proxy connection failed")
-        
+
     resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ["server", "date", "transfer-encoding", "content-encoding", "connection", "content-disposition", "content-type"]}
-    
+
     import mimetypes
-    import asyncio
     import urllib.parse
-    
-    # 净化 filename，防止飞牛等系统把 |User-Agent= 拼接到 URL 路径里导致后缀名判断失败
+
     decoded_filename = urllib.parse.unquote(filename)
     clean_filename = decoded_filename.split("|")[0]
-    
+
     content_type, _ = mimetypes.guess_type(clean_filename)
-    # 对于 .mkv，如果无法识别则回退为 application/octet-stream 强制播放器自己嗅探
     resp_headers["Content-Type"] = content_type or "application/octet-stream"
     resp_headers["Accept-Ranges"] = "bytes"
     
-    # 极速探测优化：如果播放器请求的 Range 小于 5MB（如 mpv 嗅探 mkv 索引），直接全量读取到内存并返回 Response，避免 StreamingResponse 的握手和协程开销
-    is_small_range = False
-    if "range" in request.headers:
-        range_str = request.headers["range"]
-        if range_str.startswith("bytes="):
-            parts = range_str[6:].split("-")
-            if len(parts) == 2 and parts[0] and parts[1]:
-                try:
-                    start = int(parts[0])
-                    end = int(parts[1])
-                    if end - start <= 5 * 1024 * 1024:
-                        is_small_range = True
-                except ValueError:
-                    pass
-
-    if is_small_range:
-        try:
-            body = await resp.aread()
-            return Response(content=body, status_code=resp.status_code, headers=resp_headers)
-        except Exception as e:
-            logger.error(f"❌ [{method}] Small range proxy failed: {e}")
-            raise HTTPException(status_code=502, detail="Proxy read failed")
-        finally:
-            await resp.aclose()
-
-    async def stream_generator():
-        try:
-            # 降低到 64KB 分块，极大提升首字节响应速度 (TTFB)，避免因为 mpv 频繁极小嗅探时等待缓冲区填满导致的起播超时卡顿
-            async for chunk in resp.aiter_bytes(chunk_size=64 * 1024):
-                yield chunk
-        except asyncio.CancelledError:
-            logger.warning(f"⚠️ Proxy stream cancelled by client (player disconnected)")
-        except Exception as e:
-            logger.error(f"⚠️ Proxy stream closed with exception: {repr(e)}")
-        finally:
-            await resp.aclose()
-
-    from fastapi.responses import StreamingResponse
-    return StreamingResponse(stream_generator(), status_code=resp.status_code, headers=resp_headers)
+    try:
+        # 直接将整个 chunk (最多 2MB) 全部读入内存
+        body = await resp.aread()
+        # 将内存中的数据一次性返回。如果播放器只读了 64KB 就关闭连接，Uvicorn 会自动终止发送，且不影响 115 CDN 连接
+        return Response(content=body, status_code=resp.status_code, headers=resp_headers)
+    except Exception as e:
+        logger.error(f"❌ [{method}] Read proxy chunk failed: {e}")
+        raise HTTPException(status_code=502, detail="Proxy read failed")
+    finally:
+        await resp.aclose()
