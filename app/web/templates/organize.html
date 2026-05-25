@@ -170,13 +170,25 @@ input:checked + .slider:before {
         </p>
 
         <div class="form-group">
-            <label class="form-label">源目录 ID 列表 (source_dirs) <span style="font-size: 0.8rem; color: var(--text-secondary);">每行一个 cid</span></label>
-            <textarea id="cloud115_source_dirs" class="form-control" rows="5" placeholder="输入 115 盘的源目录 cid..."></textarea>
+            <label class="form-label" style="display: flex; justify-content: space-between; align-items: center;">
+                <span>源目录 列表 (source_dirs) <span style="font-size: 0.8rem; color: var(--text-secondary);">支持多选</span></span>
+                <button type="button" class="btn btn-secondary" style="padding: 0.25rem 0.75rem; font-size: 0.85rem;" onclick="openSourceDirPicker()">
+                    <i class="fa-solid fa-plus"></i> 添加源目录
+                </button>
+            </label>
+            <ul id="sourceDirsList" style="list-style: none; padding: 0; margin-top: 0.5rem; margin-bottom: 0;">
+                <!-- 动态渲染 -->
+            </ul>
         </div>
 
         <div class="form-group">
-            <label class="form-label">目标基础目录 ID (target_dir)</label>
-            <input type="text" id="cloud115_target_dir" class="form-control" placeholder="例如: 1234567890">
+            <label class="form-label">目标基础目录 (target_dir)</label>
+            <div style="display: flex; gap: 0.5rem;">
+                <input type="text" id="cloud115_target_dir" class="form-control" placeholder="点击右侧按钮选择..." readonly>
+                <button type="button" class="btn btn-secondary" onclick="openTargetDirPicker()" style="white-space: nowrap; padding: 0.5rem 1rem;">
+                    <i class="fa-solid fa-folder-open"></i> 选择目录
+                </button>
+            </div>
         </div>
         
         <div style="margin-top: 1.5rem; display: flex; gap: 1rem; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 1.5rem;">
@@ -213,6 +225,61 @@ function switchTab(tabId) {
 // 提取列表并过滤空行
 const parseList = (val) => (val || "").split('\n').map(s => s.trim()).filter(s => s.length > 0);
 
+// 源目录状态列表
+let currentSourceDirs = [];
+
+function renderSourceDirs() {
+    const list = document.getElementById('sourceDirsList');
+    list.innerHTML = '';
+    if (currentSourceDirs.length === 0) {
+        list.innerHTML = '<li style="color: var(--text-secondary); margin-bottom: 0.5rem; text-align: center; background: rgba(0,0,0,0.2); padding: 1rem; border-radius: 0.5rem;"><i class="fa-solid fa-circle-info"></i> 暂未添加源目录。请点击上方按钮添加。</li>';
+        return;
+    }
+    currentSourceDirs.forEach((dirId, idx) => {
+        const li = document.createElement('li');
+        li.style.cssText = 'display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2); padding: 0.75rem 1rem; border-radius: 0.5rem; margin-bottom: 0.5rem;';
+        li.innerHTML = `
+            <div>
+                <strong style="color: var(--accent-primary);"><i class="fa-solid fa-folder"></i> CID: ${dirId}</strong>
+            </div>
+            <button class="btn btn-secondary" style="color: var(--error); padding: 0.25rem 0.75rem; font-size: 0.85rem;" onclick="removeSourceDir(${idx})">
+                <i class="fa-solid fa-trash"></i> 移除
+            </button>
+        `;
+        list.appendChild(li);
+    });
+}
+
+function removeSourceDir(idx) {
+    currentSourceDirs.splice(idx, 1);
+    renderSourceDirs();
+}
+
+function openSourceDirPicker() {
+    window.openDirectoryPicker((id, name) => {
+        if (id === '0') {
+            alert('不能选择根目录');
+            return;
+        }
+        if (currentSourceDirs.includes(id)) {
+            alert('该目录已在列表中');
+            return;
+        }
+        currentSourceDirs.push(id);
+        renderSourceDirs();
+    }, '115');
+}
+
+function openTargetDirPicker() {
+    window.openDirectoryPicker((id, name) => {
+        if (id === '0') {
+            alert('不能选择根目录作为目标目录');
+            return;
+        }
+        document.getElementById('cloud115_target_dir').value = id;
+    }, '115');
+}
+
 // --- 初始化数据加载 ---
 document.addEventListener('DOMContentLoaded', async () => {
     try {
@@ -236,7 +303,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             
             // 115 整理
             if(config.organize.cloud115) {
-                document.getElementById('cloud115_source_dirs').value = (config.organize.cloud115.source_dirs || []).join('\n');
+                currentSourceDirs = config.organize.cloud115.source_dirs || [];
+                renderSourceDirs();
                 document.getElementById('cloud115_target_dir').value = config.organize.cloud115.target_dir || "";
             }
         }
@@ -294,7 +362,7 @@ async function saveOrganizeConfig(silent = false) {
                 prefer_larger: document.getElementById('wash_larger').checked
             },
             cloud115: {
-                source_dirs: parseList(document.getElementById('cloud115_source_dirs').value),
+                source_dirs: currentSourceDirs,
                 target_dir: document.getElementById('cloud115_target_dir').value
             }
         }
@@ -336,7 +404,7 @@ async function saveOrganizeConfig(silent = false) {
 
 // --- 一键执行 115 多对一整理 ---
 async function start115Organize() {
-    const srcDirs = parseList(document.getElementById('cloud115_source_dirs').value);
+    const srcDirs = currentSourceDirs;
     const targetDir = document.getElementById('cloud115_target_dir').value;
     
     if (srcDirs.length === 0) {

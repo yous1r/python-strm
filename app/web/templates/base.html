@@ -87,6 +87,56 @@
     <!-- Custom Native Toast Container -->
     <div class="custom-toast-container" id="customToastContainer"></div>
 
+    <!-- Global Directory Picker Modal -->
+    <div id="globalFolderPickerModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 10000; align-items: center; justify-content: center;">
+        <div class="glass-panel animate-fade-in" style="width: 90%; max-width: 500px; padding: 1.5rem; display: flex; flex-direction: column; max-height: 80vh;">
+            <h3 style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center;">
+                <span><i class="fa-solid fa-folder-tree"></i> 选择目录</span>
+                <i class="fa-solid fa-xmark" style="cursor: pointer; color: var(--text-secondary);" onclick="window.closeDirectoryPicker()"></i>
+            </h3>
+            
+            <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem; align-items: center; background: rgba(0,0,0,0.2); padding: 0.5rem; border-radius: 0.5rem;">
+                <button class="btn btn-secondary" id="gfpBackBtn" style="padding: 0.25rem 0.75rem; font-size: 0.875rem;" onclick="window._gfpLoadFolder(window._gfpCurrentParentId)">
+                    <i class="fa-solid fa-arrow-up"></i> 返回上级
+                </button>
+                <span id="gfpCurrentPath" style="font-size: 0.875rem; font-weight: 500; color: var(--accent-primary); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">加载中...</span>
+            </div>
+            
+            <div id="gfpList" style="flex: 1; overflow-y: auto; background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 0.5rem; min-height: 250px; padding: 0.5rem;">
+                <!-- 文件夹列表渲染区域 -->
+            </div>
+            
+            <div style="margin-top: 1rem; display: flex; justify-content: flex-end; gap: 0.5rem;">
+                <button class="btn btn-secondary" onclick="window.closeDirectoryPicker()">取消</button>
+                <button class="btn btn-primary" onclick="window._gfpConfirmSelection()">确认选择</button>
+            </div>
+        </div>
+    </div>
+    
+    <style>
+    .global-folder-item {
+        padding: 0.75rem 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        cursor: pointer;
+        border-radius: 0.5rem;
+        transition: background 0.2s;
+        user-select: none;
+    }
+    .global-folder-item:hover {
+        background: rgba(255,255,255,0.08);
+    }
+    .global-folder-item.selected {
+        background: var(--accent-glow);
+        border: 1px solid var(--accent-primary);
+    }
+    .global-folder-item i {
+        color: var(--warning);
+        font-size: 1.25rem;
+    }
+    </style>
+
     <script>
         // --- Theme Switcher Logic ---
         const themeToggleBtn = document.getElementById('themeToggleBtn');
@@ -153,6 +203,107 @@
                 toast.classList.remove('show');
                 setTimeout(() => toast.remove(), 300); // Wait for transition
             }, 3000);
+        };
+
+        // 劫持原生 alert
+        window.alert = function(msg) {
+            showToast(msg, 'warning');
+        };
+
+        // --- Global Directory Picker Logic ---
+        window._gfpCallback = null;
+        window._gfpCurrentFolderId = '0';
+        window._gfpCurrentParentId = '0';
+        window._gfpSelectedFolderId = null;
+        window._gfpSelectedFolderName = '';
+        window._gfpCloudType = '115';
+        
+        window.openDirectoryPicker = async function(callback, cloudType = '115') {
+            window._gfpCallback = callback;
+            window._gfpCloudType = cloudType;
+            if (cloudType !== '115') {
+                showToast('目录选择器目前仅支持 115网盘', 'warning');
+                return;
+            }
+            
+            document.getElementById('globalFolderPickerModal').style.display = 'flex';
+            window._gfpSelectedFolderId = null;
+            window._gfpSelectedFolderName = '';
+            
+            await window._gfpLoadFolder('0');
+        };
+        
+        window.closeDirectoryPicker = function() {
+            document.getElementById('globalFolderPickerModal').style.display = 'none';
+            window._gfpCallback = null;
+        };
+        
+        window._gfpLoadFolder = async function(dirId) {
+            const listDiv = document.getElementById('gfpList');
+            const pathSpan = document.getElementById('gfpCurrentPath');
+            const backBtn = document.getElementById('gfpBackBtn');
+            
+            listDiv.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> 加载中...</div>';
+            
+            try {
+                const res = await fetch(`/api/v1/115/dirs?dir_id=${dirId}`);
+                if (!res.ok) {
+                    if (dirId !== '0') return window._gfpLoadFolder('0');
+                    const err = await res.json();
+                    listDiv.innerHTML = `<div style="text-align: center; padding: 2rem; color: var(--error);"><i class="fa-solid fa-triangle-exclamation"></i> ${err.detail || '加载失败'}</div>`;
+                    return;
+                }
+                
+                const data = await res.json();
+                window._gfpCurrentFolderId = dirId;
+                window._gfpCurrentParentId = data.parent_id;
+                
+                pathSpan.textContent = data.current_dir;
+                backBtn.style.display = dirId === '0' ? 'none' : 'inline-flex';
+                
+                listDiv.innerHTML = '';
+                if (data.dirs.length === 0) {
+                    listDiv.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-secondary);">该目录下没有子文件夹</div>';
+                } else {
+                    data.dirs.forEach(d => {
+                        const item = document.createElement('div');
+                        item.className = 'global-folder-item';
+                        if (window._gfpSelectedFolderId === d.cid) item.classList.add('selected');
+                        
+                        item.innerHTML = `<i class="fa-solid fa-folder"></i> <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${d.n}</span>`;
+                        
+                        let clickTimer = null;
+                        item.onclick = (e) => {
+                            if (clickTimer) {
+                                clearTimeout(clickTimer);
+                                clickTimer = null;
+                                window._gfpLoadFolder(d.cid);
+                            } else {
+                                clickTimer = setTimeout(() => {
+                                    clickTimer = null;
+                                    document.querySelectorAll('.global-folder-item').forEach(el => el.classList.remove('selected'));
+                                    item.classList.add('selected');
+                                    window._gfpSelectedFolderId = d.cid;
+                                    window._gfpSelectedFolderName = d.n;
+                                }, 250);
+                            }
+                        };
+                        listDiv.appendChild(item);
+                    });
+                }
+            } catch (e) {
+                listDiv.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--error);"><i class="fa-solid fa-triangle-exclamation"></i> 网络错误</div>';
+            }
+        };
+        
+        window._gfpConfirmSelection = function() {
+            const finalId = window._gfpSelectedFolderId || window._gfpCurrentFolderId;
+            const finalName = window._gfpSelectedFolderName || (finalId === '0' ? '根目录' : '未命名目录');
+            
+            if (window._gfpCallback) {
+                window._gfpCallback(finalId, finalName);
+            }
+            window.closeDirectoryPicker();
         };
 
         // Custom Async Confirm Modal

@@ -34,11 +34,21 @@
         </div>
         <div class="form-group">
             <label class="form-label">115 转存中转目录 ID (必填，转存后存放的位置)</label>
-            <input type="text" id="mon_tg_target_dir_id" class="form-control" placeholder="0">
+            <div style="display: flex; gap: 0.5rem;">
+                <input type="text" id="mon_tg_target_dir_id" class="form-control" placeholder="点击右侧按钮选择..." readonly>
+                <button type="button" class="btn btn-secondary" onclick="window.openDirectoryPicker(id => document.getElementById('mon_tg_target_dir_id').value = id, '115')" style="white-space: nowrap; padding: 0.5rem 1rem;">
+                    <i class="fa-solid fa-folder-open"></i> 选择目录
+                </button>
+            </div>
         </div>
         <div class="form-group">
             <label class="form-label">115 整理归档根目录 ID (可选，开启自动整理后归档目标根路径)</label>
-            <input type="text" id="mon_tg_archive_dir_id" class="form-control" placeholder="0">
+            <div style="display: flex; gap: 0.5rem;">
+                <input type="text" id="mon_tg_archive_dir_id" class="form-control" placeholder="点击右侧按钮选择..." readonly>
+                <button type="button" class="btn btn-secondary" onclick="window.openDirectoryPicker(id => document.getElementById('mon_tg_archive_dir_id').value = id, '115')" style="white-space: nowrap; padding: 0.5rem 1rem;">
+                    <i class="fa-solid fa-folder-open"></i> 选择目录
+                </button>
+            </div>
         </div>
         <div class="form-group" style="display: flex; align-items: center; gap: 1rem; margin-top: 1rem;">
             <label class="form-label" style="margin-bottom: 0;">自动整理转存的文件</label>
