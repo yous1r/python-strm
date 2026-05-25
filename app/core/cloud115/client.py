@@ -21,6 +21,8 @@ class Cloud115Client:
         if not self.client:
             return {"error": "Client not initialized"}
         async with self.semaphore:
+            # 增加全局的目录请求延迟，防止短时间高频请求被阿里云 WAF 拦截
+            await asyncio.sleep(0.5)
             try:
                 from app.config import get_config
                 api_type = get_config().cloud115.api_type
@@ -58,8 +60,23 @@ class Cloud115Client:
                         }
                     return {"error": res.get("error", "Unknown error")}
             except Exception as e:
+                err_str = str(e)
+                if "405" in err_str and api_type == "app":
+                    logger.warning(f"App API blocked (405) for dir {dir_id}, falling back to Web API...")
+                    try:
+                        res = await self.client.fs_files({"cid": dir_id, "limit": limit, "offset": offset}, async_=True)
+                        if res.get("state"):
+                            return {
+                                "total": res.get("count", 0),
+                                "items": res.get("data", [])
+                            }
+                        return {"error": res.get("error", "Unknown error in fallback")}
+                    except Exception as fallback_e:
+                        logger.error(f"Fallback to web api also failed: {fallback_e}")
+                        return {"error": str(fallback_e)}
+                        
                 logger.error(f"Failed to list files for dir {dir_id}: {e}")
-                return {"error": str(e)}
+                return {"error": err_str}
 
     async def list_dirs(self, dir_id: str = '0') -> dict:
         """列出目录，仅包含文件夹，排除文件"""

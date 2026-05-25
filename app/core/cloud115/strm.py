@@ -28,8 +28,8 @@ class RateLimiter:
 class StrmGenerator115:
     def __init__(self):
         self.client = client_115
-        # 允许瞬间并发10个请求（按批处理），但限制在2秒内最多10个，防止触发 WAF
-        self.rate_limiter = RateLimiter(max_calls=10, period=2.0)
+        # 允许瞬间并发2个请求（按批处理），限制在1秒内最多2个，防止触发 WAF 风控
+        self.rate_limiter = RateLimiter(max_calls=2, period=1.0)
 
     async def generate_strm(self, pickcode: str, file_name: str, current_dir: str, root_dir: str, base_url: str) -> str:
         """生成单个STRM文件，支持智能刮削打平"""
