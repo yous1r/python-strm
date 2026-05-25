@@ -1,4 +1,5 @@
 import os
+import time
 import asyncio
 import aiofiles
 from loguru import logger
@@ -7,9 +8,28 @@ from app.utils.helpers import is_video_file
 from app.core.media.organizer import organizer
 from app.config import get_config
 
+class RateLimiter:
+    def __init__(self, max_calls: int, period: float):
+        self.max_calls = max_calls
+        self.period = period
+        self.timestamps = []
+
+    async def acquire(self):
+        now = time.time()
+        self.timestamps = [t for t in self.timestamps if now - t <= self.period]
+        if len(self.timestamps) >= self.max_calls:
+            sleep_time = self.period - (now - self.timestamps[0])
+            if sleep_time > 0:
+                await asyncio.sleep(sleep_time)
+                now = time.time()
+                self.timestamps = [t for t in self.timestamps if now - t <= self.period]
+        self.timestamps.append(now)
+
 class StrmGenerator115:
     def __init__(self):
         self.client = client_115
+        # 允许瞬间并发10个请求（按批处理），但限制在2秒内最多10个，防止触发 WAF
+        self.rate_limiter = RateLimiter(max_calls=10, period=2.0)
 
     async def generate_strm(self, pickcode: str, file_name: str, current_dir: str, root_dir: str, base_url: str) -> str:
         """生成单个STRM文件，支持智能刮削打平"""
@@ -60,8 +80,8 @@ class StrmGenerator115:
         offset = 0
 
         while True:
-            # 防风控：增量跳过太快会导致 list_files 并发超限触发阿里云 WAF 405
-            await asyncio.sleep(0.2)
+            # 防风控：使用按批限流器，允许瞬间迸发，降低请求频率惩罚
+            await self.rate_limiter.acquire()
             
             res = await self.client.list_files(dir_id=dir_id, limit=limit, offset=offset)
             if "error" in res:
