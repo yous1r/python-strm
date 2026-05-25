@@ -102,7 +102,7 @@ async def transfer_resource(req: TransferRequest, background_tasks: BackgroundTa
     link_type = req.link_type.lower() if req.link_type else ""
     
     if cloud_type == "115":
-        if link_type == "115" or "115.com/s/" in url or "anxia.com/s/" in url or "share_code=" in url:
+        if link_type == "115" or "115.com/s/" in url or "anxia.com/s/" in url or "115cdn.com/s/" in url or "share_code=" in url:
             # 115 分享链接转存
             res = await client_115.share_receive(url, req.receive_code, req.target_dir_id)
             if res.get("state"):
