@@ -3,7 +3,7 @@ from loguru import logger
 from typing import List, Dict, Any, Optional
 
 PANSOU_API_URL = "http://pansou:8888/api/search"
-PANSOU_INFO_URL = "http://pansou:8888/api/info"
+PANSOU_INFO_URL = "http://pansou:8888/api/health"
 
 class PansouClient:
     def __init__(self):
@@ -49,8 +49,8 @@ class PansouClient:
                 resp = await client.get(PANSOU_INFO_URL)
                 resp.raise_for_status()
                 data = resp.json()
-                if data.get("code") == 0:
-                    return data.get("data", {}).get("plugins", [])
+                if data.get("status") == "ok":
+                    return data.get("plugins", [])
                 return []
         except Exception as e:
             logger.error(f"❌ 获取 Pansou 插件列表失败: {e}")
