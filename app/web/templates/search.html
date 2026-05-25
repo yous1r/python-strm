@@ -35,6 +35,17 @@
             <input type="checkbox" class="link-type-filter" value="other" checked onchange="renderResults()"> 其他
         </label>
     </div>
+    
+    <!-- Plugins Selection -->
+    <div style="margin-top: 1rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer; padding: 0.5rem; background: rgba(0,0,0,0.1); border-radius: 4px;" onclick="document.getElementById('pluginListContainer').style.display = document.getElementById('pluginListContainer').style.display === 'none' ? 'flex' : 'none'">
+            <span style="color: var(--text-secondary); font-size: 0.9rem;"><i class="fa-solid fa-puzzle-piece" style="margin-right: 5px;"></i> 高级：选择特定插件 (默认全部启用)</span>
+            <i class="fa-solid fa-chevron-down" style="color: var(--text-secondary);"></i>
+        </div>
+        <div id="pluginListContainer" style="display: none; flex-wrap: wrap; gap: 10px; margin-top: 10px; max-height: 150px; overflow-y: auto; padding: 0.5rem; border: 1px solid var(--border); border-radius: 4px; background: rgba(0,0,0,0.05);">
+            <!-- Plugins will be loaded here dynamically -->
+        </div>
+    </div>
 </div>
 
 <div id="loadingIndicator" style="text-align: center; margin: 4rem 0; display: none;">
@@ -80,6 +91,33 @@
 <script>
     let currentSearchResults = [];
 
+    document.addEventListener('DOMContentLoaded', async () => {
+        try {
+            const res = await fetch('/api/v1/search/plugins');
+            const data = await res.json();
+            const container = document.getElementById('pluginListContainer');
+            if (data.plugins && data.plugins.length > 0) {
+                container.innerHTML = '';
+                data.plugins.forEach(p => {
+                    const label = document.createElement('label');
+                    label.style.display = 'flex';
+                    label.style.alignItems = 'center';
+                    label.style.gap = '5px';
+                    label.style.cursor = 'pointer';
+                    label.style.fontSize = '0.85rem';
+                    label.style.padding = '2px 6px';
+                    label.style.background = 'rgba(255,255,255,0.05)';
+                    label.style.borderRadius = '4px';
+                    
+                    label.innerHTML = `<input type="checkbox" class="plugin-checkbox" value="${p.id}" checked> ${p.name}`;
+                    container.appendChild(label);
+                });
+            }
+        } catch (e) {
+            console.error("Failed to load plugins:", e);
+        }
+    });
+
     function showNotification(message, type = 'success') {
         if (window.showToast) {
             window.showToast(message, type);
@@ -103,7 +141,18 @@
         container.innerHTML = '';
         
         try {
-            const res = await fetch(`/api/v1/search/?keyword=${encodeURIComponent(keyword)}&source_type=${sourceType}`);
+            // Collect selected plugins
+            const allCheckboxes = document.querySelectorAll('.plugin-checkbox');
+            let pluginsQuery = '';
+            if (allCheckboxes.length > 0) {
+                const selectedPlugins = Array.from(document.querySelectorAll('.plugin-checkbox:checked')).map(cb => cb.value);
+                // If not all are selected, we pass the specific plugins list
+                if (selectedPlugins.length < allCheckboxes.length) {
+                    pluginsQuery = `&plugins=${encodeURIComponent(selectedPlugins.join(','))}`;
+                }
+            }
+
+            const res = await fetch(`/api/v1/search/?keyword=${encodeURIComponent(keyword)}&source_type=${sourceType}${pluginsQuery}`);
             const data = await res.json();
             
             loading.style.display = 'none';

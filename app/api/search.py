@@ -42,10 +42,42 @@ async def poll_offline_task(info_hash: str, target_dir_id: str):
             logger.error(f"Offline task {info_hash} failed.")
             return
 
+PLUGIN_MAPPING = {
+    "alupan": "阿里云盘",
+    "quark4k": "夸克4K",
+    "pansearch": "PanSearch",
+    "huban": "虎斑网盘",
+    "nyaa": "Nyaa(动漫BT)",
+    "thepiratebay": "海盗湾(BT)",
+    "susu": "Susu磁力",
+    "ddys": "低端影视",
+    "libvio": "LIBVIO影视",
+    "javdb": "JavDB",
+    "yunso": "云搜",
+    "aikanzy": "爱看资源",
+    "bixin": "比心网盘",
+    "panlian": "盘链",
+    "pianku": "片库",
+    "quarksoo": "夸克搜",
+    "zhizhen": "至臻网盘",
+}
+
+@router.get("/plugins")
+async def get_plugins():
+    """获取支持的插件列表并映射中文名称"""
+    raw_plugins = await pansou_client.get_plugins()
+    results = []
+    for p in raw_plugins:
+        results.append({
+            "id": p,
+            "name": PLUGIN_MAPPING.get(p, p)
+        })
+    return {"plugins": results}
+
 @router.get("/")
-async def search_resources(keyword: str, source_type: str = "all"):
+async def search_resources(keyword: str, source_type: str = "all", plugins: Optional[str] = None):
     """使用 Pansou 聚合搜索引擎搜索资源"""
-    result = await pansou_client.search(keyword, source_type)
+    result = await pansou_client.search(keyword, source_type, plugins)
     return result
 
 @router.post("/transfer")
