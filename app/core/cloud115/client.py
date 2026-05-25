@@ -24,9 +24,26 @@ class Cloud115Client:
             try:
                 res = await self.client.fs_files_app({"cid": dir_id, "limit": limit, "offset": offset}, async_=True)
                 if res.get("state"):
+                    # fs_files_app 的字段名为 fc(0=目录), fid(文件/目录id), fn(名称), pc(pickcode), fs(大小)
+                    items = res.get("data", [])
+                    mapped_items = []
+                    for item in items:
+                        if str(item.get("fc", "")) == "0":
+                            mapped_items.append({
+                                "cid": str(item.get("fid", "")),
+                                "n": item.get("fn", ""),
+                                "pid": str(item.get("pid", "0"))
+                            })
+                        else:
+                            mapped_items.append({
+                                "fid": str(item.get("fid", "")),
+                                "n": item.get("fn", ""),
+                                "pc": item.get("pc", ""),
+                                "s": item.get("fs", 0)
+                            })
                     return {
                         "total": res.get("count", 0),
-                        "items": res.get("data", [])
+                        "items": mapped_items
                     }
                 return {"error": res.get("error", "Unknown error")}
             except Exception as e:
@@ -43,10 +60,10 @@ class Cloud115Client:
                 res = await self.client.fs_files_app({"cid": dir_id, "limit": 1000, "offset": 0}, async_=True)
                 if res.get("state"):
                     items = res.get("data", [])
-                    # 在 115 响应中，文件通常包含 "fid"，文件夹包含 "cid" 且无 "fid"
+                    # 在 fs_files_app 中，fc == "0" 表示文件夹，fid 是其 id，fn 是名字
                     dirs = [
-                        {"cid": str(item.get("cid")), "n": item.get("n", ""), "pid": str(item.get("pid", "0"))} 
-                        for item in items if "fid" not in item
+                        {"cid": str(item.get("fid")), "n": item.get("fn", ""), "pid": str(item.get("pid", "0"))} 
+                        for item in items if str(item.get("fc", "")) == "0"
                     ]
                     
                     # 尝试从路径推断当前目录名称和父目录ID
