@@ -60,6 +60,11 @@ class TelegramConfig(BaseModel):
     api_hash: str = ""
     channels: List[str] = []
     proxy: str = ""
+    keywords: List[str] = []
+    target_dir_id: str = "0"
+    archive_dir_id: str = "0"
+    auto_organize: bool = False
+    auto_strm: bool = False
 
 class MonitorConfig(BaseModel):
     telegram: TelegramConfig = TelegramConfig()

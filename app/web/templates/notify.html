@@ -28,6 +28,32 @@
             <label class="form-label">监听频道列表 (每行一个 ID 或 Username)</label>
             <textarea id="mon_tg_channels" class="form-control" rows="3" placeholder="-1001234567890&#10;my_share_channel"></textarea>
         </div>
+        <div class="form-group">
+            <label class="form-label">关键字匹配 (可选，每行一个。包含任意关键字即处理)</label>
+            <textarea id="mon_tg_keywords" class="form-control" rows="3" placeholder="蓝光&#10;洗版"></textarea>
+        </div>
+        <div class="form-group">
+            <label class="form-label">115 转存中转目录 ID (必填，转存后存放的位置)</label>
+            <input type="text" id="mon_tg_target_dir_id" class="form-control" placeholder="0">
+        </div>
+        <div class="form-group">
+            <label class="form-label">115 整理归档根目录 ID (可选，开启自动整理后归档目标根路径)</label>
+            <input type="text" id="mon_tg_archive_dir_id" class="form-control" placeholder="0">
+        </div>
+        <div class="form-group" style="display: flex; align-items: center; gap: 1rem; margin-top: 1rem;">
+            <label class="form-label" style="margin-bottom: 0;">自动整理转存的文件</label>
+            <label class="switch">
+                <input type="checkbox" id="mon_tg_auto_organize">
+                <span class="slider round"></span>
+            </label>
+        </div>
+        <div class="form-group" style="display: flex; align-items: center; gap: 1rem; margin-top: 1rem;">
+            <label class="form-label" style="margin-bottom: 0;">转存整理后自动触发全局 STRM 生成</label>
+            <label class="switch">
+                <input type="checkbox" id="mon_tg_auto_strm">
+                <span class="slider round"></span>
+            </label>
+        </div>
     </form>
 </div>
 
@@ -210,7 +236,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('mon_tg_api_id').value = config.monitor.telegram.api_id;
             document.getElementById('mon_tg_api_hash').value = config.monitor.telegram.api_hash;
             document.getElementById('mon_tg_proxy').value = config.monitor.telegram.proxy || '';
-            document.getElementById('mon_tg_channels').value = config.monitor.telegram.channels.join('\n');
+            document.getElementById('mon_tg_channels').value = (config.monitor.telegram.channels || []).join('\n');
+            document.getElementById('mon_tg_keywords').value = (config.monitor.telegram.keywords || []).join('\n');
+            document.getElementById('mon_tg_target_dir_id').value = config.monitor.telegram.target_dir_id || '0';
+            document.getElementById('mon_tg_archive_dir_id').value = config.monitor.telegram.archive_dir_id || '0';
+            document.getElementById('mon_tg_auto_organize').checked = config.monitor.telegram.auto_organize;
+            document.getElementById('mon_tg_auto_strm').checked = config.monitor.telegram.auto_strm;
             
             // 填充 Notify WeCom
             document.getElementById('not_wecom_enabled').checked = config.notify.wecom.enabled;
@@ -245,11 +276,9 @@ async function saveNotifyConfig(silent = false) {
     }
     
     // 提取通道列表并过滤空行
-    const tgChannels = document.getElementById('mon_tg_channels').value
-        .split('\n')
-        .map(s => s.trim())
-        .filter(s => s.length > 0);
-        
+    const tgChannels = document.getElementById('mon_tg_channels').value.split('\n').map(c => c.trim()).filter(c => c);
+    const tgKeywords = document.getElementById('mon_tg_keywords').value.split('\n').map(c => c.trim()).filter(c => c);
+
     const payload = {
         monitor: {
             telegram: {
@@ -257,7 +286,12 @@ async function saveNotifyConfig(silent = false) {
                 api_id: document.getElementById('mon_tg_api_id').value,
                 api_hash: document.getElementById('mon_tg_api_hash').value,
                 proxy: document.getElementById('mon_tg_proxy').value,
-                channels: tgChannels
+                channels: tgChannels,
+                keywords: tgKeywords,
+                target_dir_id: document.getElementById('mon_tg_target_dir_id').value,
+                archive_dir_id: document.getElementById('mon_tg_archive_dir_id').value,
+                auto_organize: document.getElementById('mon_tg_auto_organize').checked,
+                auto_strm: document.getElementById('mon_tg_auto_strm').checked
             }
         },
         notify: {

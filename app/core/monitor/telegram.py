@@ -48,12 +48,22 @@ class TelegramMonitor:
         
         @self.client.on(events.NewMessage(chats=self.config.channels))
         async def handler(event):
-            text = event.message.message
+            self.config = get_config().monitor.telegram
+            text = event.message.message or ""
+            
+            # Keyword matching
+            if self.config.keywords:
+                valid_kws = [kw.strip().lower() for kw in self.config.keywords if kw.strip()]
+                if valid_kws:
+                    matched = any(kw in text.lower() for kw in valid_kws)
+                    if not matched:
+                        return
+
             links = self.extract_links(text)
             if links:
                 logger.info(f"Found new links in telegram: {links}")
-                for link in links:
-                    await event_bus.emit(EVENT_MONITOR_NEW_LINK, link=link, source='telegram')
+                for link_data in links:
+                    await event_bus.emit(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
 
         await self.client.start()
         logger.info("Telegram monitor started.")
@@ -65,9 +75,29 @@ class TelegramMonitor:
 
     def extract_links(self, text: str) -> list:
         links = []
-        for pattern in self.link_patterns:
-            matches = pattern.findall(text)
-            links.extend(matches)
-        return list(set(links))
+        # Find all 115 links
+        link_matches_115 = re.findall(r'https?://115\.com/s/\w+', text)
+        if link_matches_115:
+            pwd_match = re.search(r'(?:码|密码|提取码|访问码)[:：\s]*([a-zA-Z0-9]{4})(?:\b|$)', text)
+            password = pwd_match.group(1) if pwd_match else ""
+            for url in link_matches_115:
+                links.append({"url": url, "password": password, "type": "115"})
+                
+        # Also preserve 123pan
+        pan123_matches = re.findall(r'https?://(?:www\.)?123pan\.com/s/\w+-\w+\.html', text)
+        if pan123_matches:
+            pwd_match = re.search(r'(?:码|密码|提取码|访问码)[:：\s]*([a-zA-Z0-9]{4})(?:\b|$)', text)
+            password = pwd_match.group(1) if pwd_match else ""
+            for url in pan123_matches:
+                links.append({"url": url, "password": password, "type": "123"})
+            
+        # Deduplicate
+        unique_links = []
+        seen = set()
+        for link in links:
+            if link["url"] not in seen:
+                seen.add(link["url"])
+                unique_links.append(link)
+        return unique_links
 
 telegram_monitor = TelegramMonitor()

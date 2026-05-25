@@ -13,6 +13,7 @@ from app.utils.scheduler import start_scheduler, stop_scheduler, add_job
 logger = setup_logger()
 
 from app.core.monitor.telegram import telegram_monitor
+from app.core.monitor.handler import init_handlers
 from app.core.sync.engine import sync_engine
 import asyncio
 
@@ -22,6 +23,8 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Python-STRM application...")
     await init_db()
     start_scheduler()
+    
+    init_handlers()
 
     config = get_config()
     
