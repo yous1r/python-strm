@@ -61,23 +61,45 @@ async def list_dirs(dir_id: str = '0'):
 
 import time
 import asyncio
+from collections import OrderedDict
 
 class LavfTokenBucket:
-    def __init__(self, capacity=5.0, fill_rate=1.0):
+    def __init__(self, capacity=5.0, fill_rate=1.0, cache_ttl=30.0):
         self.capacity = capacity
         self.tokens = capacity
         self.fill_rate = fill_rate
         self.timestamp = time.monotonic()
         self.lock = asyncio.Lock()
+        self.cache_ttl = cache_ttl
+        self.recent_pairs = OrderedDict()
 
-    async def consume(self) -> bool:
+    def _cleanup_cache(self, now):
+        while self.recent_pairs:
+            _, ts = next(iter(self.recent_pairs.items()))
+            if now - ts > self.cache_ttl:
+                self.recent_pairs.popitem(last=False)
+            else:
+                break
+
+    async def consume(self, client_ip: str, pickcode: str) -> bool:
         async with self.lock:
             now = time.monotonic()
+            self._cleanup_cache(now)
+            
+            pair = (client_ip, pickcode)
+            if pair in self.recent_pairs:
+                # 同一个 IP 请求同一个文件，享受免扣令牌直接放行，应对播放器缓冲时的并发请求
+                self.recent_pairs[pair] = now
+                self.recent_pairs.move_to_end(pair)
+                return True
+                
             elapsed = now - self.timestamp
             self.tokens = min(self.capacity, self.tokens + elapsed * self.fill_rate)
             self.timestamp = now
+            
             if self.tokens >= 1.0:
                 self.tokens -= 1.0
+                self.recent_pairs[pair] = now
                 return True
             return False
 
@@ -94,12 +116,14 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     
     player_ua = request.headers.get("user-agent", "Unknown")
     
-    # 智能风控拦截：使用令牌桶算法限流 FFmpeg(Lavf) 探针
-    # 飞牛影视扫库时会产生几十个并发探针，瞬间耗尽令牌，后续探针被拦截，从而保护 115 CDN 不触发 WAF。
-    # 真正的播放器（如 Vidhub）偶尔的连接可以顺利拿到令牌，不会被误杀。
+    # 智能风控拦截：使用令牌桶算法 + 同视频豁免机制 限流 FFmpeg(Lavf) 探针
+    # 飞牛影视扫库时会产生几十个【不同视频】的并发探针，瞬间耗尽令牌被拦截，保护 115 CDN。
+    # 真实的播放器（如 Vidhub）即使瞬间发起 10 个请求，因为都是【同一个视频】，只扣 1 个令牌，完美放行。
     if "Lavf/" in player_ua or "FFmpeg" in player_ua:
-        if not await lavf_limiter.consume():
-            logger.info(f"已拦截飞牛并发探针(防风控): pickcode={pickcode} filename={filename} method={method} ua={player_ua}")
+        # Note: handle pickcode that might contain '|'
+        clean_pc = pickcode.split('|')[0] if '|' in pickcode else pickcode
+        if not await lavf_limiter.consume(client_ip, clean_pc):
+            logger.info(f"已拦截飞牛并发探针(防风控): pickcode={clean_pc} filename={filename} method={method} ua={player_ua}")
             from fastapi.responses import Response
             return Response(content=b"", status_code=200, media_type="video/mp4")
         
