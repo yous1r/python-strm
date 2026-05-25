@@ -20,6 +20,21 @@
             <i class="fa-solid fa-search"></i> 搜索
         </button>
     </form>
+    <div style="display: flex; gap: 15px; align-items: center; margin-top: 1rem; flex-wrap: wrap;">
+        <span style="color: var(--text-secondary); font-size: 0.9rem;">资源过滤:</span>
+        <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--text-primary);">
+            <input type="checkbox" class="link-type-filter" value="115" checked onchange="renderResults()"> 115网盘
+        </label>
+        <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--text-primary);">
+            <input type="checkbox" class="link-type-filter" value="magnet" checked onchange="renderResults()"> 磁力链接
+        </label>
+        <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--text-primary);">
+            <input type="checkbox" class="link-type-filter" value="torrent" checked onchange="renderResults()"> BT种子
+        </label>
+        <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--text-primary);">
+            <input type="checkbox" class="link-type-filter" value="other" checked onchange="renderResults()"> 其他
+        </label>
+    </div>
 </div>
 
 <div id="loadingIndicator" style="text-align: center; margin: 4rem 0; display: none;">
@@ -63,6 +78,8 @@
 </div>
 
 <script>
+    let currentSearchResults = [];
+
     function showNotification(message, type = 'success') {
         if (window.showToast) {
             window.showToast(message, type);
@@ -90,12 +107,37 @@
             const data = await res.json();
             
             loading.style.display = 'none';
-            
-            if (data.results && data.results.length > 0) {
-                data.results.forEach(item => {
-                    let linksHtml = '';
-                    if (item.links && item.links.length > 0) {
-                        item.links.forEach(link => {
+            currentSearchResults = data.results || [];
+            renderResults();
+        } catch (err) {
+            loading.style.display = 'none';
+            container.innerHTML = `<div style="grid-column: 1 / -1; text-align: center; color: var(--error); padding: 4rem;"><i class="fa-solid fa-circle-exclamation fa-4x" style="margin-bottom: 1.5rem;"></i><h3>搜索请求失败: ${err.message}</h3></div>`;
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = oldBtnText;
+        }
+    });
+
+    function renderResults() {
+        const container = document.getElementById('resultsContainer');
+        container.innerHTML = '';
+        const allowedTypes = Array.from(document.querySelectorAll('.link-type-filter:checked')).map(cb => cb.value);
+
+        if (currentSearchResults.length > 0) {
+            let displayedCount = 0;
+            currentSearchResults.forEach(item => {
+                let linksHtml = '';
+                let hasMatchingLink = false;
+                if (item.links && item.links.length > 0) {
+                    item.links.forEach(link => {
+                        let type = (link.type || '').toLowerCase();
+                        let filterType = "other";
+                        if (type === '115') filterType = "115";
+                        else if (type.includes('magnet')) filterType = "magnet";
+                        else if (type === 'torrent' || type === 'bt') filterType = "torrent";
+                        
+                        if (allowedTypes.includes(filterType)) {
+                            hasMatchingLink = true;
                             let linkTypeStr = link.type.toUpperCase() || "链接";
                             let passHtml = link.password ? `<span style="font-size: 0.75rem; background: rgba(255,255,255,0.1); padding: 4px 8px; border-radius: 4px; margin-left: 8px;">提取码: ${link.password}</span>` : "";
                             linksHtml += `
@@ -108,9 +150,12 @@
                                     </button>
                                 </div>
                             `;
-                        });
-                    }
-                    
+                        }
+                    });
+                }
+                
+                if (hasMatchingLink) {
+                    displayedCount++;
                     const card = document.createElement('div');
                     card.className = 'glass-panel';
                     card.style.padding = '1.5rem';
@@ -127,18 +172,16 @@
                         ${linksHtml}
                     `;
                     container.appendChild(card);
-                });
-            } else {
-                container.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; color: var(--text-secondary); padding: 4rem;"><i class="fa-solid fa-inbox fa-4x" style="margin-bottom: 1.5rem; opacity: 0.5;"></i><h3>未搜索到任何结果</h3></div>';
+                }
+            });
+            
+            if (displayedCount === 0) {
+                container.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; color: var(--text-secondary); padding: 4rem;"><i class="fa-solid fa-filter fa-4x" style="margin-bottom: 1.5rem; opacity: 0.5;"></i><h3>当前过滤条件下没有结果</h3></div>';
             }
-        } catch (err) {
-            loading.style.display = 'none';
-            container.innerHTML = `<div style="grid-column: 1 / -1; text-align: center; color: var(--error); padding: 4rem;"><i class="fa-solid fa-circle-exclamation fa-4x" style="margin-bottom: 1.5rem;"></i><h3>搜索请求失败: ${err.message}</h3></div>`;
-        } finally {
-            btn.disabled = false;
-            btn.innerHTML = oldBtnText;
+        } else {
+            container.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; color: var(--text-secondary); padding: 4rem;"><i class="fa-solid fa-inbox fa-4x" style="margin-bottom: 1.5rem; opacity: 0.5;"></i><h3>未搜索到任何结果</h3></div>';
         }
-    });
+    }
 
     function closeTransferModal() {
         const modal = document.getElementById('transferModal');
