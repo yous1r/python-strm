@@ -6,7 +6,6 @@ from app.core.cloud115.client import client_115
 from app.core.notify.manager import notify_manager
 from app.core.media.organizer import organizer
 from app.core.sync.engine import sync_engine
-from app.api.cloud115 import get_client
 
 async def handle_new_link(link_data: dict, source: str, **kwargs):
     """
