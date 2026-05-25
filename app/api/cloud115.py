@@ -141,7 +141,6 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     
     # 强制为被 115 CDN WAF 黑名单的 UA（如 Lavf/FFmpeg）开启流式代理，即使未配置 play_ua
     if not target_ua and ("Lavf/" in player_ua or "FFmpeg" in player_ua):
-        from app.core.cloud115.client import client_115
         if client_115.client:
             # 听取建议：为了不触发账号风控异常，伪装 UA 必须和当前选择的网盘 API (如 Alipay Mini) 保持完全一致！
             target_ua = client_115.client.headers.get("user-agent", "Mozilla/5.0")
