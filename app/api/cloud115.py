@@ -139,9 +139,13 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     config = get_config()
     target_ua = config.cloud115.play_ua
     
-    # 如果用户没有配置伪装UA，采用最原生的 302 跳转模式
+    # 强制为被 115 CDN WAF 黑名单的 UA（如 Lavf/FFmpeg）开启流式代理，即使未配置 play_ua
+    if not target_ua and ("Lavf/" in player_ua or "FFmpeg" in player_ua):
+        target_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        logger.info(f"🛡️ [WAF Bypass] Auto-enabling proxy mode for blacklisted UA: {player_ua}")
+
+    # 如果用户没有配置伪装UA（且播放器不是高危 UA），采用最原生的 302 跳转模式
     if not target_ua:
-        player_ua = request.headers.get("user-agent", "Unknown")
         url = await client_115.get_download_url(pickcode, user_agent=player_ua)
         if not url:
             raise HTTPException(status_code=404, detail="Download URL not found")
