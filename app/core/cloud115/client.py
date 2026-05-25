@@ -143,7 +143,10 @@ class Cloud115Client:
             try:
                 logger.info(f"🚀 [API CALL] Requesting new download URL from 115 for pickcode: {pickcode} (UA: {user_agent})")
                 # 透传客户端真实的 UA，打破 115 的直链 UA 防盗链绑定机制
-                kwargs = {}
+                # 极其重要：必须使用 app="android"，否则如果采用 web/chrome 接口并带上伪装 UA，会直接触发阿里云 WAF 的 405 拦截！
+                kwargs = {
+                    "app": "android"
+                }
                 if user_agent:
                     kwargs['user_agent'] = user_agent
                 result = await asyncio.to_thread(self.client.download_url, pickcode, **kwargs)
