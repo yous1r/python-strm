@@ -21,7 +21,11 @@ class TelegramNotifier:
         }
         
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            client_kwargs = {"timeout": 10}
+            if self.config.proxy:
+                client_kwargs["proxy"] = self.config.proxy
+                
+            async with httpx.AsyncClient(**client_kwargs) as client:
                 res = await client.post(url, json=payload)
                 data = res.json()
                 if not data.get("ok"):

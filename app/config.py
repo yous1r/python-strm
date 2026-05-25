@@ -59,6 +59,7 @@ class TelegramConfig(BaseModel):
     api_id: str = ""
     api_hash: str = ""
     channels: List[str] = []
+    proxy: str = ""
 
 class MonitorConfig(BaseModel):
     telegram: TelegramConfig = TelegramConfig()
@@ -74,6 +75,7 @@ class TelegramNotifyConfig(BaseModel):
     enabled: bool = False
     bot_token: str = ""
     chat_id: str = ""
+    proxy: str = ""
 
 class BarkNotifyConfig(BaseModel):
     enabled: bool = False

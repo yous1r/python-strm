@@ -21,6 +21,10 @@
             <input type="password" id="mon_tg_api_hash" class="form-control" placeholder="xxxxxxxxxxxxxxxxxxxxxx">
         </div>
         <div class="form-group">
+            <label class="form-label">Proxy 代理 (可选, 如 http://127.0.0.1:7890)</label>
+            <input type="text" id="mon_tg_proxy" class="form-control" placeholder="http://127.0.0.1:7890">
+        </div>
+        <div class="form-group">
             <label class="form-label">监听频道列表 (每行一个 ID 或 Username)</label>
             <textarea id="mon_tg_channels" class="form-control" rows="3" placeholder="-1001234567890&#10;my_share_channel"></textarea>
         </div>
@@ -79,6 +83,10 @@
         <div class="form-group">
             <label class="form-label">Chat ID (接收人ID)</label>
             <input type="text" id="not_tg_chat_id" class="form-control">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Proxy 代理 (可选, 如 http://127.0.0.1:7890)</label>
+            <input type="text" id="not_tg_proxy" class="form-control" placeholder="http://127.0.0.1:7890">
         </div>
     </div>
     
@@ -201,6 +209,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('mon_tg_enabled').checked = config.monitor.telegram.enabled;
             document.getElementById('mon_tg_api_id').value = config.monitor.telegram.api_id;
             document.getElementById('mon_tg_api_hash').value = config.monitor.telegram.api_hash;
+            document.getElementById('mon_tg_proxy').value = config.monitor.telegram.proxy || '';
             document.getElementById('mon_tg_channels').value = config.monitor.telegram.channels.join('\n');
             
             // 填充 Notify WeCom
@@ -213,6 +222,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('not_tg_enabled').checked = config.notify.telegram.enabled;
             document.getElementById('not_tg_bot_token').value = config.notify.telegram.bot_token;
             document.getElementById('not_tg_chat_id').value = config.notify.telegram.chat_id;
+            document.getElementById('not_tg_proxy').value = config.notify.telegram.proxy || '';
             
             // 填充 Notify Bark
             document.getElementById('not_bark_enabled').checked = config.notify.bark.enabled;
@@ -246,6 +256,7 @@ async function saveNotifyConfig(silent = false) {
                 enabled: document.getElementById('mon_tg_enabled').checked,
                 api_id: document.getElementById('mon_tg_api_id').value,
                 api_hash: document.getElementById('mon_tg_api_hash').value,
+                proxy: document.getElementById('mon_tg_proxy').value,
                 channels: tgChannels
             }
         },
@@ -259,7 +270,8 @@ async function saveNotifyConfig(silent = false) {
             telegram: {
                 enabled: document.getElementById('not_tg_enabled').checked,
                 bot_token: document.getElementById('not_tg_bot_token').value,
-                chat_id: document.getElementById('not_tg_chat_id').value
+                chat_id: document.getElementById('not_tg_chat_id').value,
+                proxy: document.getElementById('not_tg_proxy').value
             },
             bark: {
                 enabled: document.getElementById('not_bark_enabled').checked,

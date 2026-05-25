@@ -23,7 +23,25 @@ class TelegramMonitor:
             logger.error("Telegram API ID or Hash is missing.")
             return
 
-        self.client = TelegramClient('session_strm', self.config.api_id, self.config.api_hash)
+        client_kwargs = {}
+        if self.config.proxy:
+            import urllib.parse
+            try:
+                parsed = urllib.parse.urlparse(self.config.proxy)
+                proxy_type = parsed.scheme.lower()
+                if proxy_type == "http":
+                    proxy_type = "http"
+                elif proxy_type in ["socks5", "socks5h"]:
+                    proxy_type = "socks5"
+                client_kwargs["proxy"] = {
+                    "proxy_type": proxy_type,
+                    "addr": parsed.hostname,
+                    "port": parsed.port
+                }
+            except Exception as e:
+                logger.error(f"Failed to parse monitor proxy: {e}")
+
+        self.client = TelegramClient('session_strm', self.config.api_id, self.config.api_hash, **client_kwargs)
         
         @self.client.on(events.NewMessage(chats=self.config.channels))
         async def handler(event):
