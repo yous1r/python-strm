@@ -197,15 +197,20 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
         await client.aclose()
         raise HTTPException(status_code=502, detail="Proxy connection failed")
         
-    resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ["server", "date", "transfer-encoding", "content-encoding", "connection", "content-disposition"]}
+    resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ["server", "date", "transfer-encoding", "content-encoding", "connection", "content-disposition", "content-type"]}
+    
+    import mimetypes
+    content_type, _ = mimetypes.guess_type(filename)
+    resp_headers["Content-Type"] = content_type or "video/mp4"
+    resp_headers["Accept-Ranges"] = "bytes"
     
     async def stream_generator():
         try:
-            # 128KB 分块最适合流媒体
-            async for chunk in resp.aiter_bytes(chunk_size=128 * 1024):
+            # 1MB 分块可以提高大码率原盘的代理性能
+            async for chunk in resp.aiter_bytes(chunk_size=1024 * 1024):
                 yield chunk
         except Exception as e:
-            logger.debug(f"⚠️ Proxy stream closed: {e}")
+            logger.error(f"⚠️ Proxy stream closed with exception: {repr(e)}")
         finally:
             await resp.aclose()
             await client.aclose()
