@@ -160,12 +160,13 @@ async function checkUser() {
         if(res.ok) {
             const data = await res.json();
             statusDiv.style.display = 'block';
+            const vipText = data.vip ? (data.level ? `VIP ${data.level}` : 'VIP 用户') : '普通用户';
             statusDiv.innerHTML = `
                 <div style="display: flex; gap: 1rem; align-items: center;">
                     <div style="font-size: 2rem; color: var(--success);"><i class="fa-solid fa-circle-check"></i></div>
                     <div>
                         <div style="font-weight: bold; font-size: 1.1rem;">${data.name}</div>
-                        <div style="color: var(--text-secondary); font-size: 0.9rem;">VIP 等级: ${data.level || '普通用户'}</div>
+                        <div style="color: var(--text-secondary); font-size: 0.9rem;">VIP 等级: ${vipText}</div>
                     </div>
                 </div>
             `;
