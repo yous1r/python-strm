@@ -1,7 +1,7 @@
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 aiosqlite>=0.20.0
-httpx>=0.27.0
+httpx[socks]>=0.27.0
 jinja2>=3.1.0
 python-multipart>=0.0.9
 apscheduler>=3.10.0
@@ -18,3 +18,4 @@ x123pan>=0.0.1
 tmdbv3api>=1.9.0
 telethon>=1.33.1
 cryptography>=41.0.0
+python-socks[asyncio]>=2.4.4

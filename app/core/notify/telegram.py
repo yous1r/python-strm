@@ -23,7 +23,10 @@ class TelegramNotifier:
         try:
             client_kwargs = {"timeout": 10}
             if self.config.proxy:
-                client_kwargs["proxy"] = self.config.proxy
+                proxy_url = self.config.proxy
+                if not proxy_url.startswith(("http://", "https://", "socks5://", "socks5h://")):
+                    proxy_url = f"http://{proxy_url}"
+                client_kwargs["proxy"] = proxy_url
                 
             async with httpx.AsyncClient(**client_kwargs) as client:
                 res = await client.post(url, json=payload)
@@ -31,6 +34,6 @@ class TelegramNotifier:
                 if not data.get("ok"):
                     logger.error(f"Telegram notify failed: {data.get('description')}")
         except Exception as e:
-            logger.error(f"Telegram notify error: {e}")
+            logger.exception("Telegram notify error:")
 
 notifier = TelegramNotifier()

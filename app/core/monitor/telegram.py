@@ -27,9 +27,12 @@ class TelegramMonitor:
         if self.config.proxy:
             import urllib.parse
             try:
-                parsed = urllib.parse.urlparse(self.config.proxy)
+                proxy_str = self.config.proxy
+                if not proxy_str.startswith(("http://", "https://", "socks5://", "socks5h://")):
+                    proxy_str = f"http://{proxy_str}"
+                parsed = urllib.parse.urlparse(proxy_str)
                 proxy_type = parsed.scheme.lower()
-                if proxy_type == "http":
+                if proxy_type in ["http", "https"]:
                     proxy_type = "http"
                 elif proxy_type in ["socks5", "socks5h"]:
                     proxy_type = "socks5"
