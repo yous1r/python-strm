@@ -110,7 +110,7 @@ class LavfTokenBucket:
                 return True
             return False
 
-lavf_limiter = LavfTokenBucket(capacity=5.0, fill_rate=1.0)
+lavf_limiter = LavfTokenBucket(capacity=20.0, fill_rate=2.0)
 
 @router.get("/play/{pickcode}")
 @router.head("/play/{pickcode}")
@@ -122,6 +122,16 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     client_ip = request.client.host if request.client else "Unknown IP"
     
     player_ua = request.headers.get("user-agent", "Unknown")
+
+    # 智能风控拦截：使用令牌桶算法 + 同视频豁免机制 限流扫库探针
+    # 返回 429 Too Many Requests 既能让扫库程序减速，也不会破坏媒体库缓存
+    if any(x in player_ua for x in ["Lavf/", "FFmpeg", "Go-http-client"]):
+        # 提取真实的 pickcode（无视后缀）
+        clean_pc = pickcode.split('|')[0] if '|' in pickcode else pickcode
+        if not await lavf_limiter.consume(client_ip, clean_pc):
+            logger.info(f"🚫 [风控保护] 已拦截频繁探针请求: pickcode={clean_pc} filename={filename} method={method} ua={player_ua}")
+            from fastapi.responses import Response
+            return Response(content=b"Too Many Requests (115 API Protection)", status_code=429, media_type="text/plain")
 
     if "|" in pickcode:
         import urllib.parse
