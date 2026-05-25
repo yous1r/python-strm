@@ -36,16 +36,21 @@ class TmdbClient:
             if not results:
                 return []
             
-            # 简单的按年份过滤
             if year:
                 filtered = []
                 for m in results:
                     if hasattr(m, 'release_date') and m.release_date and m.release_date.startswith(str(year)):
                         filtered.append(m)
                 if filtered:
-                    return [m.__dict__ for m in filtered]
+                    results = filtered
                     
-            return [m.__dict__ for m in results]
+            final_res = []
+            for m in results:
+                if hasattr(m, '__dict__'):
+                    final_res.append(m.__dict__)
+                elif isinstance(m, dict):
+                    final_res.append(m)
+            return final_res
         except Exception as e:
             logger.error(f"TMDB movie search failed: {e}")
             return []
@@ -65,9 +70,15 @@ class TmdbClient:
                     if hasattr(t, 'first_air_date') and t.first_air_date and t.first_air_date.startswith(str(year)):
                         filtered.append(t)
                 if filtered:
-                    return [t.__dict__ for t in filtered]
+                    results = filtered
                     
-            return [t.__dict__ for t in results]
+            final_res = []
+            for t in results:
+                if hasattr(t, '__dict__'):
+                    final_res.append(t.__dict__)
+                elif isinstance(t, dict):
+                    final_res.append(t)
+            return final_res
         except Exception as e:
             logger.error(f"TMDB TV search failed: {e}")
             return []
