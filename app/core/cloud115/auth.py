@@ -138,7 +138,7 @@ class Cloud115Auth:
                             cookie_str = "; ".join([f"{k}={v}" for k, v in cookie_data.items()])
                     if cookie_str:
                         # 更新当前认证
-                        self.update_cookie(cookie_str)
+                        await asyncio.to_thread(self.update_cookie, cookie_str)
                         return {"status": 2, "msg": "登录成功", "cookie": cookie_str}
                 
                 error_msg = login_res.get("message", "未知错误") if isinstance(login_res, dict) else "未知错误"
