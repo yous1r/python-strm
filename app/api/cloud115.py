@@ -128,7 +128,6 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
         clean_pc = pickcode.split('|')[0] if '|' in pickcode else pickcode
         if not await lavf_limiter.consume(client_ip, clean_pc):
             logger.info(f"已拦截飞牛并发探针(防风控): pickcode={clean_pc} filename={filename} method={method} ua={player_ua}")
-            from fastapi.responses import Response
             return Response(content=b"", status_code=200, media_type="video/mp4")
         
     if "|" in pickcode:
