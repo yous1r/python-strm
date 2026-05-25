@@ -159,7 +159,16 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
         logger.info(f"🔄 [{method}] Redirecting {pickcode} to CDN directly (Player UA: {player_ua})")
         return RedirectResponse(url=url, status_code=302)
         
-    # 如果配置了伪装UA（例如 iPad），必须走流式代理！
+    # 如果播放器已经成功伪装了 UA（比如通过读取 .strm 文件末尾的 |User-Agent= 参数），
+    # 此时它的 UA 已经和目标 UA 完全一致，我们就可以直接 302 跳转，免去流式代理的性能损耗！
+    if player_ua == target_ua:
+        url = await client_115.get_download_url(pickcode, user_agent=target_ua)
+        if not url:
+            raise HTTPException(status_code=404, detail="Download URL not found")
+        logger.info(f"🔄 [{method}] Player UA matches Target UA, redirecting {pickcode} to CDN directly")
+        return RedirectResponse(url=url, status_code=302)
+        
+    # 如果配置了伪装UA，但播放器自身不支持修改 UA（导致上报的还是原始 UA），必须走流式代理！
     # 因为 302 跳转无法强制播放器改变自身 UA，会导致 115 CDN 校验失败 (403)
     url = await client_115.get_download_url(pickcode, user_agent=target_ua)
     if not url:
