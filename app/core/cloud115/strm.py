@@ -1,4 +1,5 @@
 import os
+import asyncio
 import aiofiles
 from loguru import logger
 from app.core.cloud115.client import client_115
@@ -59,6 +60,9 @@ class StrmGenerator115:
         offset = 0
 
         while True:
+            # 防风控：增量跳过太快会导致 list_files 并发超限触发阿里云 WAF 405
+            await asyncio.sleep(0.5)
+            
             res = await self.client.list_files(dir_id=dir_id, limit=limit, offset=offset)
             if "error" in res:
                 logger.error(f"Batch generate error: {res['error']}")
