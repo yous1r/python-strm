@@ -14,6 +14,7 @@ class TransferRequest(BaseModel):
     target_dir_id: str
     receive_code: Optional[str] = ""
     cloud_type: Optional[str] = "115"
+    link_type: Optional[str] = ""
 
 class PluginUpdateRequest(BaseModel):
     enabled_plugins: List[str]
@@ -98,9 +99,10 @@ async def transfer_resource(req: TransferRequest, background_tasks: BackgroundTa
     """一键转存分享链接或推送离线下载"""
     url = req.url
     cloud_type = req.cloud_type
+    link_type = req.link_type.lower() if req.link_type else ""
     
     if cloud_type == "115":
-        if "115.com/s/" in url or "share_code=" in url:
+        if link_type == "115" or "115.com/s/" in url or "anxia.com/s/" in url or "share_code=" in url:
             # 115 分享链接转存
             res = await client_115.share_receive(url, req.receive_code, req.target_dir_id)
             if res.get("state"):
@@ -111,7 +113,7 @@ async def transfer_resource(req: TransferRequest, background_tasks: BackgroundTa
             else:
                 raise HTTPException(status_code=400, detail=res.get("error", "转存失败"))
                 
-        elif url.startswith("magnet:?") or url.startswith("http"):
+        elif link_type in ["magnet", "torrent", "bt"] or url.startswith("magnet:?") or url.startswith("http"):
             # 磁力链或种子下载
             res = await client_115.offline_add_url(url, req.target_dir_id)
             if res.get("state"):

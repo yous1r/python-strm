@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from app.core.media.organizer import organizer
 from app.core.cloud115.client import client_115
 
-router = APIRouter(prefix="/api/v1/organize", tags=["影视整理"])
+router = APIRouter(prefix="/organize", tags=["影视整理"])
 
 class OrganizeReq(BaseModel):
     cloud_type: str

@@ -254,7 +254,7 @@
                                     <span style="font-size: 0.75rem; font-weight: 600; background: var(--accent-primary); color: white; padding: 4px 8px; border-radius: 4px; margin-right: 12px; white-space: nowrap;">${linkTypeStr}</span>
                                     <span style="flex-grow: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: 0.85rem;" title="${link.url}">${link.url}</span>
                                     ${passHtml}
-                                    <button class="btn btn-secondary" style="padding: 0.4rem 0.75rem; font-size: 0.85rem; margin-left: 12px; white-space: nowrap;" onclick="openTransferModal('${link.url}', '${link.password || ''}', '${targetCloud}')">
+                                    <button class="btn btn-secondary" style="padding: 0.4rem 0.75rem; font-size: 0.85rem; margin-left: 12px; white-space: nowrap;" onclick="openTransferModal('${link.url}', '${link.password || ''}', '${targetCloud}', '${type}')">
                                         一键转存
                                     </button>
                                 </div>
@@ -300,9 +300,11 @@
     }
     
     let currentTransferCloudType = '115';
+    let currentTransferLinkType = '';
     
-    function openTransferModal(url, password, cloudType) {
+    function openTransferModal(url, password, cloudType, linkType) {
         currentTransferCloudType = cloudType || '115';
+        currentTransferLinkType = linkType || '';
         document.getElementById('transferUrlInput').value = url;
         const codeInput = document.getElementById('receiveCodeInput');
         const codeContainer = document.getElementById('receiveCodeContainer');
@@ -346,7 +348,8 @@
                     url: url,
                     target_dir_id: dirId,
                     receive_code: receiveCode,
-                    cloud_type: currentTransferCloudType
+                    cloud_type: currentTransferCloudType,
+                    link_type: currentTransferLinkType
                 })
             });
             
