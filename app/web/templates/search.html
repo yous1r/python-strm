@@ -38,12 +38,17 @@
     
     <!-- Plugins Selection -->
     <div style="margin-top: 1rem;">
-        <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer; padding: 0.5rem; background: rgba(0,0,0,0.1); border-radius: 4px;" onclick="document.getElementById('pluginListContainer').style.display = document.getElementById('pluginListContainer').style.display === 'none' ? 'flex' : 'none'">
-            <span style="color: var(--text-secondary); font-size: 0.9rem;"><i class="fa-solid fa-puzzle-piece" style="margin-right: 5px;"></i> 高级：选择特定插件 (默认全部启用)</span>
-            <i class="fa-solid fa-chevron-down" style="color: var(--text-secondary);"></i>
+        <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer; padding: 0.5rem; background: rgba(0,0,0,0.1); border-radius: 4px;" onclick="togglePluginContainer()">
+            <span style="color: var(--text-secondary); font-size: 0.9rem;"><i class="fa-solid fa-puzzle-piece" style="margin-right: 5px;"></i> 高级：选择特定插件 (修改后可保存热重载)</span>
+            <i class="fa-solid fa-chevron-down" id="pluginToggleIcon" style="color: var(--text-secondary);"></i>
         </div>
-        <div id="pluginListContainer" style="display: none; flex-wrap: wrap; gap: 10px; margin-top: 10px; max-height: 150px; overflow-y: auto; padding: 0.5rem; border: 1px solid var(--border); border-radius: 4px; background: rgba(0,0,0,0.05);">
+        <div id="pluginListContainer" style="display: none; flex-wrap: wrap; gap: 10px; margin-top: 10px; max-height: 200px; overflow-y: auto; padding: 0.5rem; border: 1px solid var(--border); border-radius: 4px; background: rgba(0,0,0,0.05);">
             <!-- Plugins will be loaded here dynamically -->
+        </div>
+        <div id="pluginActionContainer" style="display: none; justify-content: flex-end; margin-top: 10px; gap: 10px;">
+            <button type="button" class="btn btn-secondary" onclick="selectAllPlugins(false)" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;">全部取消</button>
+            <button type="button" class="btn btn-secondary" onclick="selectAllPlugins(true)" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;">全选</button>
+            <button type="button" class="btn btn-primary" onclick="savePluginConfig()" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;"><i class="fa-solid fa-save"></i> 永久保存为默认插件</button>
         </div>
     </div>
 </div>
@@ -117,6 +122,53 @@
             console.error("Failed to load plugins:", e);
         }
     });
+
+    function togglePluginContainer() {
+        const container = document.getElementById('pluginListContainer');
+        const actionContainer = document.getElementById('pluginActionContainer');
+        const icon = document.getElementById('pluginToggleIcon');
+        if (container.style.display === 'none') {
+            container.style.display = 'flex';
+            actionContainer.style.display = 'flex';
+            icon.classList.remove('fa-chevron-down');
+            icon.classList.add('fa-chevron-up');
+        } else {
+            container.style.display = 'none';
+            actionContainer.style.display = 'none';
+            icon.classList.remove('fa-chevron-up');
+            icon.classList.add('fa-chevron-down');
+        }
+    }
+
+    function selectAllPlugins(select) {
+        document.querySelectorAll('.plugin-checkbox').forEach(cb => {
+            cb.checked = select;
+        });
+    }
+
+    async function savePluginConfig() {
+        const selectedPlugins = Array.from(document.querySelectorAll('.plugin-checkbox:checked')).map(cb => cb.value);
+        if (selectedPlugins.length === 0) {
+            showNotification('请至少选择一个插件！', 'error');
+            return;
+        }
+        try {
+            const res = await fetch('/api/v1/search/plugins/update', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled_plugins: selectedPlugins })
+            });
+            const data = await res.json();
+            if (data.code === 0) {
+                showNotification('插件配置已永久保存并完成热加载！', 'success');
+            } else {
+                showNotification(data.detail || data.message || '更新失败', 'error');
+            }
+        } catch (e) {
+            console.error(e);
+            showNotification('网络错误', 'error');
+        }
+    }
 
     function showNotification(message, type = 'success') {
         if (window.showToast) {

@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional
 
 PANSOU_API_URL = "http://pansou:8888/api/search"
 PANSOU_INFO_URL = "http://pansou:8888/api/health"
+PANSOU_CONFIG_URL = "http://pansou:8888/api/config/plugins"
 
 class PansouClient:
     def __init__(self):
@@ -55,5 +56,17 @@ class PansouClient:
         except Exception as e:
             logger.error(f"❌ 获取 Pansou 插件列表失败: {e}")
             return []
+
+    async def update_plugins(self, enabled_plugins: List[str]) -> bool:
+        """热更新 Pansou 启用的插件"""
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(PANSOU_CONFIG_URL, json={"enabled_plugins": enabled_plugins})
+                resp.raise_for_status()
+                data = resp.json()
+                return data.get("status") == "ok"
+        except Exception as e:
+            logger.error(f"❌ 热更新 Pansou 插件失败: {e}")
+            return False
 
 pansou_client = PansouClient()

@@ -14,6 +14,9 @@ class TransferRequest(BaseModel):
     target_dir_id: str
     receive_code: Optional[str] = ""
 
+class PluginUpdateRequest(BaseModel):
+    enabled_plugins: List[str]
+
 async def poll_offline_task(info_hash: str, target_dir_id: str):
     """后台轮询监控离线下载任务进度"""
     logger.info(f"Started polling offline task: {info_hash}")
@@ -73,6 +76,15 @@ async def get_plugins():
             "name": PLUGIN_MAPPING.get(p, p)
         })
     return {"plugins": results}
+
+@router.post("/plugins/update")
+async def update_plugins(req: PluginUpdateRequest):
+    """热更新插件配置"""
+    success = await pansou_client.update_plugins(req.enabled_plugins)
+    if success:
+        return {"code": 0, "message": "插件配置更新成功"}
+    else:
+        raise HTTPException(status_code=500, detail="更新插件配置失败")
 
 @router.get("/")
 async def search_resources(keyword: str, source_type: str = "all", plugins: Optional[str] = None):
