@@ -61,7 +61,7 @@ class StrmGenerator115:
 
         while True:
             # 防风控：增量跳过太快会导致 list_files 并发超限触发阿里云 WAF 405
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.2)
             
             res = await self.client.list_files(dir_id=dir_id, limit=limit, offset=offset)
             if "error" in res:

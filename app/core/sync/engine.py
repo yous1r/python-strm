@@ -64,10 +64,11 @@ class SyncEngine:
             logger.info(f"Sync pipeline completed in {duration:.2f}s, generated {total_generated} STRM files.")
             
             # 推送成功通知
-            await notify_manager.notify(
-                title="[Python-STRM] 自动同步报告",
-                content=f"状态: 执行成功 ✅\n耗时: {duration:.2f}s\n新增文件: {total_generated} 个\n详情: {detail_str if detail_str else '无变动'}"
-            )
+            if total_generated > 0 or force:
+                await notify_manager.notify(
+                    title="[Python-STRM] 自动同步报告",
+                    content=f"状态: 执行成功 ✅\n耗时: {duration:.2f}s\n新增文件: {total_generated} 个\n详情: {detail_str if detail_str else '无变动'}"
+                )
 
         except Exception as e:
             duration = time.time() - start_time
