@@ -59,6 +59,30 @@ async def list_dirs(dir_id: str = '0'):
         raise HTTPException(status_code=400, detail=res["error"])
     return res
 
+import time
+import asyncio
+
+class LavfTokenBucket:
+    def __init__(self, capacity=5.0, fill_rate=1.0):
+        self.capacity = capacity
+        self.tokens = capacity
+        self.fill_rate = fill_rate
+        self.timestamp = time.monotonic()
+        self.lock = asyncio.Lock()
+
+    async def consume(self) -> bool:
+        async with self.lock:
+            now = time.monotonic()
+            elapsed = now - self.timestamp
+            self.tokens = min(self.capacity, self.tokens + elapsed * self.fill_rate)
+            self.timestamp = now
+            if self.tokens >= 1.0:
+                self.tokens -= 1.0
+                return True
+            return False
+
+lavf_limiter = LavfTokenBucket(capacity=5.0, fill_rate=1.0)
+
 @router.get("/play/{pickcode}")
 @router.head("/play/{pickcode}")
 @router.get("/play/{pickcode}/{filename:path}")
@@ -70,12 +94,14 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     
     player_ua = request.headers.get("user-agent", "Unknown")
     
-    # 核心风控拦截：拦截飞牛影视等播放器的内置 FFmpeg(Lavf) 媒体信息提取探针。
-    # 这种探针会疯狂发送 GET/HEAD 请求到 CDN 造成 115 严重风控告警。直接拦截不仅能防风控，还能秒开。
+    # 智能风控拦截：使用令牌桶算法限流 FFmpeg(Lavf) 探针
+    # 飞牛影视扫库时会产生几十个并发探针，瞬间耗尽令牌，后续探针被拦截，从而保护 115 CDN 不触发 WAF。
+    # 真正的播放器（如 Vidhub）偶尔的连接可以顺利拿到令牌，不会被误杀。
     if "Lavf/" in player_ua or "FFmpeg" in player_ua:
-        logger.info(f"已拦截飞牛影视115媒体信息提取: pickcode={pickcode} filename={filename} method={method} ua={player_ua}")
-        from fastapi.responses import Response
-        return Response(content=b"", status_code=200, media_type="video/mp4")
+        if not await lavf_limiter.consume():
+            logger.info(f"已拦截飞牛并发探针(防风控): pickcode={pickcode} filename={filename} method={method} ua={player_ua}")
+            from fastapi.responses import Response
+            return Response(content=b"", status_code=200, media_type="video/mp4")
         
     if "|" in pickcode:
         import urllib.parse
