@@ -5,6 +5,10 @@ from loguru import logger
 from app.core.cloud115.client import client_115
 from app.core.cloud115.auth import auth_manager
 from app.config import get_config
+import httpx
+
+# 全局复用 HTTPX 客户端，启用 Keep-Alive，对代理流媒体（尤其是高频 Range 请求）性能提升巨大
+proxy_client = httpx.AsyncClient(verify=False, timeout=httpx.Timeout(connect=5.0, read=None, write=5.0, pool=10.0))
 
 router = APIRouter(prefix="/api/v1/115", tags=["115网盘"])
 
@@ -173,33 +177,30 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     if "if-range" in request.headers:
         proxy_headers["If-Range"] = request.headers["if-range"]
 
-    # 极其重要：timeout=None 关闭 HTTPX 默认的 5 秒读取超时限制。
-    # 否则播放器缓冲满后暂停读取 TCP，代理就会因为 5 秒没读到数据而异常断开，导致死循环报错！
-    import httpx
-    client = httpx.AsyncClient(verify=False, timeout=httpx.Timeout(None))
-    req = client.build_request(method, url, headers=proxy_headers)
+    # 极其重要：复用全局的 httpx 客户端以启用 HTTP Keep-Alive！
+    # 视频播放器（如 mpv）在起播时可能会发起数十次 Range 请求寻找关键帧。
+    # 如果每次请求都重新建立 TCP 和 TLS 连接，不仅会导致起播极慢（几十秒），还可能被 CDN 认为是恶意攻击而阻断连接。
+    req = proxy_client.build_request(method, url, headers=proxy_headers)
     
     if method == "HEAD":
         try:
-            resp = await client.send(req)
+            resp = await proxy_client.send(req)
             resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ["server", "date", "transfer-encoding", "content-encoding", "connection", "content-disposition"]}
-            await client.aclose()
             return Response(status_code=resp.status_code, headers=resp_headers)
         except Exception as e:
             logger.error(f"❌ [{method}] HEAD proxy failed: {e}")
-            await client.aclose()
             raise HTTPException(status_code=502, detail="Bad Gateway")
 
     try:
-        resp = await client.send(req, stream=True, follow_redirects=True)
+        resp = await proxy_client.send(req, stream=True, follow_redirects=True)
     except Exception as e:
         logger.error(f"❌ [{method}] Proxy connection failed: {e}")
-        await client.aclose()
         raise HTTPException(status_code=502, detail="Proxy connection failed")
         
     resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ["server", "date", "transfer-encoding", "content-encoding", "connection", "content-disposition", "content-type"]}
     
     import mimetypes
+    import asyncio
     content_type, _ = mimetypes.guess_type(filename)
     resp_headers["Content-Type"] = content_type or "video/mp4"
     resp_headers["Accept-Ranges"] = "bytes"
@@ -209,11 +210,12 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
             # 1MB 分块可以提高大码率原盘的代理性能
             async for chunk in resp.aiter_bytes(chunk_size=1024 * 1024):
                 yield chunk
+        except asyncio.CancelledError:
+            logger.warning(f"⚠️ Proxy stream cancelled by client (player disconnected)")
         except Exception as e:
             logger.error(f"⚠️ Proxy stream closed with exception: {repr(e)}")
         finally:
             await resp.aclose()
-            await client.aclose()
 
     from fastapi.responses import StreamingResponse
     return StreamingResponse(stream_generator(), status_code=resp.status_code, headers=resp_headers)
