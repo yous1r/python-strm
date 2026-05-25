@@ -209,8 +209,15 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     
     import mimetypes
     import asyncio
-    content_type, _ = mimetypes.guess_type(filename)
-    resp_headers["Content-Type"] = content_type or "video/mp4"
+    import urllib.parse
+    
+    # 净化 filename，防止飞牛等系统把 |User-Agent= 拼接到 URL 路径里导致后缀名判断失败
+    decoded_filename = urllib.parse.unquote(filename)
+    clean_filename = decoded_filename.split("|")[0]
+    
+    content_type, _ = mimetypes.guess_type(clean_filename)
+    # 对于 .mkv，如果无法识别则回退为 application/octet-stream 强制播放器自己嗅探
+    resp_headers["Content-Type"] = content_type or "application/octet-stream"
     resp_headers["Accept-Ranges"] = "bytes"
     
     # 极速探测优化：如果播放器请求的 Range 小于 5MB（如 mpv 嗅探 mkv 索引），直接全量读取到内存并返回 Response，避免 StreamingResponse 的握手和协程开销
@@ -240,8 +247,8 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
 
     async def stream_generator():
         try:
-            # 1MB 分块可以提高大码率原盘的代理性能
-            async for chunk in resp.aiter_bytes(chunk_size=1024 * 1024):
+            # 降低到 64KB 分块，极大提升首字节响应速度 (TTFB)，避免因为 mpv 频繁极小嗅探时等待缓冲区填满导致的起播超时卡顿
+            async for chunk in resp.aiter_bytes(chunk_size=64 * 1024):
                 yield chunk
         except asyncio.CancelledError:
             logger.warning(f"⚠️ Proxy stream cancelled by client (player disconnected)")
