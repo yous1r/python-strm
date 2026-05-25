@@ -67,16 +67,17 @@
   <div class="custom-modal-dialog">
     <div class="glass-panel" style="padding: 0; width: 100%; border: 1px solid var(--border); overflow: hidden;">
       <div style="padding: 1.5rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2);">
-        <h3 style="margin: 0; font-size: 1.25rem;"><i class="fa-solid fa-cloud-arrow-down" style="margin-right: 0.5rem; color: var(--accent-primary);"></i> 一键转存</h3>
+        <h3 id="transferModalTitle" style="margin: 0; font-size: 1.25rem;"><i class="fa-solid fa-cloud-arrow-down" style="margin-right: 0.5rem; color: var(--accent-primary);"></i> 一键转存</h3>
         <button type="button" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 1.2rem;" onclick="closeTransferModal()"><i class="fa-solid fa-times"></i></button>
       </div>
       <div style="padding: 1.5rem;">
-        <p style="margin-bottom: 1rem; color: var(--text-secondary);">将转存至您的 115 监控目录：</p>
-        <select class="form-control" id="targetDirSelect" style="margin-bottom: 1.5rem;">
-            {% for d in config.cloud115.sync_dirs %}
-            <option value="{{ d.dir_id }}">{{ d.name }}</option>
-            {% endfor %}
-        </select>
+        <p style="margin-bottom: 1rem; color: var(--text-secondary);">选择目标目录：</p>
+        <div style="display: flex; gap: 0.5rem; margin-bottom: 1.5rem;">
+            <input type="text" id="targetDirSelect" class="form-control" placeholder="点击右侧按钮选择..." readonly>
+            <button type="button" class="btn btn-secondary" onclick="window.openDirectoryPicker(id => document.getElementById('targetDirSelect').value = id, currentTransferCloudType)" style="white-space: nowrap; padding: 0.5rem 1rem;">
+                <i class="fa-solid fa-folder-open"></i> 选择目录
+            </button>
+        </div>
         
         <div id="receiveCodeContainer" style="display: none; margin-bottom: 1.5rem;">
             <label class="form-label">提取码（如有）</label>
@@ -241,12 +242,19 @@
                             hasMatchingLink = true;
                             let linkTypeStr = link.type.toUpperCase() || "链接";
                             let passHtml = link.password ? `<span style="font-size: 0.75rem; background: rgba(255,255,255,0.1); padding: 4px 8px; border-radius: 4px; margin-left: 8px;">提取码: ${link.password}</span>` : "";
+                            let targetCloud = type;
+                            if (type === 'magnet' || type === 'torrent' || type === 'bt') {
+                                targetCloud = '115'; // 磁力或BT默认使用 115 离线下载
+                            } else if (type === '115') {
+                                targetCloud = '115';
+                            }
+                            
                             linksHtml += `
                                 <div style="display: flex; align-items: center; margin-bottom: 0.75rem; padding: 0.75rem; background: rgba(0,0,0,0.2); border-radius: 0.5rem; border: 1px solid var(--border);">
                                     <span style="font-size: 0.75rem; font-weight: 600; background: var(--accent-primary); color: white; padding: 4px 8px; border-radius: 4px; margin-right: 12px; white-space: nowrap;">${linkTypeStr}</span>
                                     <span style="flex-grow: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: 0.85rem;" title="${link.url}">${link.url}</span>
                                     ${passHtml}
-                                    <button class="btn btn-secondary" style="padding: 0.4rem 0.75rem; font-size: 0.85rem; margin-left: 12px; white-space: nowrap;" onclick="openTransferModal('${link.url}', '${link.password || ''}')">
+                                    <button class="btn btn-secondary" style="padding: 0.4rem 0.75rem; font-size: 0.85rem; margin-left: 12px; white-space: nowrap;" onclick="openTransferModal('${link.url}', '${link.password || ''}', '${targetCloud}')">
                                         一键转存
                                     </button>
                                 </div>
@@ -291,12 +299,17 @@
         }
     }
     
-    function openTransferModal(url, password) {
+    let currentTransferCloudType = '115';
+    
+    function openTransferModal(url, password, cloudType) {
+        currentTransferCloudType = cloudType || '115';
         document.getElementById('transferUrlInput').value = url;
         const codeInput = document.getElementById('receiveCodeInput');
         const codeContainer = document.getElementById('receiveCodeContainer');
         
-        if (url.includes('115.com/s/')) {
+        document.getElementById('transferModalTitle').innerHTML = `<i class="fa-solid fa-cloud-arrow-down" style="margin-right: 0.5rem; color: var(--accent-primary);"></i> 转存至 ${currentTransferCloudType.toUpperCase()}`;
+        
+        if (url.includes('115.com/s/') || url.includes('share_code=')) {
             codeContainer.style.display = 'block';
             codeInput.value = password || '';
         } else {
@@ -332,7 +345,8 @@
                 body: JSON.stringify({
                     url: url,
                     target_dir_id: dirId,
-                    receive_code: receiveCode
+                    receive_code: receiveCode,
+                    cloud_type: currentTransferCloudType
                 })
             });
             

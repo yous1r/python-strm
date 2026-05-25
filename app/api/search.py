@@ -13,6 +13,7 @@ class TransferRequest(BaseModel):
     url: str # 磁力链 或 115 分享链接
     target_dir_id: str
     receive_code: Optional[str] = ""
+    cloud_type: Optional[str] = "115"
 
 class PluginUpdateRequest(BaseModel):
     enabled_plugins: List[str]
@@ -96,31 +97,36 @@ async def search_resources(keyword: str, source_type: str = "all", plugins: Opti
 async def transfer_resource(req: TransferRequest, background_tasks: BackgroundTasks):
     """一键转存分享链接或推送离线下载"""
     url = req.url
+    cloud_type = req.cloud_type
     
-    if "115.com/s/" in url or "share_code=" in url:
-        # 115 分享链接转存
-        res = await client_115.share_receive(url, req.receive_code, req.target_dir_id)
-        if res.get("state"):
-            logger.success(f"Successfully received share link {url}")
-            # 分享转存是瞬间完成的，直接触发后台洗版
-            background_tasks.add_task(sync_engine.run_sync_task)
-            return {"status": "success", "msg": "转存成功，正在后台执行洗版入库"}
+    if cloud_type == "115":
+        if "115.com/s/" in url or "share_code=" in url:
+            # 115 分享链接转存
+            res = await client_115.share_receive(url, req.receive_code, req.target_dir_id)
+            if res.get("state"):
+                logger.success(f"Successfully received share link {url}")
+                # 分享转存是瞬间完成的，直接触发后台洗版
+                background_tasks.add_task(sync_engine.run_sync_task)
+                return {"status": "success", "msg": "转存成功，正在后台执行洗版入库"}
+            else:
+                raise HTTPException(status_code=400, detail=res.get("error", "转存失败"))
+                
+        elif url.startswith("magnet:?") or url.startswith("http"):
+            # 磁力链或种子下载
+            res = await client_115.offline_add_url(url, req.target_dir_id)
+            if res.get("state"):
+                info_hash = res.get("info_hash")
+                name = res.get("name", "Unknown")
+                logger.info(f"Successfully added offline task {name} ({info_hash})")
+                # 开启后台轮询
+                if info_hash:
+                    background_tasks.add_task(poll_offline_task, info_hash, req.target_dir_id)
+                return {"status": "success", "msg": f"已推送到离线下载: {name}"}
+            else:
+                raise HTTPException(status_code=400, detail=res.get("error", "添加离线任务失败"))
+                
         else:
-            raise HTTPException(status_code=400, detail=res.get("error", "转存失败"))
-            
-    elif url.startswith("magnet:?") or url.startswith("http"):
-        # 磁力链或种子下载
-        res = await client_115.offline_add_url(url, req.target_dir_id)
-        if res.get("state"):
-            info_hash = res.get("info_hash")
-            name = res.get("name", "Unknown")
-            logger.info(f"Successfully added offline task {name} ({info_hash})")
-            # 开启后台轮询
-            if info_hash:
-                background_tasks.add_task(poll_offline_task, info_hash, req.target_dir_id)
-            return {"status": "success", "msg": f"已推送到离线下载: {name}"}
-        else:
-            raise HTTPException(status_code=400, detail=res.get("error", "添加离线任务失败"))
+            raise HTTPException(status_code=400, detail="不支持的链接格式")
             
     else:
-        raise HTTPException(status_code=400, detail="不支持的链接格式")
+        raise HTTPException(status_code=400, detail=f"暂不支持一键转存至 {cloud_type} 网盘")
