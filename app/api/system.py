@@ -46,6 +46,20 @@ async def test_notify(channel: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/test-tmdb")
+async def test_tmdb():
+    """测试 TMDB 连通性"""
+    from app.core.tmdb.client import tmdb_client
+    try:
+        # Search a popular movie to test
+        res = await tmdb_client.search_movie("Inception")
+        if res:
+            return {"status": "success", "message": "TMDB 连通性测试成功！获取到数据。"}
+        else:
+            return {"status": "warning", "message": "连通正常，但未搜索到结果，请检查 API Key。"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"TMDB 连接失败: {str(e)}")
+
 @router.post("/sync/run")
 async def trigger_sync_now(force: bool = False):
     """立即在后台触发一次全量自动化同步任务"""

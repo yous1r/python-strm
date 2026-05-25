@@ -48,11 +48,16 @@ class WashConfig(BaseModel):
     prefer_dolby: bool = True
     prefer_larger: bool = True
 
+class Cloud115OrganizeConfig(BaseModel):
+    source_dirs: List[str] = []
+    target_dir: str = ""
+
 class OrganizeConfig(BaseModel):
     enabled: bool = True
     categories: List[str] = ["电影", "剧集", "动漫", "纪录片", "综艺"]
     regions: List[str] = ["国产", "欧美", "日韩", "其他"]
     wash: WashConfig = WashConfig()
+    cloud115: Cloud115OrganizeConfig = Cloud115OrganizeConfig()
 
 class TelegramConfig(BaseModel):
     enabled: bool = False
