@@ -122,17 +122,7 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     client_ip = request.client.host if request.client else "Unknown IP"
     
     player_ua = request.headers.get("user-agent", "Unknown")
-    
-    # 智能风控拦截：使用令牌桶算法 + 同视频豁免机制 限流 FFmpeg(Lavf) 探针
-    # 飞牛影视扫库时会产生几十个【不同视频】的并发探针，瞬间耗尽令牌被拦截，保护 115 CDN。
-    # 真实的播放器（如 Vidhub）即使瞬间发起 10 个请求，因为都是【同一个视频】，只扣 1 个令牌，完美放行。
-    if "Lavf/" in player_ua or "FFmpeg" in player_ua:
-        # Note: handle pickcode that might contain '|'
-        clean_pc = pickcode.split('|')[0] if '|' in pickcode else pickcode
-        if not await lavf_limiter.consume(client_ip, clean_pc):
-            logger.info(f"已拦截飞牛并发探针(防风控): pickcode={clean_pc} filename={filename} method={method} ua={player_ua}")
-            return Response(content=b"", status_code=200, media_type="video/mp4")
-        
+
     if "|" in pickcode:
         import urllib.parse
         encoded_name = urllib.parse.quote(filename)
@@ -144,17 +134,8 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
         
     config = get_config()
     target_ua = config.cloud115.play_ua
-    
-    # 强制为被 115 CDN WAF 黑名单的 UA（如 Lavf/FFmpeg）开启流式代理，即使未配置 play_ua
-    if not target_ua and ("Lavf/" in player_ua or "FFmpeg" in player_ua):
-        if client_115.client:
-            # 听取建议：为了不触发账号风控异常，伪装 UA 必须和当前选择的网盘 API (如 Alipay Mini) 保持完全一致！
-            target_ua = client_115.client.headers.get("user-agent", "Mozilla/5.0")
-        else:
-            target_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        logger.info(f"🛡️ [WAF Bypass] Auto-enabling proxy mode for blacklisted UA: {player_ua} (Spoofed as API default: {target_ua})")
 
-    # 如果用户没有配置伪装UA（且播放器不是高危 UA），采用最原生的 302 跳转模式
+    # 如果用户没有配置伪装UA，采用最原生的 302 跳转模式
     if not target_ua:
         url = await client_115.get_download_url(pickcode, user_agent=player_ua)
         if not url:
