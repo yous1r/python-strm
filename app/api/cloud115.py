@@ -68,6 +68,14 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     method = request.method
     client_ip = request.client.host if request.client else "Unknown IP"
     
+    player_ua = request.headers.get("user-agent", "Unknown")
+    
+    # 核心风控拦截：拦截飞牛影视等播放器的内置 FFmpeg(Lavf) 媒体信息提取探针。
+    # 这种探针会疯狂发送 GET/HEAD 请求到 CDN 造成 115 严重风控告警。直接拦截不仅能防风控，还能秒开。
+    if "Lavf/" in player_ua or "FFmpeg" in player_ua:
+        logger.warning(f"🛡️ [{method}] 拦截播放器媒体信息提取探针 (防风控): pickcode={pickcode} ua={player_ua}")
+        raise HTTPException(status_code=403, detail="Forbidden: Media probe intercepted to prevent wind control")
+        
     if "|" in pickcode:
         import urllib.parse
         encoded_name = urllib.parse.quote(filename)
