@@ -241,8 +241,7 @@ class Cloud115Client:
                 logger.info(f"Adding offline task to 115: {url} -> dir: {target_dir_id}")
                 result = await asyncio.to_thread(
                     self.client.offline_add_url,
-                    url,
-                    payload={"wp_path_id": target_dir_id}
+                    {"url": url, "wp_path_id": target_dir_id}
                 )
                 if isinstance(result, dict) and result.get("state"):
                     return {"state": True, "info_hash": result.get("info_hash"), "name": result.get("name")}
@@ -291,10 +290,10 @@ class Cloud115Client:
                 # 获取根目录的所有 file_id
                 file_ids = []
                 for item in share_info.get("data", {}).get("list", []):
-                    file_ids.append(item.get("f", "") or item.get("fid", ""))
+                    fid = item.get("f") or item.get("fid") or item.get("cid")
+                    if fid:
+                        file_ids.append(str(fid))
                     
-                file_ids = [fid for fid in file_ids if fid]
-                
                 if not file_ids:
                     return {"state": False, "error": "No files found in share"}
                     
