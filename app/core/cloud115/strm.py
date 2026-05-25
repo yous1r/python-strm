@@ -49,24 +49,40 @@ class StrmGenerator115:
             logger.error(f"Failed to write STRM file {strm_path}: {e}")
             return ""
 
-    async def batch_generate(self, dir_id: str, output_dir: str, base_url: str, recursive: bool = True, root_output_dir: str = None) -> list[str]:
+    async def batch_generate(self, dir_id: str, output_dir: str, base_url: str, recursive: bool = True, root_output_dir: str = None, force: bool = False) -> list[str]:
         """批量生成STRM文件"""
         if root_output_dir is None:
             root_output_dir = output_dir
-            
+
         generated = []
         limit = 1000
         offset = 0
-        
+
         while True:
             res = await self.client.list_files(dir_id=dir_id, limit=limit, offset=offset)
             if "error" in res:
                 logger.error(f"Batch generate error: {res['error']}")
                 break
-                
+
             items = res.get("items", [])
             if not items:
                 break
+                
+            # If force is False, query the database for existing items in this batch
+            existing_fids = set()
+            if not force:
+                file_ids = [str(item.get("fid")) for item in items if "fid" in item]
+                if file_ids:
+                    from app.database import get_db_conn
+                    try:
+                        async with get_db_conn() as db:
+                            placeholders = ",".join(["?"] * len(file_ids))
+                            query = f"SELECT file_id FROM strm_records WHERE cloud_type='115' AND file_id IN ({placeholders})"
+                            async with db.execute(query, file_ids) as cursor:
+                                rows = await cursor.fetchall()
+                                existing_fids = {str(row["file_id"]) for row in rows}
+                    except Exception as e:
+                        logger.error(f"Failed to fetch existing fids: {e}")
                 
             for item in items:
                 # 文件夹处理
@@ -76,10 +92,15 @@ class StrmGenerator115:
                         folder_id = str(item.get("cid"))
                         sub_dir = os.path.join(output_dir, folder_name)
                         # 递归遍历子目录，但传入统一的 root_output_dir 以便于打平结构
-                        sub_generated = await self.batch_generate(folder_id, sub_dir, base_url, recursive, root_output_dir)
+                        sub_generated = await self.batch_generate(folder_id, sub_dir, base_url, recursive, root_output_dir, force)
                         generated.extend(sub_generated)
                 else:
                     # 文件处理
+                    file_id = str(item.get("fid", ""))
+                    if file_id in existing_fids and not force:
+                        logger.debug(f"Skipping already generated file: {item.get('n')}")
+                        continue
+                        
                     file_name = item.get("n", "")
                     if is_video_file(file_name):
                         pickcode = item.get("pc", "")
@@ -87,6 +108,17 @@ class StrmGenerator115:
                             strm_path = await self.generate_strm(pickcode, file_name, output_dir, root_output_dir, base_url)
                             if strm_path:
                                 generated.append(strm_path)
+                                # Record to DB
+                                try:
+                                    from app.database import get_db_conn
+                                    async with get_db_conn() as db:
+                                        await db.execute('''
+                                            INSERT OR IGNORE INTO strm_records (file_id, cloud_type, strm_path)
+                                            VALUES (?, ?, ?)
+                                        ''', (file_id, '115', strm_path))
+                                        await db.commit()
+                                except Exception as e:
+                                    logger.error(f"Failed to record STRM in DB: {e}")
                                 
             # 分页逻辑
             if len(items) < limit:

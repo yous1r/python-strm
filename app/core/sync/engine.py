@@ -12,11 +12,11 @@ from app.core.emby.client import emby_client
 from app.core.notify.manager import notify_manager
 
 class SyncEngine:
-    async def run_sync_task(self):
+    async def run_sync_task(self, force: bool = False):
         """执行单次完整同步任务"""
         config = get_config()
         start_time = time.time()
-        logger.info("Starting automated STRM sync & scrape pipeline...")
+        logger.info(f"Starting automated STRM sync & scrape pipeline... (force={force})")
         
         total_generated = 0
         details = []
@@ -39,7 +39,8 @@ class SyncEngine:
                         output_dir=target_out,
                         base_url=config.strm.base_url,
                         recursive=True,
-                        root_output_dir=config.strm.output_dir
+                        root_output_dir=config.strm.output_dir,
+                        force=force
                     )
                     count = len(generated_115)
                     total_generated += count

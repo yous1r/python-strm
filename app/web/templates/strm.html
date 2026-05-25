@@ -127,8 +127,11 @@
         <button type="button" class="btn btn-secondary" onclick="openFolderPickerForSync()">
             <i class="fa-solid fa-plus"></i> 添加监控目录
         </button>
-        <button type="button" class="btn btn-primary" onclick="triggerSyncNow()" style="background: var(--accent-primary);">
-            <i class="fa-solid fa-bolt"></i> 立即触发监控
+        <button type="button" class="btn btn-primary" onclick="triggerSyncNow(false)" style="background: var(--accent-primary);">
+            <i class="fa-solid fa-bolt"></i> 立即增量同步
+        </button>
+        <button type="button" class="btn btn-primary" onclick="triggerSyncNow(true)" style="background: #e74c3c; border-color: #c0392b;">
+            <i class="fa-solid fa-fire"></i> 强制全量覆盖
         </button>
         <button type="button" class="btn btn-secondary" onclick="openSyncHistory()" style="background: rgba(255,255,255,0.05); border-color: transparent;">
             <i class="fa-solid fa-clock-rotate-left"></i> 查看同步历史
@@ -557,12 +560,16 @@ function closeSyncHistory() {
     document.getElementById('syncHistoryModal').style.display = 'none';
 }
 
-async function triggerSyncNow() {
-    const isConfirmed = await customConfirm("确定要立即在后台唤醒引擎扫描所有监控目录吗？\n(这可能需要一些时间，完成后会通过推送通知您)");
-    if(!isConfirmed) return;
+async function triggerSyncNow(force) {
+    const msg = force ? 
+        "警告：强制全量覆盖将忽略所有历史记录，重新生成所有STRM文件！\n(这可能需要很长时间，完成后会通过推送通知您)" :
+        "确定要立即在后台唤醒引擎进行增量同步吗？\n(这可能需要一些时间，完成后会通过推送通知您)";
     
+    const isConfirmed = await customConfirm(msg);
+    if(!isConfirmed) return;
+
     try {
-        const res = await fetch('/api/v1/system/sync/run', { method: 'POST' });
+        const res = await fetch(`/api/v1/system/sync/run?force=${force}`, { method: 'POST' });
         if(res.ok) {
             alert('指令已下发！请留意您的手机通知或稍后在“同步历史”中查看战果。');
         } else {
