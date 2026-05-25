@@ -205,6 +205,31 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     resp_headers["Content-Type"] = content_type or "video/mp4"
     resp_headers["Accept-Ranges"] = "bytes"
     
+    # 极速探测优化：如果播放器请求的 Range 小于 5MB（如 mpv 嗅探 mkv 索引），直接全量读取到内存并返回 Response，避免 StreamingResponse 的握手和协程开销
+    is_small_range = False
+    if "range" in request.headers:
+        range_str = request.headers["range"]
+        if range_str.startswith("bytes="):
+            parts = range_str[6:].split("-")
+            if len(parts) == 2 and parts[0] and parts[1]:
+                try:
+                    start = int(parts[0])
+                    end = int(parts[1])
+                    if end - start <= 5 * 1024 * 1024:
+                        is_small_range = True
+                except ValueError:
+                    pass
+
+    if is_small_range:
+        try:
+            body = await resp.aread()
+            return Response(content=body, status_code=resp.status_code, headers=resp_headers)
+        except Exception as e:
+            logger.error(f"❌ [{method}] Small range proxy failed: {e}")
+            raise HTTPException(status_code=502, detail="Proxy read failed")
+        finally:
+            await resp.aclose()
+
     async def stream_generator():
         try:
             # 1MB 分块可以提高大码率原盘的代理性能
