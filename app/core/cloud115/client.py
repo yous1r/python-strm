@@ -22,7 +22,7 @@ class Cloud115Client:
             return {"error": "Client not initialized"}
         async with self.semaphore:
             try:
-                res = await self.client.fs_files({"cid": dir_id, "limit": limit, "offset": offset}, async_=True)
+                res = await self.client.fs_files_app({"cid": dir_id, "limit": limit, "offset": offset}, async_=True)
                 if res.get("state"):
                     return {
                         "total": res.get("count", 0),
@@ -40,7 +40,7 @@ class Cloud115Client:
         async with self.semaphore:
             try:
                 # 尽量拉取更多数据以确保文件夹不会因分页被遗漏
-                res = await self.client.fs_files({"cid": dir_id, "limit": 1000, "offset": 0}, async_=True)
+                res = await self.client.fs_files_app({"cid": dir_id, "limit": 1000, "offset": 0}, async_=True)
                 if res.get("state"):
                     items = res.get("data", [])
                     # 在 115 响应中，文件通常包含 "fid"，文件夹包含 "cid" 且无 "fid"
@@ -75,7 +75,7 @@ class Cloud115Client:
             return {"error": "Client not initialized"}
         async with self.semaphore:
             try:
-                res = await self.client.fs_mkdir(name, parent_id, async_=True)
+                res = await self.client.fs_mkdir_app(name, parent_id, async_=True)
                 if res.get("state"):
                     # 115可能返回file_id
                     return {"id": res.get("file_id"), "name": name}
@@ -90,7 +90,7 @@ class Cloud115Client:
             return False
         async with self.semaphore:
             try:
-                res = await self.client.fs_rename((file_id, new_name), async_=True)
+                res = await self.client.fs_rename_app((file_id, new_name), async_=True)
                 return res.get("state", False)
             except Exception as e:
                 logger.error(f"Failed to rename file {file_id}: {e}")
@@ -102,7 +102,7 @@ class Cloud115Client:
             return False
         async with self.semaphore:
             try:
-                res = await self.client.fs_move(file_ids, target_dir_id, async_=True)
+                res = await self.client.fs_move_app(file_ids, target_dir_id, async_=True)
                 return res.get("state", False)
             except Exception as e:
                 logger.error(f"Failed to move files {file_ids}: {e}")
@@ -114,7 +114,7 @@ class Cloud115Client:
             return False
         async with self.semaphore:
             try:
-                res = await self.client.fs_delete(file_ids, async_=True)
+                res = await self.client.fs_delete_app(file_ids, async_=True)
                 return res.get("state", False)
             except Exception as e:
                 logger.error(f"Failed to delete files {file_ids}: {e}")
