@@ -22,30 +22,41 @@ class Cloud115Client:
             return {"error": "Client not initialized"}
         async with self.semaphore:
             try:
-                res = await self.client.fs_files_app({"cid": dir_id, "limit": limit, "offset": offset}, async_=True)
-                if res.get("state"):
-                    # fs_files_app 的字段名为 fc(0=目录), fid(文件/目录id), fn(名称), pc(pickcode), fs(大小)
-                    items = res.get("data", [])
-                    mapped_items = []
-                    for item in items:
-                        if str(item.get("fc", "")) == "0":
-                            mapped_items.append({
-                                "cid": str(item.get("fid", "")),
-                                "n": item.get("fn", ""),
-                                "pid": str(item.get("pid", "0"))
-                            })
-                        else:
-                            mapped_items.append({
-                                "fid": str(item.get("fid", "")),
-                                "n": item.get("fn", ""),
-                                "pc": item.get("pc", ""),
-                                "s": item.get("fs", 0)
-                            })
-                    return {
-                        "total": res.get("count", 0),
-                        "items": mapped_items
-                    }
-                return {"error": res.get("error", "Unknown error")}
+                from app.config import get_config
+                api_type = get_config().cloud115.api_type
+                if api_type == "web":
+                    res = await self.client.fs_files({"cid": dir_id, "limit": limit, "offset": offset}, async_=True)
+                    if res.get("state"):
+                        return {
+                            "total": res.get("count", 0),
+                            "items": res.get("data", [])
+                        }
+                    return {"error": res.get("error", "Unknown error")}
+                else:
+                    res = await self.client.fs_files_app({"cid": dir_id, "limit": limit, "offset": offset}, async_=True)
+                    if res.get("state"):
+                        # fs_files_app 的字段名为 fc(0=目录), fid(文件/目录id), fn(名称), pc(pickcode), fs(大小)
+                        items = res.get("data", [])
+                        mapped_items = []
+                        for item in items:
+                            if str(item.get("fc", "")) == "0":
+                                mapped_items.append({
+                                    "cid": str(item.get("fid", "")),
+                                    "n": item.get("fn", ""),
+                                    "pid": str(item.get("pid", "0"))
+                                })
+                            else:
+                                mapped_items.append({
+                                    "fid": str(item.get("fid", "")),
+                                    "n": item.get("fn", ""),
+                                    "pc": item.get("pc", ""),
+                                    "s": item.get("fs", 0)
+                                })
+                        return {
+                            "total": res.get("count", 0),
+                            "items": mapped_items
+                        }
+                    return {"error": res.get("error", "Unknown error")}
             except Exception as e:
                 logger.error(f"Failed to list files for dir {dir_id}: {e}")
                 return {"error": str(e)}
@@ -56,32 +67,52 @@ class Cloud115Client:
             return {"error": "Client not initialized"}
         async with self.semaphore:
             try:
+                from app.config import get_config
+                api_type = get_config().cloud115.api_type
                 # 尽量拉取更多数据以确保文件夹不会因分页被遗漏
-                res = await self.client.fs_files_app({"cid": dir_id, "limit": 1000, "offset": 0}, async_=True)
-                if res.get("state"):
-                    items = res.get("data", [])
-                    # 在 fs_files_app 中，fc == "0" 表示文件夹，fid 是其 id，fn 是名字
-                    dirs = [
-                        {"cid": str(item.get("fid")), "n": item.get("fn", ""), "pid": str(item.get("pid", "0"))} 
-                        for item in items if str(item.get("fc", "")) == "0"
-                    ]
-                    
-                    # 尝试从路径推断当前目录名称和父目录ID
-                    path_list = res.get("path", [])
-                    current_dir_name = "根目录"
-                    parent_id = "0"
-                    
-                    if path_list and len(path_list) > 0:
-                        current_dir_name = path_list[-1].get("name", "根目录")
-                        if len(path_list) > 1:
-                            parent_id = str(path_list[-2].get("cid", "0"))
-                    
-                    return {
-                        "current_dir": current_dir_name,
-                        "parent_id": parent_id,
-                        "dirs": dirs
-                    }
-                return {"error": res.get("error", "Unknown error")}
+                if api_type == "web":
+                    res = await self.client.fs_files({"cid": dir_id, "limit": 1000, "offset": 0}, async_=True)
+                    if res.get("state"):
+                        items = res.get("data", [])
+                        dirs = [
+                            {"cid": str(item.get("cid")), "n": item.get("n", ""), "pid": str(item.get("pid", "0"))} 
+                            for item in items if "fid" not in item
+                        ]
+                        path_list = res.get("path", [])
+                        current_dir_name = "根目录"
+                        parent_id = "0"
+                        if path_list and len(path_list) > 0:
+                            current_dir_name = path_list[-1].get("name", "根目录")
+                            if len(path_list) > 1:
+                                parent_id = str(path_list[-2].get("cid", "0"))
+                        return {"current_dir": current_dir_name, "parent_id": parent_id, "dirs": dirs}
+                    return {"error": res.get("error", "Unknown error")}
+                else:
+                    res = await self.client.fs_files_app({"cid": dir_id, "limit": 1000, "offset": 0}, async_=True)
+                    if res.get("state"):
+                        items = res.get("data", [])
+                        # 在 fs_files_app 中，fc == "0" 表示文件夹，fid 是其 id，fn 是名字
+                        dirs = [
+                            {"cid": str(item.get("fid")), "n": item.get("fn", ""), "pid": str(item.get("pid", "0"))} 
+                            for item in items if str(item.get("fc", "")) == "0"
+                        ]
+                        
+                        # 尝试从路径推断当前目录名称和父目录ID
+                        path_list = res.get("path", [])
+                        current_dir_name = "根目录"
+                        parent_id = "0"
+                        
+                        if path_list and len(path_list) > 0:
+                            current_dir_name = path_list[-1].get("name", "根目录")
+                            if len(path_list) > 1:
+                                parent_id = str(path_list[-2].get("cid", "0"))
+                        
+                        return {
+                            "current_dir": current_dir_name,
+                            "parent_id": parent_id,
+                            "dirs": dirs
+                        }
+                    return {"error": res.get("error", "Unknown error")}
             except Exception as e:
                 logger.error(f"Failed to list dirs for dir {dir_id}: {e}")
                 return {"error": str(e)}
@@ -92,7 +123,11 @@ class Cloud115Client:
             return {"error": "Client not initialized"}
         async with self.semaphore:
             try:
-                res = await self.client.fs_mkdir_app(name, parent_id, async_=True)
+                from app.config import get_config
+                if get_config().cloud115.api_type == "web":
+                    res = await self.client.fs_mkdir(name, parent_id, async_=True)
+                else:
+                    res = await self.client.fs_mkdir_app(name, parent_id, async_=True)
                 if res.get("state"):
                     # 115可能返回file_id
                     return {"id": res.get("file_id"), "name": name}
@@ -107,7 +142,11 @@ class Cloud115Client:
             return False
         async with self.semaphore:
             try:
-                res = await self.client.fs_rename_app((file_id, new_name), async_=True)
+                from app.config import get_config
+                if get_config().cloud115.api_type == "web":
+                    res = await self.client.fs_rename((file_id, new_name), async_=True)
+                else:
+                    res = await self.client.fs_rename_app((file_id, new_name), async_=True)
                 return res.get("state", False)
             except Exception as e:
                 logger.error(f"Failed to rename file {file_id}: {e}")
@@ -119,7 +158,11 @@ class Cloud115Client:
             return False
         async with self.semaphore:
             try:
-                res = await self.client.fs_move_app(file_ids, target_dir_id, async_=True)
+                from app.config import get_config
+                if get_config().cloud115.api_type == "web":
+                    res = await self.client.fs_move(file_ids, target_dir_id, async_=True)
+                else:
+                    res = await self.client.fs_move_app(file_ids, target_dir_id, async_=True)
                 return res.get("state", False)
             except Exception as e:
                 logger.error(f"Failed to move files {file_ids}: {e}")
@@ -131,7 +174,11 @@ class Cloud115Client:
             return False
         async with self.semaphore:
             try:
-                res = await self.client.fs_delete_app(file_ids, async_=True)
+                from app.config import get_config
+                if get_config().cloud115.api_type == "web":
+                    res = await self.client.fs_delete(file_ids, async_=True)
+                else:
+                    res = await self.client.fs_delete_app(file_ids, async_=True)
                 return res.get("state", False)
             except Exception as e:
                 logger.error(f"Failed to delete files {file_ids}: {e}")
@@ -159,10 +206,13 @@ class Cloud115Client:
         async with self.semaphore:
             try:
                 logger.info(f"🚀 [API CALL] Requesting new download URL from 115 for pickcode: {pickcode} (UA: {user_agent})")
+                from app.config import get_config
+                api_type = get_config().cloud115.api_type
+                
                 # 透传客户端真实的 UA，打破 115 的直链 UA 防盗链绑定机制
-                # 极其重要：必须使用 app="android"，否则如果采用 web/chrome 接口并带上伪装 UA，会直接触发阿里云 WAF 的 405 拦截！
+                # 极其重要：如果采用 web 接口并带上伪装 UA，可能会触发阿里云 WAF 的 405 拦截
                 kwargs = {
-                    "app": "android"
+                    "app": "web" if api_type == "web" else "android"
                 }
                 if user_agent:
                     kwargs['user_agent'] = user_agent
@@ -228,7 +278,13 @@ class Cloud115Client:
                     return {"state": False, "error": "Invalid share URL format"}
                     
                 # 提取文件 ID：这通常需要先获取分享信息
-                share_info = await asyncio.to_thread(self.client.share_info, share_code, receive_code)
+                from app.config import get_config
+                api_type = get_config().cloud115.api_type
+                payload = {"share_code": share_code, "receive_code": receive_code}
+                if api_type == "web":
+                    share_info = await asyncio.to_thread(self.client.share_snap, payload)
+                else:
+                    share_info = await asyncio.to_thread(self.client.share_snap_app, payload)
                 if not share_info.get("state"):
                     return {"state": False, "error": share_info.get("error_msg", "Failed to get share info")}
                     
@@ -243,13 +299,16 @@ class Cloud115Client:
                     return {"state": False, "error": "No files found in share"}
                     
                 # 构造 payload 进行转存
-                payload = {
+                receive_payload = {
                     "share_code": share_code,
                     "receive_code": receive_code,
                     "file_id": ",".join(file_ids),
                     "cid": target_dir_id
                 }
-                result = await asyncio.to_thread(self.client.share_receive, payload)
+                if api_type == "web":
+                    result = await asyncio.to_thread(self.client.share_receive, receive_payload)
+                else:
+                    result = await asyncio.to_thread(self.client.share_receive_app, receive_payload)
                 if result.get("state"):
                     return {"state": True, "msg": "转存成功"}
                 return {"state": False, "error": result.get("error_msg", "Transfer failed"), "raw": result}

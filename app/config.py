@@ -21,6 +21,7 @@ class Cloud115Config(BaseModel):
     cookie: str = ""
     strm_type: str = "pickcode"
     play_ua: str = ""
+    api_type: str = "app"  # 'app' or 'web'
     sync_dirs: List[SyncDirConfig] = []
 
 class Cloud123Config(BaseModel):

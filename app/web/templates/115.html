@@ -14,6 +14,13 @@
     <form id="cookieForm">
         <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
             <div class="form-group" style="flex: 1;">
+                <label class="form-label">目录 API 接口</label>
+                <select id="c115_api_type" class="form-control">
+                    <option value="app">移动端 APP 接口 (防 WAF)</option>
+                    <option value="web">网页端 Web 接口 (旧版)</option>
+                </select>
+            </div>
+            <div class="form-group" style="flex: 1;">
                 <label class="form-label">STRM 生成模式</label>
                 <select id="c115_strm_type" class="form-control">
                     <option value="pickcode">Pickcode 代理中转 (推荐)</option>
@@ -93,6 +100,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (res.ok) {
             const config = await res.json();
             document.getElementById('c115_enabled').checked = config.cloud115.enabled;
+            document.getElementById('c115_api_type').value = config.cloud115.api_type || "app";
             document.getElementById('c115_strm_type').value = config.cloud115.strm_type;
             document.getElementById('c115_play_ua').value = config.cloud115.play_ua || "";
             document.getElementById('cookieInput').value = config.cloud115.cookie;
@@ -111,6 +119,7 @@ async function saveCookie() {
     const payload = {
         cloud115: {
             enabled: document.getElementById('c115_enabled').checked,
+            api_type: document.getElementById('c115_api_type').value,
             strm_type: document.getElementById('c115_strm_type').value,
             play_ua: document.getElementById('c115_play_ua').value,
             cookie: document.getElementById('cookieInput').value
