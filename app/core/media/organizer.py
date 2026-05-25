@@ -143,8 +143,8 @@ class MediaOrganizer:
             current_parent_id = target_base_dir_id
             for sub in [category, region]:
                 res = await client.create_folder(current_parent_id, sub)
-                if res and res.get("cid"):
-                    current_parent_id = res.get("cid")
+                if res and res.get("id"):
+                    current_parent_id = str(res.get("id"))
                 else:
                     logger.error(f"Failed to create folder {sub} under {current_parent_id}")
                     break
@@ -158,8 +158,8 @@ class MediaOrganizer:
                     if not sub:
                         continue
                     res = await client.create_folder(target_parent_id, sub)
-                    if res and res.get("cid"):
-                        target_parent_id = res.get("cid")
+                    if res and res.get("id"):
+                        target_parent_id = str(res.get("id"))
 
             # 4. 移动
             move_ok = await client.move_files([item_id], target_parent_id)

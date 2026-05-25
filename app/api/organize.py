@@ -14,6 +14,8 @@ async def _organize_for_cloud(cloud_type: str, source_dir_ids: list[str], target
     results = []
     if cloud_type == "115":
         for src_dir in source_dir_ids:
+            if not src_dir or src_dir == "0":
+                continue
             res = await client_115.list_files(dir_id=src_dir)
             if "error" in res:
                 continue
