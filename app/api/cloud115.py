@@ -141,8 +141,13 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     
     # 强制为被 115 CDN WAF 黑名单的 UA（如 Lavf/FFmpeg）开启流式代理，即使未配置 play_ua
     if not target_ua and ("Lavf/" in player_ua or "FFmpeg" in player_ua):
-        target_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        logger.info(f"🛡️ [WAF Bypass] Auto-enabling proxy mode for blacklisted UA: {player_ua}")
+        from app.core.cloud115.client import client_115
+        if client_115.client:
+            # 听取建议：为了不触发账号风控异常，伪装 UA 必须和当前选择的网盘 API (如 Alipay Mini) 保持完全一致！
+            target_ua = client_115.client.headers.get("user-agent", "Mozilla/5.0")
+        else:
+            target_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        logger.info(f"🛡️ [WAF Bypass] Auto-enabling proxy mode for blacklisted UA: {player_ua} (Spoofed as API default: {target_ua})")
 
     # 如果用户没有配置伪装UA（且播放器不是高危 UA），采用最原生的 302 跳转模式
     if not target_ua:
