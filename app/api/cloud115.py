@@ -164,7 +164,10 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
         
     logger.info(f"🔁 [{method}] Proxying {pickcode} via local stream (Spoofed UA: {target_ua})")
     
-    proxy_headers = {"User-Agent": target_ua}
+    proxy_headers = {
+        "User-Agent": target_ua,
+        "Accept-Encoding": "identity",  # 必须禁用压缩，否则 Range 请求的字节偏移量会因 gzip 导致错位，进而引发播放器无限断开重连死循环
+    }
     if "range" in request.headers:
         proxy_headers["Range"] = request.headers["range"]
     if "if-range" in request.headers:
