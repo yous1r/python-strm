@@ -23,60 +23,59 @@ class Cloud115Client:
         async with self.semaphore:
             # 增加全局的目录请求延迟，防止短时间高频请求被阿里云 WAF 拦截
             await asyncio.sleep(0.5)
-            try:
-                from app.config import get_config
-                api_type = get_config().cloud115.api_type
-                if api_type == "web":
-                    res = await self.client.fs_files({"cid": dir_id, "limit": limit, "offset": offset}, async_=True)
-                    if res.get("state"):
-                        return {
-                            "total": res.get("count", 0),
-                            "items": res.get("data", [])
-                        }
-                    return {"error": res.get("error", "Unknown error")}
-                else:
-                    res = await self.client.fs_files_app({"cid": dir_id, "limit": limit, "offset": offset}, async_=True)
-                    if res.get("state"):
-                        # fs_files_app 的字段名为 fc(0=目录), fid(文件/目录id), fn(名称), pc(pickcode), fs(大小)
-                        items = res.get("data", [])
-                        mapped_items = []
-                        for item in items:
-                            if str(item.get("fc", "")) == "0":
-                                mapped_items.append({
-                                    "cid": str(item.get("fid", "")),
-                                    "n": item.get("fn", ""),
-                                    "pid": str(item.get("pid", "0"))
-                                })
-                            else:
-                                mapped_items.append({
-                                    "fid": str(item.get("fid", "")),
-                                    "n": item.get("fn", ""),
-                                    "pc": item.get("pc", ""),
-                                    "s": item.get("fs", 0)
-                                })
-                        return {
-                            "total": res.get("count", 0),
-                            "items": mapped_items
-                        }
-                    return {"error": res.get("error", "Unknown error")}
-            except Exception as e:
-                err_str = str(e)
-                if "405" in err_str and api_type == "app":
-                    logger.warning(f"App API blocked (405) for dir {dir_id}, falling back to Web API...")
-                    try:
+            
+            from app.config import get_config
+            api_type = get_config().cloud115.api_type
+            
+            max_retries = 3
+            base_delay = 2.0
+            
+            for attempt in range(max_retries):
+                try:
+                    if api_type == "web":
                         res = await self.client.fs_files({"cid": dir_id, "limit": limit, "offset": offset}, async_=True)
                         if res.get("state"):
                             return {
                                 "total": res.get("count", 0),
                                 "items": res.get("data", [])
                             }
-                        return {"error": res.get("error", "Unknown error in fallback")}
-                    except Exception as fallback_e:
-                        logger.error(f"Fallback to web api also failed: {fallback_e}")
-                        return {"error": str(fallback_e)}
-                        
-                logger.error(f"Failed to list files for dir {dir_id}: {e}")
-                return {"error": err_str}
+                        return {"error": res.get("error", "Unknown error")}
+                    else:
+                        res = await self.client.fs_files_app({"cid": dir_id, "limit": limit, "offset": offset}, async_=True)
+                        if res.get("state"):
+                            # fs_files_app 的字段名为 fc(0=目录), fid(文件/目录id), fn(名称), pc(pickcode), fs(大小)
+                            items = res.get("data", [])
+                            mapped_items = []
+                            for item in items:
+                                if str(item.get("fc", "")) == "0":
+                                    mapped_items.append({
+                                        "cid": str(item.get("fid", "")),
+                                        "n": item.get("fn", ""),
+                                        "pid": str(item.get("pid", "0"))
+                                    })
+                                else:
+                                    mapped_items.append({
+                                        "fid": str(item.get("fid", "")),
+                                        "n": item.get("fn", ""),
+                                        "pc": item.get("pc", ""),
+                                        "s": item.get("fs", 0)
+                                    })
+                            return {
+                                "total": res.get("count", 0),
+                                "items": mapped_items
+                            }
+                        return {"error": res.get("error", "Unknown error")}
+                except Exception as e:
+                    err_str = str(e)
+                    if ("405" in err_str or "403" in err_str) and attempt < max_retries - 1:
+                        logger.warning(f"WAF blocked (405/403) for dir {dir_id}, attempt {attempt+1}/{max_retries}. Sleeping {base_delay}s...")
+                        await asyncio.sleep(base_delay)
+                        base_delay *= 2
+                        continue
+                    
+                    if attempt == max_retries - 1:
+                        logger.error(f"Failed to list files for dir {dir_id} after {max_retries} attempts: {e}")
+                        return {"error": err_str}
 
     async def list_dirs(self, dir_id: str = '0') -> dict:
         """列出目录，仅包含文件夹，排除文件"""
