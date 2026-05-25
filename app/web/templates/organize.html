@@ -164,7 +164,13 @@ input:checked + .slider:before {
 <!-- Tab: 115专属配置 -->
 <div id="tab-115org" class="tab-pane">
     <div class="glass-panel animate-fade-in" style="max-width: 800px; margin-bottom: 2rem;">
-        <h2 style="margin-bottom: 1.5rem;"><i class="fa-solid fa-cloud"></i> 115 整理与转移配置</h2>
+        <h2 style="margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: space-between;">
+            <span><i class="fa-solid fa-cloud"></i> 115 整理与转移配置</span>
+            <label class="switch">
+                <input type="checkbox" id="cloud115_org_enabled">
+                <span class="slider round"></span>
+            </label>
+        </h2>
         <p style="color: var(--text-secondary); margin-bottom: 1.5rem; font-size: 0.9rem;">
             配置需刮削的源目录（支持多目录），一键刮削重命名后，将自动移动到目标汇总目录下。
         </p>
@@ -303,6 +309,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             
             // 115 整理
             if(config.organize.cloud115) {
+                document.getElementById('cloud115_org_enabled').checked = config.organize.cloud115.enabled;
                 currentSourceDirs = config.organize.cloud115.source_dirs || [];
                 renderSourceDirs();
                 document.getElementById('cloud115_target_dir').value = config.organize.cloud115.target_dir || "";
@@ -362,6 +369,7 @@ async function saveOrganizeConfig(silent = false) {
                 prefer_larger: document.getElementById('wash_larger').checked
             },
             cloud115: {
+                enabled: document.getElementById('cloud115_org_enabled').checked,
                 source_dirs: currentSourceDirs,
                 target_dir: document.getElementById('cloud115_target_dir').value
             }

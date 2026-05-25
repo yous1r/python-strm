@@ -49,6 +49,7 @@ class WashConfig(BaseModel):
     prefer_larger: bool = True
 
 class Cloud115OrganizeConfig(BaseModel):
+    enabled: bool = False
     source_dirs: List[str] = []
     target_dir: str = ""
 
