@@ -18,8 +18,13 @@ video_stream_pattern = re.compile(r'/videos/(\w+)/stream', re.IGNORECASE)
 playback_info_pattern = re.compile(r'/Items/(\w+)/PlaybackInfo', re.IGNORECASE)
 
 async def _resolve_playback_url(upstream_url: str, api_key: str, item_id: str) -> str:
-    """解析出真实播放地址"""
+    """解析出真实播放地址，用于支持 Web 浏览器的 Direct Stream 跳转"""
     try:
+        # 如果没有配置 API Key，我们无法请求 Items 接口。
+        # 此时无法进行 stream 请求拦截替换，只能放弃
+        if not api_key:
+            return None
+            
         async with httpx.AsyncClient(timeout=10) as client:
             res = await client.get(
                 f"{upstream_url}/emby/Items/{item_id}",
@@ -31,10 +36,16 @@ async def _resolve_playback_url(upstream_url: str, api_key: str, item_id: str) -
             item_data = res.json()
             path = item_data.get("Path", "")
             
-            if path.endswith(".strm"):
-                # 如果未来需要处理 stream 请求的 302 跳转
-                pass
-                
+            if path and "/api/v1/115/play/" in path:
+                match = re.search(r'/api/v1/115/play/([^/|?]+)', path)
+                if match:
+                    pickcode = match.group(1)
+                    # For Web browser proxying, use a standard browser UA
+                    real_url = await client_115.get_download_url(pickcode, user_agent="Mozilla/5.0")
+                    if real_url:
+                        logger.info(f"🔄 [STANDALONE PROXY] Redirecting /stream request directly to 115 CDN for item {item_id}")
+                        return real_url
+                        
         return None
     except Exception as e:
         logger.error(f"Failed to resolve playback url: {e}")
