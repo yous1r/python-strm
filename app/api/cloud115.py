@@ -72,11 +72,9 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     
     # 核心风控拦截优化：
     # 飞牛刮削器(Lavf/60.3.100)会疯狂拉取切片导致 115 封号风控，必须拦截返回 0 字节。
-    # Vidhub(Lavf/59.27.100)是真实播放器，115 CDN 原生支持该 UA 直连，必须放行走 302！
+    # Vidhub(Lavf/59.27.100)是真实播放器，必须放行！
     is_scraper = False
-    if "Go-http-client" in player_ua:
-        is_scraper = True
-    elif "Lavf/" in player_ua:
+    if "Lavf/" in player_ua:
         import re
         match = re.search(r"Lavf/(\d+)", player_ua)
         if match and int(match.group(1)) >= 60:
