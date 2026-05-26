@@ -108,5 +108,17 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     if not url:
         raise HTTPException(status_code=404, detail="Download URL not found")
         
-    logger.info(f"🔄 [{method}] Redirecting {pickcode} to CDN directly (115 API UA: {request_ua})")
-    return RedirectResponse(url=url, status_code=302)
+    # 针对某些对 302 跳转支持不佳的播放器（特别是 Vidhub），使用 M3U8 播放列表伪装直链。
+    # 这样播放器在解析 M3U8 时，会自动带着原始的 Header 去请求 115 CDN，完全避免 302 丢 Header 的坑。
+    needs_m3u8 = False
+    if "VidHub" in player_ua or "Infuse" in player_ua or ("Lavf/" in player_ua and "Lavf/60." not in player_ua):
+        needs_m3u8 = True
+
+    if needs_m3u8:
+        logger.info(f"🔄 [{method}] Returning M3U8 playlist for {pickcode} to bypass 302 (Player UA: {player_ua})")
+        m3u8_content = f"#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:-1,Video\n{url}\n"
+        from fastapi.responses import Response
+        return Response(content=m3u8_content, status_code=200, media_type="application/vnd.apple.mpegurl")
+    else:
+        logger.info(f"🔄 [{method}] Redirecting {pickcode} to CDN directly (Player UA: {player_ua})")
+        return RedirectResponse(url=url, status_code=302)
