@@ -84,22 +84,11 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
             is_lavf_probe = True
     
     if is_lavf_probe:
-        # 防止无限重试和顺序扫描：FFmpeg 在找不到 Cues 时会顺序下载整个文件。
-        # 我们允许它请求开头和结尾（通常最多 2-3 次请求），一旦它开始顺序请求，
-        # 我们就返回 416 (Range Not Satisfiable) 让 FFmpeg 以为到了文件末尾 (EOF)。
-        # 这样它就会提前结束探测并返回目前已解析到的正常元数据。
-        if not hasattr(play_video, '_lavf_retry_count'):
-            play_video._lavf_retry_count = {}
-        count = play_video._lavf_retry_count.get(pickcode, 0)
-        
-        if count >= 3:
-            logger.warning(f"🚫 [飞牛探针] pickcode={pickcode} 已请求{count}次，强制返回 416 模拟 EOF 中断顺序扫描")
-            play_video._lavf_retry_count[pickcode] = count + 1
-            return Response(status_code=416)
-            
-        play_video._lavf_retry_count[pickcode] = count + 1
-        
-        logger.info(f"📡 [飞牛探针-反代] pickcode={pickcode} method={method} range={request.headers.get('range')} attempt={count+1}")
+        # VidHub 和飞牛内置的 FFmpeg(Lavf) 内核在遇到索引损坏或无 Cues 的大体积 MKV 文件时，
+        # 会强制进行顺序扫描以重建索引。这可能需要消耗大量网络和时间。
+        # 我们不能限制它的重试次数，也不能强行阻断（否则播放器会直接报错失败）。
+        # 这里我们提供一个纯净无限制的代理通道，让播放器自行完成扫描和播放。
+        logger.info(f"📡 [飞牛探针-反代] pickcode={pickcode} method={method} range={request.headers.get('range')} ua={player_ua}")
         browser_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         url = await client_115.get_download_url(pickcode, user_agent=browser_ua)
         if not url:
@@ -120,15 +109,24 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
                 kl = k.lower()
                 if kl in ("content-type", "content-length", "content-range", "accept-ranges"):
                     resp_headers[k] = v
-                    
+            
+            # 强制声明支持断点续传，防止 FFmpeg 误判
+            resp_headers["Accept-Ranges"] = "bytes"
+            
             logger.info(f"📡 [飞牛探针-反代] CDN返回: status={cdn_resp.status_code} Content-Range={resp_headers.get('content-range', 'N/A')} Content-Length={resp_headers.get('content-length', 'N/A')}")
             
-            # 直接读入内存，返回标准 Response，避免 chunked 传输破坏 FFmpeg Seek
-            content_body = await cdn_resp.aread()
-            if "content-length" not in resp_headers:
-                resp_headers["Content-Length"] = str(len(content_body))
-                
-            return Response(content=content_body, status_code=cdn_resp.status_code, headers=resp_headers)
+            from fastapi.responses import StreamingResponse
+            async def stream_from_cdn():
+                try:
+                    async for chunk in cdn_resp.aiter_bytes(chunk_size=65536):
+                        yield chunk
+                except Exception:
+                    pass  # 客户端(Lavf)由于探测或扫描策略随时会主动断开连接，这是正常现象
+                finally:
+                    await cdn_resp.aclose()
+                    await proxy_client.aclose()
+                    
+            return StreamingResponse(stream_from_cdn(), status_code=cdn_resp.status_code, headers=resp_headers)
             
         except Exception as e:
             await proxy_client.aclose()
