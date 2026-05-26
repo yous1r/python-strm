@@ -80,6 +80,10 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
         if match and int(match.group(1)) >= 60:
             is_scraper = True
             
+    # 飞牛探测器使用 Go-http-client/1.1 发起 HEAD 请求，如果不拦截会导致后续不断重试触发死循环
+    if "Go-http-client" in player_ua:
+        is_scraper = True
+
     if is_scraper:
         logger.info(f"已拦截疑似刮削器探针: pickcode={pickcode} filename={filename} method={method} ua={player_ua}")
         from fastapi.responses import Response
