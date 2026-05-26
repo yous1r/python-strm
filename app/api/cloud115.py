@@ -115,6 +115,8 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
                 if kl in ("content-type", "content-length", "content-range", "accept-ranges"):
                     resp_headers[k] = v
                     
+            logger.info(f"📡 [飞牛探针-反代] CDN返回: status={cdn_resp.status_code} Content-Range={resp_headers.get('content-range', 'N/A')} Content-Length={resp_headers.get('content-length', 'N/A')}")
+                    
             from fastapi.responses import StreamingResponse
             async def stream_from_cdn():
                 try:
