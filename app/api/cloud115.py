@@ -84,25 +84,32 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
             is_lavf_probe = True
     
     if is_lavf_probe:
-        # 允许 FFmpeg 探针进行正常的 Seek 行为（MKV 探针通常需要 10-20 次请求寻找索引）
-        # 限制设为 50 次以防止真正的死循环
+        # 防止无限重试和顺序扫描：FFmpeg 在找不到 Cues 时会顺序下载整个文件。
+        # 我们允许它请求开头和结尾（通常最多 2-3 次请求），一旦它开始顺序请求，
+        # 我们就返回 416 (Range Not Satisfiable) 让 FFmpeg 以为到了文件末尾 (EOF)。
+        # 这样它就会提前结束探测并返回目前已解析到的正常元数据。
         if not hasattr(play_video, '_lavf_retry_count'):
             play_video._lavf_retry_count = {}
         count = play_video._lavf_retry_count.get(pickcode, 0)
-        if count >= 50:
-            logger.warning(f"🚫 [飞牛探针] pickcode={pickcode} 请求达到{count}次，疑似陷入死循环，强制终止")
-            return Response(content=b"", status_code=200, headers={"Content-Type": "video/mp4"})
+        
+        if count >= 3:
+            logger.warning(f"🚫 [飞牛探针] pickcode={pickcode} 已请求{count}次，强制返回 416 模拟 EOF 中断顺序扫描")
+            play_video._lavf_retry_count[pickcode] = count + 1
+            return Response(status_code=416)
+            
         play_video._lavf_retry_count[pickcode] = count + 1
         
-        logger.info(f"📡 [飞牛探针-反代] pickcode={pickcode} method={method} range={request.headers.get('range')} ua={player_ua} attempt={count+1}")
+        logger.info(f"📡 [飞牛探针-反代] pickcode={pickcode} method={method} range={request.headers.get('range')} attempt={count+1}")
         browser_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         url = await client_115.get_download_url(pickcode, user_agent=browser_ua)
         if not url:
             raise HTTPException(status_code=404, detail="Download URL not found")
+            
         proxy_headers = {"User-Agent": browser_ua}
-        # 我们故意忽略 Lavf 的 Range 请求，强制从头拉取
-        # 这样配合 200 OK 和去除 Content-Length，让 Lavf 以为这是个直播流
-        
+        range_header = request.headers.get("range")
+        if range_header:
+            proxy_headers["Range"] = range_header
+            
         proxy_client = httpx.AsyncClient(timeout=httpx.Timeout(connect=10, read=60, write=10, pool=10))
         try:
             req = proxy_client.build_request("GET", url, headers=proxy_headers)
@@ -111,23 +118,17 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
             resp_headers = {}
             for k, v in cdn_resp.headers.items():
                 kl = k.lower()
-                if kl in ("content-type",):
+                if kl in ("content-type", "content-length", "content-range", "accept-ranges"):
                     resp_headers[k] = v
                     
-            logger.info(f"📡 [飞牛探针-反代] 伪装直播流模式，去除 Content-Length/Range，状态强制 200")
+            logger.info(f"📡 [飞牛探针-反代] CDN返回: status={cdn_resp.status_code} Content-Range={resp_headers.get('content-range', 'N/A')} Content-Length={resp_headers.get('content-length', 'N/A')}")
             
-            from fastapi.responses import StreamingResponse
-            async def stream_from_cdn():
-                try:
-                    async for chunk in cdn_resp.aiter_bytes(chunk_size=65536):
-                        yield chunk
-                except Exception:
-                    pass  # Lavf 读够了元数据就会断开
-                finally:
-                    await cdn_resp.aclose()
-                    await proxy_client.aclose()
-            
-            return StreamingResponse(stream_from_cdn(), status_code=200, headers=resp_headers)
+            # 直接读入内存，返回标准 Response，避免 chunked 传输破坏 FFmpeg Seek
+            content_body = await cdn_resp.aread()
+            if "content-length" not in resp_headers:
+                resp_headers["Content-Length"] = str(len(content_body))
+                
+            return Response(content=content_body, status_code=cdn_resp.status_code, headers=resp_headers)
             
         except Exception as e:
             await proxy_client.aclose()
