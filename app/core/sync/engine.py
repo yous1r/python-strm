@@ -7,8 +7,7 @@ from app.config import get_config
 from app.database import get_db_conn
 from app.core.cloud115.strm import generator_115
 # from app.core.cloud123.strm import generator_123 # 如果 123 的生成器尚未实现，这里预留
-from app.core.emby.manager import emby_manager
-from app.core.emby.client import emby_client
+from app.core.emby.standalone_proxy import start_standalone_proxy
 from app.core.notify.manager import notify_manager
 
 class SyncEngine:
@@ -53,10 +52,17 @@ class SyncEngine:
                     details.append("123: Placeholder implementation")
 
             # 3. 唤醒 Emby 刷新
-            instances = await emby_manager.get_instances()
-            for inst in instances:
-                logger.info(f"Triggering Emby refresh for instance: {inst['name']}")
-                await emby_client.refresh_library(inst['id'])
+            if config.emby.proxy.enabled and config.emby.proxy.upstream_url:
+                logger.info(f"Triggering Emby refresh for upstream: {config.emby.proxy.upstream_url}")
+                try:
+                    import httpx
+                    async with httpx.AsyncClient(timeout=10) as client:
+                        await client.post(
+                            f"{config.emby.proxy.upstream_url}/emby/Library/Refresh",
+                            params={"api_key": config.emby.proxy.api_key}
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to trigger Emby library refresh: {e}")
 
             duration = time.time() - start_time
             detail_str = "; ".join(details)

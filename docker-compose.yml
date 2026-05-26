@@ -7,6 +7,7 @@ services:
     restart: always
     ports:
       - "8095:8095"
+      - "8096:8096"
     volumes:
       # 持久化数据库与日志
       - ./data:/app/data

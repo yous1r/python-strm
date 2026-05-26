@@ -17,6 +17,8 @@ from app.core.monitor.handler import init_handlers
 from app.core.sync.engine import sync_engine
 import asyncio
 
+from app.core.emby.standalone_proxy import start_standalone_proxy, stop_standalone_proxy
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 启动时执行
@@ -36,9 +38,13 @@ async def lifespan(app: FastAPI):
         # 异步后台启动
         asyncio.create_task(telegram_monitor.start())
         
+    # 启动独立反向代理端口
+    proxy_task = asyncio.create_task(start_standalone_proxy())
+        
     yield
     # 关闭时执行
     logger.info("Shutting down Python-STRM application...")
+    await stop_standalone_proxy()
     stop_scheduler()
     if config.monitor.telegram.enabled:
         await telegram_monitor.stop()
@@ -52,7 +58,7 @@ app = FastAPI(
 
 # 挂载静态文件
 os.makedirs("app/web/static", exist_ok=True)
-from app.api import cloud115, cloud123, emby, strm, organize, search, web, system
+from app.api import cloud115, cloud123, strm, organize, search, web, system
 
 app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
 
@@ -63,7 +69,6 @@ async def health_check():
 # 注册各类路由
 app.include_router(cloud115.router)
 app.include_router(cloud123.router)
-app.include_router(emby.router)
 app.include_router(strm.router)
 app.include_router(organize.router, prefix="/api/v1")
 app.include_router(search.router, prefix="/api/v1")
