@@ -160,7 +160,10 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, path: str, r
         instance_name = path.strip("/").split("/")[0]
         
         # 构造 absolute base url，因为 IsRemote=True 时必须提供绝对地址
-        base_url = f"{request.url.scheme}://{request.url.netloc}"
+        # 必须考虑反向代理（如 Nginx/HTTPS）的情况，否则会导致 iOS 播放器拦截 HTTP 请求
+        scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+        host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
+        base_url = f"{scheme}://{host}"
         
         for source in media_sources:
             # 必须从 Path 中提取 pickcode，因为 Emby 探针失败时会丢弃 DirectStreamUrl
@@ -178,6 +181,7 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, path: str, r
                     # 强制要求播放器进行 DirectPlay，防止 Emby 后端因探针失败而触发转码
                     source["SupportsDirectPlay"] = True
                     source["SupportsDirectStream"] = True
+                    source["SupportsTranscoding"] = False
                     source["RequiresOpening"] = False
                     source["RequiresClosing"] = False
                     modified = True
@@ -200,6 +204,9 @@ proxy_play_pattern = re.compile(r'/115play/([^/|?]+)', re.IGNORECASE)
 
 @proxy_app.api_route("/{instance_name}/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH"])
 async def handle_proxy_all(instance_name: str, path: str, request: Request):
+    full_path = f"/{path}"
+    logger.info(f"👀 [PROXY IN] {request.method} /{instance_name}{full_path}?{request.url.query} (UA: {request.headers.get('user-agent')})")
+    
     config = get_config()
     
     target_instance = None
