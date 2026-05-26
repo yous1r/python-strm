@@ -163,24 +163,25 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, path: str, r
         base_url = f"{request.url.scheme}://{request.url.netloc}"
         
         for source in media_sources:
-            for key in ["Path", "DirectStreamUrl"]:
-                url = source.get(key, "")
-                if url and "/api/v1/115/play/" in url:
-                    match = re.search(r'/api/v1/115/play/([^/|?]+)', url)
-                    if match:
-                        pickcode = match.group(1)
-                        # 构造专属的 115play 中转链接绝对地址
-                        proxy_play_url = f"{base_url}/{instance_name}/115play/{pickcode}"
-                        source[key] = proxy_play_url
-                        source["IsRemote"] = True
-                        source["Protocol"] = "Http"
-                        # 强制要求播放器进行 DirectPlay，防止 Emby 后端因探针失败而触发转码
-                        source["SupportsDirectPlay"] = True
-                        source["SupportsDirectStream"] = True
-                        source["RequiresOpening"] = False
-                        source["RequiresClosing"] = False
-                        modified = True
-                        logger.info(f"🎯 [STANDALONE PROXY] Injected proxy play URL for pickcode {pickcode} into PlaybackInfo (UA: {client_ua})")
+            # 必须从 Path 中提取 pickcode，因为 Emby 探针失败时会丢弃 DirectStreamUrl
+            path_url = source.get("Path", "")
+            if path_url and "/api/v1/115/play/" in path_url:
+                match = re.search(r'/api/v1/115/play/([^/|?]+)', path_url)
+                if match:
+                    pickcode = match.group(1)
+                    # 构造专属的 115play 中转链接绝对地址
+                    proxy_play_url = f"{base_url}/{instance_name}/115play/{pickcode}"
+                    source["Path"] = proxy_play_url
+                    source["DirectStreamUrl"] = proxy_play_url
+                    source["IsRemote"] = True
+                    source["Protocol"] = "Http"
+                    # 强制要求播放器进行 DirectPlay，防止 Emby 后端因探针失败而触发转码
+                    source["SupportsDirectPlay"] = True
+                    source["SupportsDirectStream"] = True
+                    source["RequiresOpening"] = False
+                    source["RequiresClosing"] = False
+                    modified = True
+                    logger.info(f"🎯 [STANDALONE PROXY] Injected proxy play URL for pickcode {pickcode} into PlaybackInfo (UA: {client_ua})")
         
         if modified:
             content = json.dumps(data).encode("utf-8")
