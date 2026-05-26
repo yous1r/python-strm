@@ -52,7 +52,7 @@ async def _resolve_playback_url(upstream_url: str, api_key: str, item_id: str) -
         return None
 
 async def _proxy_request(upstream_url: str, api_key: str, path: str, request: Request) -> Response:
-    """透明代理请求到真实的Emby服务器"""
+    """透明代理请求到真实的Emby服务器，使用流式响应"""
     try:
         url = f"{upstream_url}{path}"
         params = dict(request.query_params)
@@ -61,37 +61,71 @@ async def _proxy_request(upstream_url: str, api_key: str, path: str, request: Re
             
         headers = {k: v for k, v in request.headers.items() if k.lower() not in ['host', 'accept-encoding']}
         
-        body = await request.body()
+        client = httpx.AsyncClient(timeout=None)  # 禁用超时，避免大文件或视频流断开
         
-        async with httpx.AsyncClient() as client:
+        req = client.build_request(
+            method=request.method,
+            url=url,
+            params=params,
+            headers=headers,
+            content=request.stream()
+        )
+        
+        resp = await client.send(req, stream=True)
+        resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ['content-encoding', 'content-length', 'transfer-encoding']}
+        
+        async def stream_generator():
+            try:
+                async for chunk in resp.aiter_bytes():
+                    yield chunk
+            except Exception as e:
+                # 客户端断开连接是正常现象，忽略错误
+                pass
+            finally:
+                await resp.aclose()
+                await client.aclose()
+                
+        from fastapi.responses import StreamingResponse
+        return StreamingResponse(
+            stream_generator(),
+            status_code=resp.status_code,
+            headers=resp_headers
+        )
+    except Exception as e:
+        logger.error(f"Proxy request failed to {upstream_url}{path}: {repr(e)}")
+        return Response(status_code=502, content="Bad Gateway")
+
+async def _intercept_playback_info(upstream_url: str, api_key: str, path: str, request: Request) -> Response:
+    """拦截 PlaybackInfo 请求，硬塞 115 直链以绕过探针"""
+    # 针对 PlaybackInfo 这种小文件，直接读到内存中，因为需要修改 JSON
+    url = f"{upstream_url}{path}"
+    params = dict(request.query_params)
+    if "api_key" not in params and api_key:
+        params["api_key"] = api_key
+        
+    headers = {k: v for k, v in request.headers.items() if k.lower() not in ['host', 'accept-encoding']}
+    body = await request.body()
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.request(
                 method=request.method,
                 url=url,
                 params=params,
                 headers=headers,
-                content=body,
-                timeout=30.0
+                content=body
             )
             
-            resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ['content-encoding', 'content-length', 'transfer-encoding']}
-            
-            return Response(
-                content=resp.content,
-                status_code=resp.status_code,
-                headers=resp_headers
-            )
+            if resp.status_code != 200:
+                resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ['content-encoding', 'content-length', 'transfer-encoding']}
+                return Response(content=resp.content, status_code=resp.status_code, headers=resp_headers)
+                
+            data = resp.json()
     except Exception as e:
-        logger.error(f"Proxy request failed: {e}")
+        logger.error(f"Failed to fetch PlaybackInfo from {url}: {repr(e)}")
         return Response(status_code=502, content="Bad Gateway")
-
-async def _intercept_playback_info(upstream_url: str, api_key: str, path: str, request: Request) -> Response:
-    """拦截 PlaybackInfo 请求，硬塞 115 直链以绕过探针"""
-    resp = await _proxy_request(upstream_url, api_key, path, request)
-    if resp.status_code != 200:
-        return resp
         
     try:
-        data = json.loads(resp.body)
         modified = False
         
         client_ua = request.headers.get("user-agent", "Unknown")
