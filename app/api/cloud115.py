@@ -70,24 +70,24 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     
     player_ua = request.headers.get("user-agent", "Unknown")
     
-    # 核心风控拦截优化：
-    # 飞牛刮削器(Lavf/60.3.100)会疯狂拉取切片导致 115 封号风控，必须拦截返回 0 字节。
-    # Vidhub(Lavf/59.27.100)是真实播放器，必须放行！
-    is_scraper = False
+    # 飞牛后端探测流程：
+    # 1. Go-http-client HEAD → 获取文件元信息（Content-Type, Content-Length 等）
+    # 2. Lavf/60.x GET → 读取文件头部几 KB 来识别视频编码格式
+    # 两步都必须成功，飞牛才会告知播放器"此文件可以直连播放"。
+    # 如果返回空响应来拦截，飞牛会无限重试（疯狂拉取），反而更糟。
+    # 正确做法：放行所有探测，返回正常的 302 跳转到 115 CDN。
+    # 探针只读几 KB 文件头即可完成，对 115 CDN 流量影响极小。
+    is_fnos_probe = False
     if "Lavf/" in player_ua:
         import re
-        match = re.search(r"Lavf/(\d+)", player_ua)
-        if match and int(match.group(1)) >= 60:
-            is_scraper = True
-            
-    # 飞牛探测器使用 Go-http-client/1.1 发起 HEAD 请求，如果不拦截会导致后续不断重试触发死循环
+        lavf_match = re.search(r"Lavf/(\d+)", player_ua)
+        if lavf_match and int(lavf_match.group(1)) >= 60:
+            is_fnos_probe = True
     if "Go-http-client" in player_ua:
-        is_scraper = True
-
-    if is_scraper:
-        logger.info(f"已拦截疑似刮削器探针: pickcode={pickcode} filename={filename} method={method} ua={player_ua}")
-        from fastapi.responses import Response
-        return Response(content=b"", status_code=200, media_type="video/mp4")
+        is_fnos_probe = True
+        
+    if is_fnos_probe:
+        logger.info(f"📡 [飞牛探针] pickcode={pickcode} method={method} ua={player_ua} → 放行302跳转")
         
     if "|" in pickcode:
         import urllib.parse
