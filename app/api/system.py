@@ -70,17 +70,25 @@ async def test_emby(request: Request):
         url = data.get("url", "").rstrip("/")
         api_key = data.get("api_key", "")
         
-        if not url or not api_key:
-            raise HTTPException(status_code=400, detail="地址和 API Key 不能为空")
+        if not url:
+            raise HTTPException(status_code=400, detail="地址不能为空")
             
         import httpx
         async with httpx.AsyncClient(timeout=5) as client:
-            res = await client.get(f"{url}/emby/system/info", params={"api_key": api_key})
+            params = {"api_key": api_key} if api_key else {}
+            # Try to fetch public info
+            res = await client.get(f"{url}/emby/system/info/public", params=params)
+            if res.status_code != 200:
+                res = await client.get(f"{url}/system/info/public", params=params)
+                
             if res.status_code == 200:
                 info = res.json()
-                return {"status": "success", "message": f"连接成功！服务器版本: {info.get('Version')}"}
+                msg = f"连接成功！服务器版本: {info.get('Version')}"
+                if not api_key:
+                    msg += " (未配置API Key，代理仍可正常工作)"
+                return {"status": "success", "message": msg}
             else:
-                return {"status": "error", "message": f"连接失败: HTTP {res.status_code}"}
+                return {"status": "error", "message": f"连接失败: 状态码 {res.status_code}"}
     except Exception as e:
         return {"status": "error", "message": f"连接异常: {str(e)}"}
 

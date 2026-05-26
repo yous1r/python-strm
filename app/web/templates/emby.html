@@ -83,8 +83,9 @@
                 <input type="url" id="inst_url" class="form-control" placeholder="http://192.168.1.10:8096" required>
             </div>
             <div class="form-group">
-                <label class="form-label">API Key</label>
-                <input type="text" id="inst_apikey" class="form-control" placeholder="输入 Emby / 飞牛 API Key" required>
+                <label class="form-label">API Key (选填)</label>
+                <input type="text" id="inst_apikey" class="form-control" placeholder="非必填。如果不填，代理仍可正常工作">
+                <small class="form-text text-muted">代理自身不需要 API Key 即可工作。配置后可支持自动刷新库等高级功能。</small>
             </div>
             <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 1.5rem;">
                 <button type="button" class="btn btn-secondary" onclick="closeInstanceModal()">取消</button>
@@ -129,7 +130,7 @@ function renderInstances(instances) {
         tr.innerHTML = `
             <td style="vertical-align: middle;"><strong>${inst.name}</strong></td>
             <td style="vertical-align: middle;"><code>${inst.url}</code></td>
-            <td style="vertical-align: middle;"><code>${inst.api_key.substring(0,4)}...${inst.api_key.substring(inst.api_key.length-4)}</code></td>
+            <td style="vertical-align: middle;"><code>${inst.api_key ? (inst.api_key.length > 8 ? inst.api_key.substring(0,4) + '...' + inst.api_key.substring(inst.api_key.length-4) : '已配置') : '未配置 (不影响代理)'}</code></td>
             <td style="text-align: right; vertical-align: middle; white-space: nowrap;">
                 <button class="btn btn-sm btn-info" onclick="testConnection(${index})" title="测试连接">
                     <i class="fa-solid fa-bolt"></i>
