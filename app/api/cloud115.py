@@ -99,34 +99,35 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
         url = await client_115.get_download_url(pickcode, user_agent=browser_ua)
         if not url:
             raise HTTPException(status_code=404, detail="Download URL not found")
-            
         proxy_headers = {"User-Agent": browser_ua}
-        range_header = request.headers.get("range")
-        if range_header:
-            proxy_headers["Range"] = range_header
-            
+        # 我们故意忽略 Lavf 的 Range 请求，强制从头拉取
+        # 这样配合 200 OK 和去除 Content-Length，让 Lavf 以为这是个直播流
+        
         proxy_client = httpx.AsyncClient(timeout=httpx.Timeout(connect=10, read=60, write=10, pool=10))
         try:
-            req = proxy_client.build_request(method, url, headers=proxy_headers)
+            req = proxy_client.build_request("GET", url, headers=proxy_headers)
             cdn_resp = await proxy_client.send(req, stream=True, follow_redirects=True)
             
             resp_headers = {}
             for k, v in cdn_resp.headers.items():
                 kl = k.lower()
-                if kl in ("content-type", "content-length", "content-range", "accept-ranges"):
+                if kl in ("content-type",):
                     resp_headers[k] = v
                     
-            logger.info(f"📡 [飞牛探针-反代] CDN返回: status={cdn_resp.status_code} Content-Range={resp_headers.get('content-range', 'N/A')} Content-Length={resp_headers.get('content-length', 'N/A')}")
+            logger.info(f"📡 [飞牛探针-反代] 伪装直播流模式，去除 Content-Length/Range，状态强制 200")
             
-            # 为了防止 FastAPI/Uvicorn 在 StreamingResponse 下强制追加 Transfer-Encoding: chunked
-            # 从而导致 FFmpeg 认为服务器不支持真正的 Seek，我们直接把这块数据读入内存。
-            # FFmpeg 的探测请求一般是 1MB ~ 10MB，读入内存完全可行且速度极快。
-            content_body = await cdn_resp.aread()
+            from fastapi.responses import StreamingResponse
+            async def stream_from_cdn():
+                try:
+                    async for chunk in cdn_resp.aiter_bytes(chunk_size=65536):
+                        yield chunk
+                except Exception:
+                    pass  # Lavf 读够了元数据就会断开
+                finally:
+                    await cdn_resp.aclose()
+                    await proxy_client.aclose()
             
-            # 修正实际的 Content-Length，以防万一
-            resp_headers["Content-Length"] = str(len(content_body))
-            
-            return Response(content=content_body, status_code=cdn_resp.status_code, headers=resp_headers)
+            return StreamingResponse(stream_from_cdn(), status_code=200, headers=resp_headers)
             
         except Exception as e:
             await proxy_client.aclose()
