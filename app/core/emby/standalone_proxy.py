@@ -84,6 +84,23 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, path: str, r
         modified = False
         
         client_ua = request.headers.get("user-agent", "Unknown")
+        
+        # 核心防循环逻辑：
+        # Web浏览器 (Chrome/Edge/Safari) 无法跨域播放 115 CDN (无CORS头)。
+        # 如果强制注入直链，浏览器会播放失败并陷入 PlaybackInfo 疯狂重试的死循环！
+        # 因此，只有原生播放器 (VidHub, Infuse, AppleTV, 客户端等) 才进行劫持注入。
+        is_native_player = False
+        ua_lower = client_ua.lower()
+        native_keywords = ["vidhub", "infuse", "applecoremedia", "vlc", "potplayer", "iina", "kodi", "lavf", "mpv", "xbmc", "embyclient"]
+        for kw in native_keywords:
+            if kw in ua_lower:
+                is_native_player = True
+                break
+                
+        if not is_native_player:
+            logger.debug(f"⏭️ [STANDALONE PROXY] Skipped PlaybackInfo injection for Web Browser to prevent CORS infinite loop (UA: {client_ua})")
+            return resp
+            
         media_sources = data.get("MediaSources", [])
         
         for source in media_sources:
