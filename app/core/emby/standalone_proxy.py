@@ -159,6 +159,9 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, path: str, r
         # 典型的 path: /fnOS/emby/Items/...
         instance_name = path.strip("/").split("/")[0]
         
+        # 构造 absolute base url，因为 IsRemote=True 时必须提供绝对地址
+        base_url = f"{request.url.scheme}://{request.url.netloc}"
+        
         for source in media_sources:
             for key in ["Path", "DirectStreamUrl"]:
                 url = source.get(key, "")
@@ -166,8 +169,8 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, path: str, r
                     match = re.search(r'/api/v1/115/play/([^/|?]+)', url)
                     if match:
                         pickcode = match.group(1)
-                        # 构造专属的 115play 中转链接
-                        proxy_play_url = f"/{instance_name}/115play/{pickcode}"
+                        # 构造专属的 115play 中转链接绝对地址
+                        proxy_play_url = f"{base_url}/{instance_name}/115play/{pickcode}"
                         source[key] = proxy_play_url
                         source["IsRemote"] = True
                         source["Protocol"] = "Http"
