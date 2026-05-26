@@ -117,19 +117,16 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
                     resp_headers[k] = v
                     
             logger.info(f"📡 [飞牛探针-反代] CDN返回: status={cdn_resp.status_code} Content-Range={resp_headers.get('content-range', 'N/A')} Content-Length={resp_headers.get('content-length', 'N/A')}")
-                    
-            from fastapi.responses import StreamingResponse
-            async def stream_from_cdn():
-                try:
-                    async for chunk in cdn_resp.aiter_bytes(chunk_size=65536):
-                        yield chunk
-                except Exception:
-                    pass  # 客户端(Lavf)断开连接是正常现象
-                finally:
-                    await cdn_resp.aclose()
-                    await proxy_client.aclose()
             
-            return StreamingResponse(stream_from_cdn(), status_code=cdn_resp.status_code, headers=resp_headers)
+            # 为了防止 FastAPI/Uvicorn 在 StreamingResponse 下强制追加 Transfer-Encoding: chunked
+            # 从而导致 FFmpeg 认为服务器不支持真正的 Seek，我们直接把这块数据读入内存。
+            # FFmpeg 的探测请求一般是 1MB ~ 10MB，读入内存完全可行且速度极快。
+            content_body = await cdn_resp.aread()
+            
+            # 修正实际的 Content-Length，以防万一
+            resp_headers["Content-Length"] = str(len(content_body))
+            
+            return Response(content=content_body, status_code=cdn_resp.status_code, headers=resp_headers)
             
         except Exception as e:
             await proxy_client.aclose()
