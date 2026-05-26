@@ -174,6 +174,11 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, path: str, r
                         source[key] = proxy_play_url
                         source["IsRemote"] = True
                         source["Protocol"] = "Http"
+                        # 强制要求播放器进行 DirectPlay，防止 Emby 后端因探针失败而触发转码
+                        source["SupportsDirectPlay"] = True
+                        source["SupportsDirectStream"] = True
+                        source["RequiresOpening"] = False
+                        source["RequiresClosing"] = False
                         modified = True
                         logger.info(f"🎯 [STANDALONE PROXY] Injected proxy play URL for pickcode {pickcode} into PlaybackInfo (UA: {client_ua})")
         
