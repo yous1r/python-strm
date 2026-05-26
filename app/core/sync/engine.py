@@ -52,17 +52,19 @@ class SyncEngine:
                     details.append("123: Placeholder implementation")
 
             # 3. 唤醒 Emby 刷新
-            if config.emby.proxy.enabled and config.emby.proxy.upstream_url:
-                logger.info(f"Triggering Emby refresh for upstream: {config.emby.proxy.upstream_url}")
-                try:
-                    import httpx
-                    async with httpx.AsyncClient(timeout=10) as client:
-                        await client.post(
-                            f"{config.emby.proxy.upstream_url}/emby/Library/Refresh",
-                            params={"api_key": config.emby.proxy.api_key}
-                        )
-                except Exception as e:
-                    logger.warning(f"Failed to trigger Emby library refresh: {e}")
+            if config.emby.proxy.enabled and config.emby.proxy.instances:
+                for inst in config.emby.proxy.instances:
+                    if inst.url:
+                        logger.info(f"Triggering Emby refresh for proxy instance [{inst.name}]: {inst.url}")
+                        try:
+                            import httpx
+                            async with httpx.AsyncClient(timeout=10) as client:
+                                await client.post(
+                                    f"{inst.url.rstrip('/')}/emby/Library/Refresh",
+                                    params={"api_key": inst.api_key}
+                                )
+                        except Exception as e:
+                            logger.warning(f"Failed to trigger Emby library refresh for {inst.name}: {e}")
 
             duration = time.time() - start_time
             detail_str = "; ".join(details)

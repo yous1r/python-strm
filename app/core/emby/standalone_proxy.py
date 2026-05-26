@@ -113,15 +113,22 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, path: str, r
         
     return resp
 
-@proxy_app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH"])
-async def handle_proxy_all(path: str, request: Request):
+@proxy_app.api_route("/{instance_name}/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH"])
+async def handle_proxy_all(instance_name: str, path: str, request: Request):
     config = get_config()
-    upstream_url = config.emby.proxy.upstream_url.rstrip("/")
-    api_key = config.emby.proxy.api_key
     
-    if not upstream_url:
-        return Response(status_code=500, content="Upstream Emby URL not configured")
+    target_instance = None
+    for inst in config.emby.proxy.instances:
+        if inst.name.lower() == instance_name.lower():
+            target_instance = inst
+            break
+            
+    if not target_instance:
+        return Response(status_code=404, content=f"Emby instance '{instance_name}' not found in configuration")
         
+    upstream_url = target_instance.url.rstrip("/")
+    api_key = target_instance.api_key
+    
     full_path = f"/{path}"
     
     if playback_info_pattern.search(full_path):
@@ -135,6 +142,10 @@ async def handle_proxy_all(path: str, request: Request):
             return RedirectResponse(url=redirect_url, status_code=302)
             
     return await _proxy_request(upstream_url, api_key, full_path, request)
+
+@proxy_app.api_route("/{instance_name}", methods=["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH"])
+async def handle_proxy_root(instance_name: str, request: Request):
+    return await handle_proxy_all(instance_name, "", request)
 
 _proxy_server_instance = None
 

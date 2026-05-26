@@ -35,15 +35,18 @@ class TmdbConfig(BaseModel):
     language: str = "zh-CN"
     proxy: str = ""
 
+class EmbyProxyInstanceConfig(BaseModel):
+    name: str = ""
+    url: str = ""
+    api_key: str = ""
+
 class EmbyProxyConfig(BaseModel):
     enabled: bool = False
     port: int = 8096
-    upstream_url: str = ""
-    api_key: str = ""
+    instances: List[EmbyProxyInstanceConfig] = []
 
 class EmbyConfig(BaseModel):
     proxy: EmbyProxyConfig = EmbyProxyConfig()
-    instances: List[dict] = []
 
 class StrmConfig(BaseModel):
     output_dir: str = "strm_output"
