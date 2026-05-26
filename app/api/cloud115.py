@@ -84,12 +84,13 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
             is_lavf_probe = True
     
     if is_lavf_probe:
-        # 防止无限重试：同一 pickcode 的 Lavf 探针最多处理 5 次
+        # 允许 FFmpeg 探针进行正常的 Seek 行为（MKV 探针通常需要 10-20 次请求寻找索引）
+        # 限制设为 50 次以防止真正的死循环
         if not hasattr(play_video, '_lavf_retry_count'):
             play_video._lavf_retry_count = {}
         count = play_video._lavf_retry_count.get(pickcode, 0)
-        if count >= 5:
-            logger.warning(f"🚫 [飞牛探针] pickcode={pickcode} 已重试{count}次，返回空响应终止循环")
+        if count >= 50:
+            logger.warning(f"🚫 [飞牛探针] pickcode={pickcode} 请求达到{count}次，疑似陷入死循环，强制终止")
             return Response(content=b"", status_code=200, headers={"Content-Type": "video/mp4"})
         play_video._lavf_retry_count[pickcode] = count + 1
         
