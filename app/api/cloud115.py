@@ -162,7 +162,6 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     if needs_m3u8:
         logger.info(f"🔄 [{method}] Returning M3U8 playlist for {pickcode} to bypass 302 (Player UA: {player_ua})")
         m3u8_content = f"#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:-1,Video\n{url}\n"
-        from fastapi.responses import Response
         return Response(content=m3u8_content, status_code=200, media_type="application/vnd.apple.mpegurl")
     else:
         logger.info(f"🔄 [{method}] Redirecting {pickcode} to CDN directly (Player UA: {player_ua})")
