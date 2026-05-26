@@ -70,94 +70,39 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     client_ip = request.client.host if request.client else "Unknown IP"
     
     player_ua = request.headers.get("user-agent", "Unknown")
+    client_param = request.query_params.get("client")
     
-    # 飞牛后端探测流程：
-    # 1. Go-http-client HEAD → 获取文件元信息 → 走正常 302 即可
-    # 2. Lavf/60.x GET → 读取文件头来识别编码 → 必须反代！
-    #    因为 115 CDN 黑名单封杀了 Lavf UA，302 跳转后 CDN 直接拒绝，导致无限重试。
-    #    解决：用浏览器 UA 从 CDN 拉取数据，透传给 Lavf。Lavf 只读几 KB 头部就断开。
-    is_lavf_probe = False
-    if "Lavf/" in player_ua:
-        import re as _re
-        lavf_match = _re.search(r"Lavf/(\d+)", player_ua)
-        if lavf_match and int(lavf_match.group(1)) >= 60:
-            is_lavf_probe = True
-    
-    if is_lavf_probe:
-        # VidHub 和飞牛内置的 FFmpeg(Lavf) 内核在遇到索引损坏或无 Cues 的大体积 MKV 文件时，
-        # 会强制进行顺序扫描以重建索引。这可能需要消耗大量网络和时间。
-        # 我们不能限制它的重试次数，也不能强行阻断（否则播放器会直接报错失败）。
-        # 这里我们提供一个纯净无限制的代理通道，让播放器自行完成扫描和播放。
-        logger.info(f"📡 [飞牛探针-反代] pickcode={pickcode} method={method} range={request.headers.get('range')} ua={player_ua}")
-        browser_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        url = await client_115.get_download_url(pickcode, user_agent=browser_ua)
-        if not url:
-            raise HTTPException(status_code=404, detail="Download URL not found")
-            
-        proxy_headers = {"User-Agent": browser_ua}
-        range_header = request.headers.get("range")
-        if range_header:
-            proxy_headers["Range"] = range_header
-            
-        proxy_client = httpx.AsyncClient(timeout=httpx.Timeout(connect=10, read=60, write=10, pool=10))
-        try:
-            req = proxy_client.build_request("GET", url, headers=proxy_headers)
-            cdn_resp = await proxy_client.send(req, stream=True, follow_redirects=True)
-            
-            resp_headers = {}
-            for k, v in cdn_resp.headers.items():
-                kl = k.lower()
-                if kl in ("content-type", "content-length", "content-range", "accept-ranges"):
-                    resp_headers[k] = v
-            
-            # 强制声明支持断点续传，防止 FFmpeg 误判
-            resp_headers["Accept-Ranges"] = "bytes"
-            
-            logger.info(f"📡 [飞牛探针-反代] CDN返回: status={cdn_resp.status_code} Content-Range={resp_headers.get('content-range', 'N/A')} Content-Length={resp_headers.get('content-length', 'N/A')}")
-            
-            from fastapi.responses import StreamingResponse
-            async def stream_from_cdn():
-                try:
-                    async for chunk in cdn_resp.aiter_bytes(chunk_size=65536):
-                        yield chunk
-                except Exception:
-                    pass  # 客户端(Lavf)由于探测或扫描策略随时会主动断开连接，这是正常现象
-                finally:
-                    await cdn_resp.aclose()
-                    await proxy_client.aclose()
-                    
-            return StreamingResponse(stream_from_cdn(), status_code=cdn_resp.status_code, headers=resp_headers)
-            
-        except Exception as e:
-            await proxy_client.aclose()
-            logger.error(f"📡 [飞牛探针-反代] CDN请求异常: {repr(e)}")
-            raise HTTPException(status_code=502, detail="CDN proxy failed")
-    
+    # 核心风控与播放兼容逻辑：
+    # 飞牛后台刮削器(Lavf/60.3.100)会扫描整个媒体库拉取切片，极易导致 115 封号风控，必须拦截(返回0字节)。
+    # 但是，Vidhub 播放 MKV 时使用的内核同样是 Lavf/60.3.100！
+    # 为了区分它们，我们在 standalone_proxy (即用户点击播放时生成的动态信息) 中加入了 ?client=vidhub。
+    # 只有不带 client 参数的 Lavf 请求才被认为是后台定时刮削器，必须拦截。
+    # 对于带有 client 参数的真实播放请求，115 CDN 实际上并不封杀它，我们可以安全地放行 302 跳转！
+    is_scraper = False
     if "Go-http-client" in player_ua:
-        logger.info(f"📡 [飞牛探针-302] pickcode={pickcode} method={method} ua={player_ua} → 正常302跳转")
-        
-    if "|" in pickcode:
-        import urllib.parse
-        encoded_name = urllib.parse.quote(filename)
-        strm_content = f"{request.base_url.rstrip('/')}/api/v1/115/play/{pickcode.split('|')[0]}/{encoded_name}"
-        config = get_config()
-        if config.cloud115.play_ua:
-            strm_content += f"|User-Agent={config.cloud115.play_ua}"
-        pickcode = pickcode.split("|")[0]
-        
+        is_scraper = True
+    elif "Lavf/" in player_ua and client_param != "vidhub":
+        # 如果是 Lavf 且没有通过真实播放端(PlaybackInfo)下发，认为是后台刮削器
+        is_scraper = True
+
+    if is_scraper:
+        logger.info(f"🚫 [刮削器拦截] 已拦截疑似后台媒体刮削: pickcode={pickcode} filename={filename} method={method} ua={player_ua}")
+        return Response(content=b"", status_code=200, media_type="video/mp4")
+
+    # ============== 获取 115 直链 ==============
+    # 如果用户配置了统一伪装UA，则优先使用；否则使用请求本身的UA
     config = get_config()
     target_ua = config.cloud115.play_ua
-    
-    # 获取直链并执行 302 跳转。
     request_ua = target_ua if target_ua else player_ua
-    url = await client_115.get_download_url(pickcode, user_agent=request_ua)
     
+    url = await client_115.get_download_url(pickcode, user_agent=request_ua)
     if not url:
         raise HTTPException(status_code=404, detail="Download URL not found")
-        
-    # 针对某些对 302 跳转支持不佳的播放器（特别是 Vidhub），使用 M3U8 播放列表伪装直链。
+
+    # 针对某些对 302 跳转支持不佳的播放器（例如 Vidhub 的部分旧模式或 Infuse），使用 M3U8 播放列表伪装直链。
+    # 注意：我们现在放开了对 Lavf/60. 的限制，因为已经通过 client=vidhub 排除了刮削器风险。
     needs_m3u8 = False
-    if "VidHub" in player_ua or "Infuse" in player_ua or ("Lavf/" in player_ua and "Lavf/60." not in player_ua):
+    if "VidHub" in player_ua or "Infuse" in player_ua:
         needs_m3u8 = True
 
     if needs_m3u8:
