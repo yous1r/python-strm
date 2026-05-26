@@ -78,10 +78,9 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     # 为了区分它们，我们在 standalone_proxy (即用户点击播放时生成的动态信息) 中加入了 ?client=vidhub。
     # 只有不带 client 参数的 Lavf 请求才被认为是后台定时刮削器，必须拦截。
     # 对于带有 client 参数的真实播放请求，115 CDN 实际上并不封杀它，我们可以安全地放行 302 跳转！
+    # 注意：Go-http-client 是飞牛服务器的基础 HTTP 客户端，负责获取文件大小和基础元数据，不能拦截，否则会直接导致播放初始化失败。
     is_scraper = False
-    if "Go-http-client" in player_ua:
-        is_scraper = True
-    elif "Lavf/" in player_ua and client_param != "vidhub":
+    if "Lavf/" in player_ua and client_param != "vidhub":
         # 如果是 Lavf 且没有通过真实播放端(PlaybackInfo)下发，认为是后台刮削器
         is_scraper = True
 
