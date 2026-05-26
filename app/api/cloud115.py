@@ -139,7 +139,9 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
             logger.error(f"❌ [{method}] HEAD proxy failed: {e}")
             raise HTTPException(status_code=502, detail="Bad Gateway")
 
-    # Force a strict chunk size to guarantee Keep-Alive pool reuse
+    # 核心：每次只向 115 请求 2MB 的切片！
+    # 只要我们完整读取这 2MB，底层 TCP socket 就会安全返回给 httpx 的长连接池！
+    # 这样不管客户端（如 Vidhub 或刮削器）随后如何暴力切断连接，都不会引发针对 115 CDN 的重复 TLS 握手！
     CHUNK_SIZE = 2 * 1024 * 1024  # 2MB
     end_byte = start_byte + CHUNK_SIZE - 1
 
@@ -157,39 +159,19 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
         logger.error(f"❌ [{method}] Proxy connection failed: {e}")
         raise HTTPException(status_code=502, detail="Proxy connection failed")
 
-    # 核心：完全读取这个分块到内存！因为只有把 HTTP body 完全消费掉，底层 TCP socket 才会安全返回给 httpx 的长连接池！
-    # 这样不管客户端（如 Vidhub）随后如何暴力切断连接，都不会引发针对 115 CDN 的重复 TLS 握手！
+    # 完全读取 2MB，保护长连接池
     body = await resp.aread()
 
-    # 从 CDN 的 Content-Range 头中解析出实际的总文件大小
-    # 格式通常是：bytes 0-2097151/50000000
-    total_size = "*"
-    cdn_cr = resp.headers.get("Content-Range", "")
-    if "/" in cdn_cr:
-        total_size = cdn_cr.split("/")[1]
-
-    # 清理无用头
-    resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ["server", "date", "transfer-encoding", "content-encoding", "connection", "content-length", "content-range", "content-disposition", "content-type"]}
+    # 清理无用头，保留 115 CDN 返回的真实 Content-Range (例如 bytes 0-2097151/50000000)
+    # 严格遵循 RFC 7233：服务器可以返回比请求更小的 Range，播放器会自动发起后续请求。
+    resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ["server", "date", "transfer-encoding", "content-encoding", "connection", "content-length", "content-disposition", "content-type"]}
     
     import mimetypes
     content_type, _ = mimetypes.guess_type(filename)
     resp_headers["Content-Type"] = content_type or "video/mp4"
     resp_headers["Accept-Ranges"] = "bytes"
+
+    logger.debug(f"✅ Successfully proxied chunk {start_byte}-{start_byte + len(body) - 1}. Returning to player.")
     
-    if total_size != "*":
-        total_int = int(total_size)
-        # 核心欺骗：伪造 Content-Range 和 Content-Length，让播放器以为我们会发送完整的 50GB
-        resp_headers["Content-Range"] = f"bytes {start_byte}-{total_int - 1}/{total_size}"
-        resp_headers["Content-Length"] = str(total_int - start_byte)
-    else:
-        resp_headers["Content-Length"] = str(len(body))
-
-    async def spoof_streamer():
-        # 一次性吐出缓冲的 2MB 数据，然后生成器直接结束！
-        yield body
-        # 生成器结束导致 FastAPI 主动断开与播放器的连接。
-        # 播放器收到断连后会认为网络波动，从而发起下一段 Range 请求（完美触发断点续传）。
-        logger.debug(f"🔪 Dropped connection to client after sending {len(body)} bytes. Waiting for retry...")
-
-    from fastapi.responses import StreamingResponse
-    return StreamingResponse(spoof_streamer(), status_code=206, headers=resp_headers)
+    from fastapi.responses import Response
+    return Response(content=body, status_code=resp.status_code, headers=resp_headers)
