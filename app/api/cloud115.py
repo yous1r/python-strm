@@ -72,23 +72,78 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     player_ua = request.headers.get("user-agent", "Unknown")
     client_param = request.query_params.get("client")
     
-    # 核心风控与播放兼容逻辑：
-    # 飞牛后台刮削器(Lavf/60.3.100)会扫描整个媒体库拉取切片，极易导致 115 封号风控，必须拦截(返回0字节)。
-    # 但是，Vidhub 播放 MKV 时使用的内核同样是 Lavf/60.3.100！
-    # 为了区分它们，我们在 standalone_proxy (即用户点击播放时生成的动态信息) 中加入了 ?client=vidhub。
-    # 只有不带 client 参数的 Lavf 请求才被认为是后台定时刮削器，必须拦截。
-    # 对于带有 client 参数的真实播放请求，115 CDN 实际上并不封杀它，我们可以安全地放行 302 跳转！
-    # 注意：Go-http-client 是飞牛服务器的基础 HTTP 客户端，负责获取文件大小和基础元数据，不能拦截，否则会直接导致播放初始化失败。
-    is_scraper = False
-    if "Lavf/" in player_ua and client_param != "vidhub":
-        # 如果是 Lavf 且没有通过真实播放端(PlaybackInfo)下发，认为是后台刮削器
-        is_scraper = True
+    # === 飞牛/Emby 探针处理逻辑 ===
+    # 飞牛后台的媒体刮削器和播放前的动态探测都会使用 Lavf(ffprobe) 和 Go-http-client。
+    # 它们请求的 URL 是原始的 .strm 地址（不带 client 参数）。
+    # 对于带有 client=vidhub 的真实播放请求，我们直接放行走底部的 302 跳转。
+    is_probe = False
+    if "Go-http-client" in player_ua:
+        is_probe = True
+    elif "Lavf/" in player_ua and client_param != "vidhub":
+        is_probe = True
 
-    if is_scraper:
-        logger.info(f"🚫 [刮削器拦截] 已拦截疑似后台媒体刮削: pickcode={pickcode} filename={filename} method={method} ua={player_ua}")
-        return Response(content=b"", status_code=200, media_type="video/mp4")
+    if is_probe:
+        import time
+        if not hasattr(play_video, '_probe_tracker'):
+            play_video._probe_tracker = {}
+            
+        now = time.time()
+        tracker = play_video._probe_tracker.get(pickcode, {"count": 0, "last_time": 0})
+        
+        # 超过 30 秒没有请求，说明是新的一轮探测（例如用户点击播放引发的探测），重置计数器
+        if now - tracker["last_time"] > 30:
+            tracker["count"] = 0
+            
+        tracker["count"] += 1
+        tracker["last_time"] = now
+        play_video._probe_tracker[pickcode] = tracker
+        
+        # 如果 30 秒内连续请求超过 5 次，说明 ffprobe 找不到索引开始进行 8GB 的顺序扫描了！
+        # 必须返回 416 (Range Not Satisfiable) 模拟文件尾，让 ffprobe 提前结束探测，防止 115 封号。
+        if tracker["count"] > 5:
+            logger.warning(f"🚫 [刮削器阻断] pickcode={pickcode} 短期内请求过多({tracker['count']}次)，返回 416 模拟 EOF 中断扫描")
+            from fastapi.responses import Response
+            return Response(status_code=416)
 
-    # ============== 获取 115 直链 ==============
+        logger.info(f"📡 [飞牛探针代理] pickcode={pickcode} method={method} range={request.headers.get('range')} ua={player_ua} attempt={tracker['count']}")
+        
+        # 必须走代理返回数据，否则 ffprobe 无法获取视频头信息，会导致 PlaybackInfo 生成失败
+        config = get_config()
+        browser_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        url = await client_115.get_download_url(pickcode, user_agent=browser_ua)
+        if not url:
+            raise HTTPException(status_code=404, detail="Download URL not found")
+            
+        proxy_headers = {"User-Agent": browser_ua}
+        if "range" in request.headers:
+            proxy_headers["Range"] = request.headers["range"]
+            
+        proxy_client = httpx.AsyncClient(timeout=httpx.Timeout(connect=10, read=60, write=10, pool=10))
+        try:
+            req = proxy_client.build_request(method, url, headers=proxy_headers)
+            cdn_resp = await proxy_client.send(req, stream=True, follow_redirects=True)
+            
+            resp_headers = {k: v for k, v in cdn_resp.headers.items() if k.lower() in ("content-type", "content-length", "content-range", "accept-ranges")}
+            resp_headers["Accept-Ranges"] = "bytes"
+            
+            from fastapi.responses import StreamingResponse
+            async def stream_from_cdn():
+                try:
+                    async for chunk in cdn_resp.aiter_bytes(chunk_size=65536):
+                        yield chunk
+                except Exception:
+                    pass
+                finally:
+                    await cdn_resp.aclose()
+                    await proxy_client.aclose()
+                    
+            return StreamingResponse(stream_from_cdn(), status_code=cdn_resp.status_code, headers=resp_headers)
+        except Exception as e:
+            await proxy_client.aclose()
+            logger.error(f"📡 [飞牛探针代理] CDN请求异常: {repr(e)}")
+            raise HTTPException(status_code=502, detail="CDN proxy failed")
+
+    # ============== 获取 115 直链 (真实播放) ==============
     # 如果用户配置了统一伪装UA，则优先使用；否则使用请求本身的UA
     config = get_config()
     target_ua = config.cloud115.play_ua
