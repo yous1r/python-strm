@@ -1,444 +1,303 @@
 {% extends "base.html" %}
 
-{% block subtitle %}浏览与管理您的 Emby 媒体库{% endblock %}
+{% block subtitle %}反代网关配置{% endblock %}
 
 {% block content %}
-<div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 2rem; justify-content: space-between;">
-    <div style="display: flex; align-items: center; gap: 1rem;">
-        <h2 style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
-            <i class="fa-solid fa-server" style="color: var(--accent-primary);"></i> 服务器选择
+<div class="glass-panel" style="margin-bottom: 2rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+        <h2 style="margin: 0; display: flex; align-items: center; gap: 0.75rem;">
+            <i class="fa-solid fa-network-wired" style="color: var(--accent-primary);"></i>
+            Emby / 飞牛独立反代网关
         </h2>
-        <select id="instanceSelect" class="form-control" style="width: auto; min-width: 250px;" onchange="loadSeries()">
-            <option value="">正在加载服务器列表...</option>
-        </select>
-        <button id="deleteInstanceBtn" class="btn btn-secondary" style="color: var(--error); border-color: var(--error); display: none;" onclick="deleteCurrentInstance()" title="删除当前选中的服务器">
-            <i class="fa-solid fa-trash"></i>
+        <div class="form-check form-switch" style="font-size: 1.2rem;">
+            <input class="form-check-input" type="checkbox" id="proxyEnabled" onchange="toggleProxyState()">
+            <label class="form-check-label" for="proxyEnabled">启用独立反代</label>
+        </div>
+    </div>
+    
+    <div class="row" style="margin-bottom: 1.5rem;">
+        <div class="col-md-6">
+            <div class="form-group">
+                <label class="form-label">代理运行端口</label>
+                <div class="input-group">
+                    <span class="input-group-text"><i class="fa-solid fa-plug"></i></span>
+                    <input type="number" class="form-control" id="proxyPort" placeholder="默认: 8096">
+                </div>
+                <small class="form-text text-muted">修改端口后保存，服务将自动热重载。如果使用 Docker，请确保在 docker-compose.yml 中已开放该端口。</small>
+            </div>
+        </div>
+    </div>
+    
+    <div style="display: flex; justify-content: flex-end;">
+        <button class="btn btn-primary" onclick="saveProxySettings()" id="saveProxyBtn">
+            <i class="fa-solid fa-floppy-disk"></i> 保存网关设置
         </button>
     </div>
-    <button class="btn btn-primary" onclick="openAddInstanceModal()">
-        <i class="fa-solid fa-plus"></i> 添加新服务器
-    </button>
 </div>
 
-<!-- 添加服务器 Modal -->
-<div id="addInstanceModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(8px); z-index: 1000; align-items: center; justify-content: center;">
+<div class="glass-panel">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+        <h3 style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
+            <i class="fa-solid fa-server" style="color: var(--accent-secondary);"></i>
+            后端服务器实例
+        </h3>
+        <button class="btn btn-primary btn-sm" onclick="openInstanceModal()">
+            <i class="fa-solid fa-plus"></i> 添加新实例
+        </button>
+    </div>
+    
+    <div class="table-responsive">
+        <table class="table" style="color: var(--text-primary);">
+            <thead>
+                <tr>
+                    <th>实例名称 (路径前缀)</th>
+                    <th>上游服务器地址</th>
+                    <th>API Key</th>
+                    <th style="text-align: right;">操作</th>
+                </tr>
+            </thead>
+            <tbody id="instanceList">
+                <tr><td colspan="4" style="text-align: center; padding: 2rem;">正在加载配置...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 添加/编辑实例 Modal -->
+<div id="instanceModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(8px); z-index: 1000; align-items: center; justify-content: center;">
     <div class="glass-panel animate-slide-up" style="width: 90%; max-width: 500px; padding: 2rem; display: flex; flex-direction: column;">
         <h3 style="margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 1rem;">
-            <span><i class="fa-solid fa-server"></i> 绑定 Emby 实例</span>
-            <i class="fa-solid fa-xmark" style="cursor: pointer; color: var(--text-secondary);" onclick="closeAddInstanceModal()"></i>
+            <span id="modalTitle"><i class="fa-solid fa-server"></i> 配置实例</span>
+            <i class="fa-solid fa-xmark" style="cursor: pointer; color: var(--text-secondary);" onclick="closeInstanceModal()"></i>
         </h3>
         
-        <form id="addInstanceForm" onsubmit="submitAddInstance(event)">
+        <form id="instanceForm" onsubmit="submitInstance(event)">
+            <input type="hidden" id="editIndex" value="-1">
             <div class="form-group">
-                <label class="form-label">标识名称</label>
-                <input type="text" id="add_name" class="form-control" placeholder="例如: 家庭主服" required>
+                <label class="form-label">实例名称 (作为代理路径)</label>
+                <input type="text" id="inst_name" class="form-control" placeholder="例如: fnOS, emby" required pattern="[A-Za-z0-9_-]+">
+                <small class="form-text text-muted">只能包含字母、数字、下划线。客户端将通过 <code>http://IP:端口/名称</code> 访问</small>
             </div>
             <div class="form-group">
-                <label class="form-label">服务器地址 (URL)</label>
-                <input type="url" id="add_url" class="form-control" placeholder="http://192.168.1.10:8096" required>
+                <label class="form-label">上游服务器地址</label>
+                <input type="url" id="inst_url" class="form-control" placeholder="http://192.168.1.10:8096" required>
             </div>
             <div class="form-group">
                 <label class="form-label">API Key</label>
-                <input type="text" id="add_apikey" class="form-control" placeholder="输入 Emby API Key" required>
+                <input type="text" id="inst_apikey" class="form-control" placeholder="输入 Emby / 飞牛 API Key" required>
             </div>
             <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 1.5rem;">
-                <button type="button" class="btn btn-secondary" onclick="closeAddInstanceModal()">取消</button>
-                <button type="submit" id="addSubmitBtn" class="btn btn-primary"><i class="fa-solid fa-check"></i> 绑定</button>
+                <button type="button" class="btn btn-secondary" onclick="closeInstanceModal()">取消</button>
+                <button type="submit" id="modalSubmitBtn" class="btn btn-primary"><i class="fa-solid fa-check"></i> 保存</button>
             </div>
         </form>
-    </div>
-</div>
-
-<!-- 剧集海报墙 -->
-<div id="loadingIndicator" style="display: none; text-align: center; padding: 3rem; color: var(--text-secondary);">
-    <i class="fa-solid fa-spinner fa-spin fa-2x"></i>
-    <p style="margin-top: 1rem;">正在拉取媒体库数据...</p>
-</div>
-
-<div id="mediaGrid" class="media-grid animate-fade-in delay-1">
-    <!-- 动态渲染 -->
-</div>
-
-<!-- 单集详情 Modal -->
-<div id="episodesModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(8px); z-index: 1000; align-items: center; justify-content: center;">
-    <div class="glass-panel animate-slide-up" style="width: 90%; max-width: 800px; padding: 2rem; display: flex; flex-direction: column; max-height: 85vh; overflow: hidden;">
-        <h3 style="margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 1rem;">
-            <span id="modalSeriesTitle" style="font-size: 1.5rem;">剧集名称</span>
-            <i class="fa-solid fa-xmark" style="cursor: pointer; color: var(--text-secondary); font-size: 1.5rem; transition: color 0.3s;" onclick="closeEpisodesModal()"></i>
-        </h3>
-        
-        <div id="episodesLoading" style="text-align: center; padding: 2rem; color: var(--text-secondary);">
-            <i class="fa-solid fa-circle-notch fa-spin fa-2x"></i>
-            <p>加载分集数据...</p>
-        </div>
-        
-        <div id="episodesList" style="flex: 1; overflow-y: auto; padding-right: 1rem; display: none; flex-direction: column; gap: 1rem;">
-            <!-- 分集动态渲染 -->
-        </div>
     </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
-<style>
-.media-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-    gap: 1.5rem;
-}
-
-.media-card {
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    overflow: hidden;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    cursor: pointer;
-    position: relative;
-    display: flex;
-    flex-direction: column;
-}
-
-.media-card:hover {
-    transform: translateY(-8px);
-    border-color: var(--accent-primary);
-    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.4), 0 0 12px rgba(99, 102, 241, 0.2);
-}
-
-.poster-wrapper {
-    position: relative;
-    width: 100%;
-    padding-top: 150%; /* 2:3 aspect ratio */
-    background: var(--bg-secondary);
-    overflow: hidden;
-}
-
-.poster-img {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    transition: transform 0.5s ease;
-}
-
-.media-card:hover .poster-img {
-    transform: scale(1.05);
-}
-
-.no-poster {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-secondary);
-    font-size: 3rem;
-}
-
-.media-info {
-    padding: 1rem;
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-}
-
-.media-title {
-    font-size: 1rem;
-    font-weight: 600;
-    margin-bottom: 0.25rem;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.media-year {
-    font-size: 0.85rem;
-    color: var(--accent-secondary);
-}
-
-/* Episode Card Styles */
-.episode-card {
-    display: flex;
-    gap: 1.5rem;
-    background: rgba(0, 0, 0, 0.2);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 12px;
-    padding: 1rem;
-    transition: background 0.2s;
-}
-
-.episode-card:hover {
-    background: rgba(255, 255, 255, 0.05);
-}
-
-.ep-poster {
-    width: 160px;
-    height: 90px;
-    border-radius: 8px;
-    object-fit: cover;
-    background: var(--bg-primary);
-    flex-shrink: 0;
-}
-
-.ep-info {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-}
-
-.ep-title {
-    font-size: 1.1rem;
-    font-weight: 600;
-    margin-bottom: 0.25rem;
-    color: var(--text-primary);
-}
-
-.ep-meta {
-    font-size: 0.85rem;
-    color: var(--accent-primary);
-    margin-bottom: 0.5rem;
-    font-weight: 500;
-}
-
-.ep-overview {
-    font-size: 0.9rem;
-    color: var(--text-secondary);
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-    line-height: 1.5;
-}
-
-/* 滚动条美化 */
-#episodesList::-webkit-scrollbar {
-    width: 8px;
-}
-#episodesList::-webkit-scrollbar-track {
-    background: rgba(0,0,0,0.1);
-    border-radius: 4px;
-}
-#episodesList::-webkit-scrollbar-thumb {
-    background: var(--border);
-    border-radius: 4px;
-}
-#episodesList::-webkit-scrollbar-thumb:hover {
-    background: var(--text-secondary);
-}
-</style>
-
 <script>
-let currentInstanceId = null;
+let globalConfig = null;
 
-async function loadInstances() {
-    const select = document.getElementById('instanceSelect');
-    const deleteBtn = document.getElementById('deleteInstanceBtn');
+async function loadConfig() {
     try {
-        const res = await fetch('/api/v1/emby/instances');
-        const data = await res.json();
+        const res = await fetch('/api/v1/system/config');
+        globalConfig = await res.json();
         
-        select.innerHTML = '';
-        if (data.length === 0) {
-            select.innerHTML = '<option value="">(暂无服务器，请先添加)</option>';
-            select.disabled = true;
-            deleteBtn.style.display = 'none';
-            document.getElementById('mediaGrid').innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-secondary); padding: 3rem;"><i class="fa-solid fa-server fa-3x" style="margin-bottom: 1rem; opacity: 0.5"></i><br>请点击右上角添加您的第一个 Emby 服务器</div>';
-            return;
-        }
+        const proxyConfig = globalConfig.emby.proxy;
         
-        select.disabled = false;
-        deleteBtn.style.display = 'block';
-        data.forEach(inst => {
-            const opt = document.createElement('option');
-            opt.value = inst.id;
-            opt.textContent = `${inst.name} (${inst.url})`;
-            select.appendChild(opt);
-        });
+        document.getElementById('proxyEnabled').checked = proxyConfig.enabled;
+        document.getElementById('proxyPort').value = proxyConfig.port || 8096;
         
-        // 自动拉取第一个实例的数据
-        loadSeries();
+        renderInstances(proxyConfig.instances || []);
     } catch (e) {
-        select.innerHTML = '<option value="">加载失败</option>';
-        deleteBtn.style.display = 'none';
+        alert("配置加载失败: " + e);
     }
 }
 
-// ================= Modal Actions =================
-function openAddInstanceModal() {
-    document.getElementById('addInstanceModal').style.display = 'flex';
-    document.getElementById('addInstanceForm').reset();
+function renderInstances(instances) {
+    const tbody = document.getElementById('instanceList');
+    tbody.innerHTML = '';
+    
+    if (instances.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; padding: 2rem; color: var(--text-secondary);">暂无配置实例，请添加</td></tr>';
+        return;
+    }
+    
+    instances.forEach((inst, index) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td style="vertical-align: middle;"><strong>${inst.name}</strong></td>
+            <td style="vertical-align: middle;"><code>${inst.url}</code></td>
+            <td style="vertical-align: middle;"><code>${inst.api_key.substring(0,4)}...${inst.api_key.substring(inst.api_key.length-4)}</code></td>
+            <td style="text-align: right; vertical-align: middle; white-space: nowrap;">
+                <button class="btn btn-sm btn-info" onclick="testConnection(${index})" title="测试连接">
+                    <i class="fa-solid fa-bolt"></i>
+                </button>
+                <button class="btn btn-sm btn-secondary" onclick="openInstanceModal(${index})" title="编辑" style="margin-left: 0.5rem;">
+                    <i class="fa-solid fa-pen"></i>
+                </button>
+                <button class="btn btn-sm btn-danger" onclick="deleteInstance(${index})" title="删除" style="margin-left: 0.5rem; background: var(--error); border-color: var(--error);">
+                    <i class="fa-solid fa-trash"></i>
+                </button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
 }
 
-function closeAddInstanceModal() {
-    document.getElementById('addInstanceModal').style.display = 'none';
+function toggleProxyState() {
+    // 改变开关只是改变 UI 状态，不直接触发保存
 }
 
-async function submitAddInstance(e) {
-    e.preventDefault();
-    const btn = document.getElementById('addSubmitBtn');
-    const original = btn.innerHTML;
+async function saveProxySettings() {
+    if (!globalConfig) return;
+    
+    const btn = document.getElementById('saveProxyBtn');
+    const originalText = btn.innerHTML;
     btn.disabled = true;
-    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 绑定中...';
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 保存中...';
     
     const payload = {
-        name: document.getElementById('add_name').value.trim(),
-        url: document.getElementById('add_url').value.trim(),
-        api_key: document.getElementById('add_apikey').value.trim()
+        emby: {
+            proxy: {
+                enabled: document.getElementById('proxyEnabled').checked,
+                port: parseInt(document.getElementById('proxyPort').value) || 8096,
+                instances: globalConfig.emby.proxy.instances
+            }
+        }
     };
     
     try {
-        const res = await fetch('/api/v1/emby/instances', {
-            method: 'POST',
+        const res = await fetch('/api/v1/system/config', {
+            method: 'PATCH',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(payload)
         });
+        
         if (res.ok) {
-            closeAddInstanceModal();
-            await loadInstances();
+            toast("网关设置已保存！服务已热重载。");
+            await loadConfig();
         } else {
-            const data = await res.json();
-            alert("绑定失败: " + data.detail);
+            const err = await res.json();
+            alert("保存失败: " + err.detail);
         }
     } catch(e) {
-        alert("网络错误");
+        alert("网络错误: " + e);
     } finally {
         btn.disabled = false;
-        btn.innerHTML = original;
+        btn.innerHTML = originalText;
     }
 }
 
-async function deleteCurrentInstance() {
-    if(!currentInstanceId) return;
+// Modal handling
+function openInstanceModal(index = -1) {
+    const modal = document.getElementById('instanceModal');
+    const form = document.getElementById('instanceForm');
     
-    const isConfirmed = await customConfirm("确定要解绑并删除当前选中的 Emby 服务器吗？");
-    if(!isConfirmed) return;
+    form.reset();
+    document.getElementById('editIndex').value = index;
     
-    const deleteBtn = document.getElementById('deleteInstanceBtn');
-    const original = deleteBtn.innerHTML;
-    deleteBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
-    deleteBtn.disabled = true;
+    if (index >= 0) {
+        document.getElementById('modalTitle').innerHTML = '<i class="fa-solid fa-pen"></i> 编辑实例';
+        const inst = globalConfig.emby.proxy.instances[index];
+        document.getElementById('inst_name').value = inst.name;
+        document.getElementById('inst_url').value = inst.url;
+        document.getElementById('inst_apikey').value = inst.api_key;
+    } else {
+        document.getElementById('modalTitle').innerHTML = '<i class="fa-solid fa-plus"></i> 添加新实例';
+    }
+    
+    modal.style.display = 'flex';
+}
+
+function closeInstanceModal() {
+    document.getElementById('instanceModal').style.display = 'none';
+}
+
+function submitInstance(e) {
+    e.preventDefault();
+    if (!globalConfig) return;
+    
+    const index = parseInt(document.getElementById('editIndex').value);
+    const newInst = {
+        name: document.getElementById('inst_name').value.trim(),
+        url: document.getElementById('inst_url').value.trim(),
+        api_key: document.getElementById('inst_apikey').value.trim()
+    };
+    
+    if (!globalConfig.emby.proxy.instances) {
+        globalConfig.emby.proxy.instances = [];
+    }
+    
+    if (index >= 0) {
+        globalConfig.emby.proxy.instances[index] = newInst;
+    } else {
+        // Check duplicate name
+        const exists = globalConfig.emby.proxy.instances.find(i => i.name.toLowerCase() === newInst.name.toLowerCase());
+        if (exists) {
+            alert("实例名称不能重复！");
+            return;
+        }
+        globalConfig.emby.proxy.instances.push(newInst);
+    }
+    
+    closeInstanceModal();
+    renderInstances(globalConfig.emby.proxy.instances);
+    // Auto save
+    saveProxySettings();
+}
+
+async function deleteInstance(index) {
+    const confirmed = await customConfirm("确定要删除该实例配置吗？");
+    if (!confirmed) return;
+    
+    globalConfig.emby.proxy.instances.splice(index, 1);
+    renderInstances(globalConfig.emby.proxy.instances);
+    saveProxySettings();
+}
+
+async function testConnection(index) {
+    const inst = globalConfig.emby.proxy.instances[index];
     
     try {
-        const res = await fetch(`/api/v1/emby/instances/${currentInstanceId}`, {
-            method: 'DELETE'
+        const res = await fetch('/api/v1/system/test-emby', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                url: inst.url,
+                api_key: inst.api_key
+            })
         });
-        if (res.ok) {
-            await loadInstances();
+        
+        const data = await res.json();
+        if (data.status === 'success') {
+            toast("✅ " + data.message);
         } else {
-            alert("删除失败");
+            alert("❌ " + data.message);
         }
-    } catch(e) {
-        alert("网络错误");
-    } finally {
-        deleteBtn.innerHTML = '<i class="fa-solid fa-trash"></i>';
-        deleteBtn.disabled = false;
-    }
-}
-
-async function loadSeries() {
-    const select = document.getElementById('instanceSelect');
-    if (!select.value) return;
-    
-    currentInstanceId = select.value;
-    const grid = document.getElementById('mediaGrid');
-    const loading = document.getElementById('loadingIndicator');
-    
-    grid.innerHTML = '';
-    loading.style.display = 'block';
-    
-    try {
-        const res = await fetch(`/api/v1/emby/instances/${currentInstanceId}/series`);
-        const series = await res.json();
-        
-        loading.style.display = 'none';
-        
-        if (series.length === 0) {
-            grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-secondary); padding: 3rem;">未能拉取到剧集数据或您的媒体库为空。</div>';
-            return;
-        }
-        
-        series.forEach(item => {
-            const card = document.createElement('div');
-            card.className = 'media-card';
-            card.onclick = () => openEpisodesModal(item.id, item.name);
-            
-            const posterHtml = item.poster_url 
-                ? `<img src="/api/v1/emby/${currentInstanceId}/proxy${new URL(item.poster_url).pathname}${new URL(item.poster_url).search}" class="poster-img" loading="lazy" alt="${item.name}">`
-                : `<div class="no-poster"><i class="fa-solid fa-film"></i></div>`;
-                
-            card.innerHTML = `
-                <div class="poster-wrapper">
-                    ${posterHtml}
-                </div>
-                <div class="media-info">
-                    <div class="media-title" title="${item.name}">${item.name}</div>
-                    <div class="media-year">${item.year || '未知年份'}</div>
-                </div>
-            `;
-            grid.appendChild(card);
-        });
     } catch (e) {
-        loading.style.display = 'none';
-        grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--error); padding: 3rem;"><i class="fa-solid fa-triangle-exclamation"></i> 拉取数据失败</div>';
+        alert("请求异常: " + e);
     }
 }
 
-async function openEpisodesModal(seriesId, seriesName) {
-    document.getElementById('episodesModal').style.display = 'flex';
-    document.getElementById('modalSeriesTitle').textContent = seriesName;
-    document.getElementById('episodesLoading').style.display = 'block';
-    document.getElementById('episodesList').style.display = 'none';
-    
-    const list = document.getElementById('episodesList');
-    list.innerHTML = '';
-    
-    try {
-        const res = await fetch(`/api/v1/emby/instances/${currentInstanceId}/series/${seriesId}/episodes`);
-        const eps = await res.json();
-        
-        document.getElementById('episodesLoading').style.display = 'none';
-        list.style.display = 'flex';
-        
-        if (eps.length === 0) {
-            list.innerHTML = '<div style="text-align: center; color: var(--text-secondary); padding: 2rem;">没有找到分集数据</div>';
-            return;
-        }
-        
-        eps.forEach(ep => {
-            const epCard = document.createElement('div');
-            epCard.className = 'episode-card';
-            
-            const posterHtml = ep.poster_url 
-                ? `<img src="/api/v1/emby/${currentInstanceId}/proxy${new URL(ep.poster_url).pathname}${new URL(ep.poster_url).search}" class="ep-poster" loading="lazy">`
-                : `<div class="ep-poster" style="display:flex;align-items:center;justify-content:center;font-size:2rem;color:var(--text-secondary);"><i class="fa-solid fa-tv"></i></div>`;
-                
-            epCard.innerHTML = `
-                ${posterHtml}
-                <div class="ep-info">
-                    <div class="ep-meta">第 ${ep.season} 季 第 ${ep.episode} 集</div>
-                    <div class="ep-title">${ep.name}</div>
-                    <div class="ep-overview" title="${ep.overview}">${ep.overview || '暂无简介...'}</div>
-                </div>
-            `;
-            list.appendChild(epCard);
-        });
-    } catch (e) {
-        document.getElementById('episodesLoading').style.display = 'none';
-        list.style.display = 'flex';
-        list.innerHTML = '<div style="text-align: center; color: var(--error); padding: 2rem;"><i class="fa-solid fa-triangle-exclamation"></i> 加载分集失败</div>';
-    }
+function toast(msg) {
+    // 简单的提示
+    const d = document.createElement('div');
+    d.textContent = msg;
+    d.style.position = 'fixed';
+    d.style.bottom = '20px';
+    d.style.right = '20px';
+    d.style.background = 'var(--accent-primary)';
+    d.style.color = '#fff';
+    d.style.padding = '10px 20px';
+    d.style.borderRadius = '8px';
+    d.style.zIndex = '9999';
+    d.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
+    document.body.appendChild(d);
+    setTimeout(() => d.remove(), 3000);
 }
 
-function closeEpisodesModal() {
-    document.getElementById('episodesModal').style.display = 'none';
-}
-
-// 初始化
-document.addEventListener('DOMContentLoaded', loadInstances);
+document.addEventListener('DOMContentLoaded', loadConfig);
 </script>
 {% endblock %}

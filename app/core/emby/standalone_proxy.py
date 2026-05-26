@@ -149,8 +149,10 @@ async def handle_proxy_root(instance_name: str, request: Request):
 
 _proxy_server_instance = None
 
+_proxy_task = None
+
 async def start_standalone_proxy():
-    global _proxy_server_instance
+    global _proxy_server_instance, _proxy_task
     config = get_config()
     if not config.emby.proxy.enabled:
         return
@@ -167,9 +169,27 @@ async def start_standalone_proxy():
         pass
     except Exception as e:
         logger.error(f"Standalone Proxy server error: {e}")
+    finally:
+        _proxy_server_instance = None
 
 async def stop_standalone_proxy():
-    global _proxy_server_instance
+    global _proxy_server_instance, _proxy_task
     if _proxy_server_instance:
         logger.info("Stopping Standalone Emby Reverse Proxy...")
         _proxy_server_instance.should_exit = True
+        # wait a bit for shutdown
+        await asyncio.sleep(0.5)
+
+async def restart_standalone_proxy():
+    """重启或根据配置启动/停止代理服务 (热重载)"""
+    global _proxy_task
+    config = get_config()
+    
+    await stop_standalone_proxy()
+    
+    if _proxy_task and not _proxy_task.done():
+        _proxy_task.cancel()
+        
+    if config.emby.proxy.enabled:
+        logger.info("Hot reloading Standalone Proxy...")
+        _proxy_task = asyncio.create_task(start_standalone_proxy())

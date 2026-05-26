@@ -13,7 +13,23 @@ async def modify_config(request: Request):
     """增量热更新配置"""
     try:
         data = await request.json()
+        
+        # Check if emby proxy config was updated
+        old_config = get_config()
+        old_proxy_enabled = old_config.emby.proxy.enabled
+        old_proxy_port = old_config.emby.proxy.port
+        
         new_config = update_config(data)
+        
+        # Handle hot reload for proxy port
+        if 'emby' in data and 'proxy' in data['emby']:
+            from app.core.emby.standalone_proxy import restart_standalone_proxy
+            import asyncio
+            new_proxy_enabled = new_config.emby.proxy.enabled
+            new_proxy_port = new_config.emby.proxy.port
+            if old_proxy_enabled != new_proxy_enabled or old_proxy_port != new_proxy_port:
+                asyncio.create_task(restart_standalone_proxy())
+                
         return {"status": "success", "config": new_config.model_dump()}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"配置更新失败或格式校验不通过: {str(e)}")
@@ -45,6 +61,28 @@ async def test_notify(channel: str):
         return {"status": "success", "message": "测试请求已触发"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/test-emby")
+async def test_emby(request: Request):
+    """测试 Emby 连接"""
+    try:
+        data = await request.json()
+        url = data.get("url", "").rstrip("/")
+        api_key = data.get("api_key", "")
+        
+        if not url or not api_key:
+            raise HTTPException(status_code=400, detail="地址和 API Key 不能为空")
+            
+        import httpx
+        async with httpx.AsyncClient(timeout=5) as client:
+            res = await client.get(f"{url}/emby/system/info", params={"api_key": api_key})
+            if res.status_code == 200:
+                info = res.json()
+                return {"status": "success", "message": f"连接成功！服务器版本: {info.get('Version')}"}
+            else:
+                return {"status": "error", "message": f"连接失败: HTTP {res.status_code}"}
+    except Exception as e:
+        return {"status": "error", "message": f"连接异常: {str(e)}"}
 
 @router.post("/test-tmdb")
 async def test_tmdb():

@@ -17,7 +17,7 @@ from app.core.monitor.handler import init_handlers
 from app.core.sync.engine import sync_engine
 import asyncio
 
-from app.core.emby.standalone_proxy import start_standalone_proxy, stop_standalone_proxy
+from app.core.emby.standalone_proxy import restart_standalone_proxy, stop_standalone_proxy
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -39,7 +39,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(telegram_monitor.start())
         
     # 启动独立反向代理端口
-    proxy_task = asyncio.create_task(start_standalone_proxy())
+    asyncio.create_task(restart_standalone_proxy())
         
     yield
     # 关闭时执行
