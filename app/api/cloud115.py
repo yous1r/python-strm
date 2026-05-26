@@ -120,13 +120,17 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
                     logger.error(f"📡 [飞牛探针-反代] CDN返回错误! body前200字节: {cdn_resp.content[:200]}")
                     return Response(content=b"", status_code=200, headers={"Content-Type": "video/mp4"})
                 
-                resp_headers = {}
-                for k, v in cdn_resp.headers.items():
-                    kl = k.lower()
-                    if kl in ("content-type", "content-length", "content-range", "accept-ranges"):
-                        resp_headers[k] = v
+                # 关键：返回 200（而非 206）且不带 Content-Range！
+                # 如果返回 206 + Content-Range，Lavf 会知道文件实际有几十 GB，
+                # 然后尝试请求后续 Range 片段，但每次都只拿到相同的前 2MB，陷入死循环。
+                # 返回 200 让 Lavf 以为这 2MB 就是完整文件，解析元数据后即可成功。
+                resp_headers = {
+                    "Content-Type": cdn_resp.headers.get("content-type", "video/mp4"),
+                    "Content-Length": str(len(cdn_resp.content)),
+                    "Accept-Ranges": "bytes"
+                }
                 
-                return Response(content=cdn_resp.content, status_code=cdn_resp.status_code, headers=resp_headers)
+                return Response(content=cdn_resp.content, status_code=200, headers=resp_headers)
                 
         except Exception as e:
             logger.error(f"📡 [飞牛探针-反代] CDN请求异常: {repr(e)}")
