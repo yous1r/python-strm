@@ -84,45 +84,53 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
             is_lavf_probe = True
     
     if is_lavf_probe:
-        logger.info(f"📡 [飞牛探针-反代] pickcode={pickcode} method={method} ua={player_ua} → 反代模式绕过CDN封杀")
+        # 防止无限重试：同一 pickcode 的 Lavf 探针最多处理 3 次
+        if not hasattr(play_video, '_lavf_retry_count'):
+            play_video._lavf_retry_count = {}
+        count = play_video._lavf_retry_count.get(pickcode, 0)
+        if count >= 3:
+            logger.warning(f"🚫 [飞牛探针] pickcode={pickcode} 已重试{count}次，返回空响应终止循环")
+            return Response(content=b"", status_code=200, headers={"Content-Type": "video/mp4"})
+        play_video._lavf_retry_count[pickcode] = count + 1
+        
+        logger.info(f"📡 [飞牛探针-反代] pickcode={pickcode} method={method} ua={player_ua} attempt={count+1}")
         browser_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         url = await client_115.get_download_url(pickcode, user_agent=browser_ua)
         if not url:
             raise HTTPException(status_code=404, detail="Download URL not found")
         
-        # 反代模式：用浏览器 UA 从 CDN 拉数据，流式透传给 Lavf
-        proxy_headers = {"User-Agent": browser_ua}
-        range_header = request.headers.get("range")
-        if range_header:
-            proxy_headers["Range"] = range_header
-            
-        proxy_client = httpx.AsyncClient(timeout=httpx.Timeout(connect=10, read=60, write=10, pool=10))
+        logger.info(f"📡 [飞牛探针-反代] CDN URL (前100字符): {url[:100]}...")
+        
+        # 非流式反代：只拉取前 2MB，足够 Lavf 识别编码格式
+        proxy_headers = {
+            "User-Agent": browser_ua,
+            "Range": "bytes=0-2097151"
+        }
+        
         try:
-            req = proxy_client.build_request(method, url, headers=proxy_headers)
-            cdn_resp = await proxy_client.send(req, stream=True, follow_redirects=True)
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as proxy_client:
+                cdn_resp = await proxy_client.get(url, headers=proxy_headers)
+                
+                logger.info(f"📡 [飞牛探针-反代] CDN响应: status={cdn_resp.status_code}, "
+                           f"content-type={cdn_resp.headers.get('content-type', 'N/A')}, "
+                           f"content-length={cdn_resp.headers.get('content-length', 'N/A')}, "
+                           f"body_size={len(cdn_resp.content)}")
+                
+                if cdn_resp.status_code >= 400:
+                    logger.error(f"📡 [飞牛探针-反代] CDN返回错误! body前200字节: {cdn_resp.content[:200]}")
+                    return Response(content=b"", status_code=200, headers={"Content-Type": "video/mp4"})
+                
+                resp_headers = {}
+                for k, v in cdn_resp.headers.items():
+                    kl = k.lower()
+                    if kl in ("content-type", "content-length", "content-range", "accept-ranges"):
+                        resp_headers[k] = v
+                
+                return Response(content=cdn_resp.content, status_code=cdn_resp.status_code, headers=resp_headers)
+                
         except Exception as e:
-            await proxy_client.aclose()
-            logger.error(f"CDN proxy failed for {pickcode}: {repr(e)}")
+            logger.error(f"📡 [飞牛探针-反代] CDN请求异常: {repr(e)}")
             raise HTTPException(status_code=502, detail="CDN proxy failed")
-        
-        resp_headers = {}
-        for k, v in cdn_resp.headers.items():
-            kl = k.lower()
-            if kl in ("content-type", "content-length", "content-range", "accept-ranges"):
-                resp_headers[k] = v
-        
-        from fastapi.responses import StreamingResponse
-        async def stream_from_cdn():
-            try:
-                async for chunk in cdn_resp.aiter_bytes(chunk_size=65536):
-                    yield chunk
-            except Exception:
-                pass  # 客户端断开连接是正常现象（Lavf 读完头部就断开）
-            finally:
-                await cdn_resp.aclose()
-                await proxy_client.aclose()
-        
-        return StreamingResponse(stream_from_cdn(), status_code=cdn_resp.status_code, headers=resp_headers)
     
     if "Go-http-client" in player_ua:
         logger.info(f"📡 [飞牛探针-302] pickcode={pickcode} method={method} ua={player_ua} → 正常302跳转")
