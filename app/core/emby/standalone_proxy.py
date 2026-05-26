@@ -17,7 +17,7 @@ video_stream_pattern = re.compile(r'/videos/(\w+)/stream', re.IGNORECASE)
 # 匹配 PlaybackInfo 请求
 playback_info_pattern = re.compile(r'/Items/(\w+)/PlaybackInfo', re.IGNORECASE)
 
-async def _resolve_playback_url(upstream_url: str, api_key: str, item_id: str) -> str:
+async def _resolve_playback_url(upstream_url: str, api_key: str, item_id: str, request: Request) -> str:
     """解析出真实播放地址，用于支持 Web 浏览器的 Direct Stream 跳转"""
     try:
         # 如果没有配置 API Key，我们无法请求 Items 接口。
@@ -40,10 +40,15 @@ async def _resolve_playback_url(upstream_url: str, api_key: str, item_id: str) -
                 match = re.search(r'/api/v1/115/play/([^/|?]+)', path)
                 if match:
                     pickcode = match.group(1)
-                    # For Web browser proxying, use a standard browser UA
-                    real_url = await client_115.get_download_url(pickcode, user_agent="Mozilla/5.0")
+                    
+                    player_ua = request.headers.get("user-agent", "Unknown")
+                    from app.config import get_config
+                    target_ua = get_config().cloud115.play_ua
+                    request_ua = target_ua if target_ua else player_ua
+                    
+                    real_url = await client_115.get_download_url(pickcode, user_agent=request_ua)
                     if real_url:
-                        logger.info(f"🔄 [STANDALONE PROXY] Redirecting /stream request directly to 115 CDN for item {item_id}")
+                        logger.info(f"🔄 [STANDALONE PROXY] Redirecting /stream request directly to 115 CDN for item {item_id} (UA: {request_ua})")
                         return real_url
                         
         return None
@@ -142,11 +147,17 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, path: str, r
                 is_native_player = True
                 break
                 
+        # 针对原生播放器，不要直接注入 115 CDN 直链（会导致 UI UA 和 播放器 UA 不一致而黑屏）
+        # 而是将播放链接指向本代理的一个专属中转接口，在该接口中动态获取真正的播放器 UA
         if not is_native_player:
             logger.debug(f"⏭️ [STANDALONE PROXY] Skipped PlaybackInfo injection for Web Browser to prevent CORS infinite loop (UA: {client_ua})")
             return resp
             
         media_sources = data.get("MediaSources", [])
+        
+        # 从请求体中提取 instance_name
+        # 典型的 path: /fnOS/emby/Items/...
+        instance_name = path.strip("/").split("/")[0]
         
         for source in media_sources:
             for key in ["Path", "DirectStreamUrl"]:
@@ -155,13 +166,13 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, path: str, r
                     match = re.search(r'/api/v1/115/play/([^/|?]+)', url)
                     if match:
                         pickcode = match.group(1)
-                        real_url = await client_115.get_download_url(pickcode, user_agent=client_ua)
-                        if real_url:
-                            source[key] = real_url
-                            source["IsRemote"] = True
-                            source["Protocol"] = "Http"
-                            modified = True
-                            logger.info(f"🎯 [STANDALONE PROXY] Injected 115 CDN URL for pickcode {pickcode} into PlaybackInfo (UA: {client_ua})")
+                        # 构造专属的 115play 中转链接
+                        proxy_play_url = f"/{instance_name}/115play/{pickcode}"
+                        source[key] = proxy_play_url
+                        source["IsRemote"] = True
+                        source["Protocol"] = "Http"
+                        modified = True
+                        logger.info(f"🎯 [STANDALONE PROXY] Injected proxy play URL for pickcode {pickcode} into PlaybackInfo (UA: {client_ua})")
         
         if modified:
             content = json.dumps(data).encode("utf-8")
@@ -171,9 +182,12 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, path: str, r
             return Response(content=content, status_code=200, headers=headers)
             
     except Exception as e:
-        logger.error(f"Failed to modify PlaybackInfo JSON: {e}")
+        logger.error(f"Failed to modify PlaybackInfo JSON: {repr(e)}")
         
     return resp
+
+# 匹配 115play 中转请求
+proxy_play_pattern = re.compile(r'/115play/([^/|?]+)', re.IGNORECASE)
 
 @proxy_app.api_route("/{instance_name}/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH"])
 async def handle_proxy_all(instance_name: str, path: str, request: Request):
@@ -193,13 +207,40 @@ async def handle_proxy_all(instance_name: str, path: str, request: Request):
     
     full_path = f"/{path}"
     
+    # 处理专属的 115play 中转请求
+    # 这里才是视频播放器真正发起请求的地方，我们可以拿到播放器真正的 UA
+    play_match = proxy_play_pattern.search(full_path)
+    if play_match:
+        pickcode = play_match.group(1)
+        player_ua = request.headers.get("user-agent", "Unknown")
+        target_ua = config.cloud115.play_ua
+        request_ua = target_ua if target_ua else player_ua
+        
+        logger.info(f"▶️ [STANDALONE PROXY] Player requested 115play for pickcode {pickcode} (Real Player UA: {player_ua})")
+        
+        url = await client_115.get_download_url(pickcode, user_agent=request_ua)
+        if not url:
+            return Response(status_code=404, content="Failed to get 115 download url")
+            
+        needs_m3u8 = False
+        if "VidHub" in player_ua or "Infuse" in player_ua or ("Lavf/" in player_ua and "Lavf/60." not in player_ua):
+            needs_m3u8 = True
+
+        if needs_m3u8:
+            logger.info(f"🎬 [STANDALONE PROXY] Serving M3U8 wrapper for pickcode {pickcode} to workaround 302 header loss")
+            m3u8_content = f"#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:-1,Video\n{url}\n"
+            return Response(content=m3u8_content.encode("utf-8"), media_type="application/vnd.apple.mpegurl")
+        else:
+            logger.info(f"🔄 [STANDALONE PROXY] Redirecting to 115 CDN for pickcode {pickcode}")
+            return RedirectResponse(url=url, status_code=302)
+            
     if playback_info_pattern.search(full_path):
         return await _intercept_playback_info(upstream_url, api_key, full_path, request)
         
     match = video_stream_pattern.search(full_path)
     if match:
         item_id = match.group(1)
-        redirect_url = await _resolve_playback_url(upstream_url, api_key, item_id)
+        redirect_url = await _resolve_playback_url(upstream_url, api_key, item_id, request)
         if redirect_url:
             return RedirectResponse(url=redirect_url, status_code=302)
             
