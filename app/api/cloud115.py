@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
+import httpx
 from pydantic import BaseModel
 from loguru import logger
 from app.core.cloud115.client import client_115
@@ -71,23 +72,60 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     player_ua = request.headers.get("user-agent", "Unknown")
     
     # 飞牛后端探测流程：
-    # 1. Go-http-client HEAD → 获取文件元信息（Content-Type, Content-Length 等）
-    # 2. Lavf/60.x GET → 读取文件头部几 KB 来识别视频编码格式
-    # 两步都必须成功，飞牛才会告知播放器"此文件可以直连播放"。
-    # 如果返回空响应来拦截，飞牛会无限重试（疯狂拉取），反而更糟。
-    # 正确做法：放行所有探测，返回正常的 302 跳转到 115 CDN。
-    # 探针只读几 KB 文件头即可完成，对 115 CDN 流量影响极小。
-    is_fnos_probe = False
+    # 1. Go-http-client HEAD → 获取文件元信息 → 走正常 302 即可
+    # 2. Lavf/60.x GET → 读取文件头来识别编码 → 必须反代！
+    #    因为 115 CDN 黑名单封杀了 Lavf UA，302 跳转后 CDN 直接拒绝，导致无限重试。
+    #    解决：用浏览器 UA 从 CDN 拉取数据，透传给 Lavf。Lavf 只读几 KB 头部就断开。
+    is_lavf_probe = False
     if "Lavf/" in player_ua:
-        import re
-        lavf_match = re.search(r"Lavf/(\d+)", player_ua)
+        import re as _re
+        lavf_match = _re.search(r"Lavf/(\d+)", player_ua)
         if lavf_match and int(lavf_match.group(1)) >= 60:
-            is_fnos_probe = True
-    if "Go-http-client" in player_ua:
-        is_fnos_probe = True
+            is_lavf_probe = True
+    
+    if is_lavf_probe:
+        logger.info(f"📡 [飞牛探针-反代] pickcode={pickcode} method={method} ua={player_ua} → 反代模式绕过CDN封杀")
+        browser_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        url = await client_115.get_download_url(pickcode, user_agent=browser_ua)
+        if not url:
+            raise HTTPException(status_code=404, detail="Download URL not found")
         
-    if is_fnos_probe:
-        logger.info(f"📡 [飞牛探针] pickcode={pickcode} method={method} ua={player_ua} → 放行302跳转")
+        # 反代模式：用浏览器 UA 从 CDN 拉数据，流式透传给 Lavf
+        proxy_headers = {"User-Agent": browser_ua}
+        range_header = request.headers.get("range")
+        if range_header:
+            proxy_headers["Range"] = range_header
+            
+        proxy_client = httpx.AsyncClient(timeout=httpx.Timeout(connect=10, read=60, write=10, pool=10))
+        try:
+            req = proxy_client.build_request(method, url, headers=proxy_headers)
+            cdn_resp = await proxy_client.send(req, stream=True, follow_redirects=True)
+        except Exception as e:
+            await proxy_client.aclose()
+            logger.error(f"CDN proxy failed for {pickcode}: {repr(e)}")
+            raise HTTPException(status_code=502, detail="CDN proxy failed")
+        
+        resp_headers = {}
+        for k, v in cdn_resp.headers.items():
+            kl = k.lower()
+            if kl in ("content-type", "content-length", "content-range", "accept-ranges"):
+                resp_headers[k] = v
+        
+        from fastapi.responses import StreamingResponse
+        async def stream_from_cdn():
+            try:
+                async for chunk in cdn_resp.aiter_bytes(chunk_size=65536):
+                    yield chunk
+            except Exception:
+                pass  # 客户端断开连接是正常现象（Lavf 读完头部就断开）
+            finally:
+                await cdn_resp.aclose()
+                await proxy_client.aclose()
+        
+        return StreamingResponse(stream_from_cdn(), status_code=cdn_resp.status_code, headers=resp_headers)
+    
+    if "Go-http-client" in player_ua:
+        logger.info(f"📡 [飞牛探针-302] pickcode={pickcode} method={method} ua={player_ua} → 正常302跳转")
         
     if "|" in pickcode:
         import urllib.parse
@@ -102,8 +140,6 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     target_ua = config.cloud115.play_ua
     
     # 获取直链并执行 302 跳转。
-    # 彻底废弃所有形式的反代（Nginx/Python内存池），因为 115 WAF 对任何切片拉取都极度敏感。
-    # 根据用户反馈，直接 302 跳转 + 精准拦截刮削器 是最完美、最不会触发风控的方案！
     request_ua = target_ua if target_ua else player_ua
     url = await client_115.get_download_url(pickcode, user_agent=request_ua)
     
@@ -111,7 +147,6 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
         raise HTTPException(status_code=404, detail="Download URL not found")
         
     # 针对某些对 302 跳转支持不佳的播放器（特别是 Vidhub），使用 M3U8 播放列表伪装直链。
-    # 这样播放器在解析 M3U8 时，会自动带着原始的 Header 去请求 115 CDN，完全避免 302 丢 Header 的坑。
     needs_m3u8 = False
     if "VidHub" in player_ua or "Infuse" in player_ua or ("Lavf/" in player_ua and "Lavf/60." not in player_ua):
         needs_m3u8 = True
