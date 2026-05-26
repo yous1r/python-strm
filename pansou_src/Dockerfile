@@ -12,6 +12,9 @@ WORKDIR /app
 # 复制依赖文件
 COPY go.mod go.sum ./
 
+# 设置 Go 代理以加快国内构建速度
+ENV GOPROXY=https://goproxy.cn,direct
+
 # 下载依赖
 RUN go mod download
 
