@@ -70,10 +70,20 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     
     player_ua = request.headers.get("user-agent", "Unknown")
     
-    # 核心风控拦截：拦截飞牛影视等播放器的内置 FFmpeg(Lavf) 媒体信息提取探针。
-    # 这种探针会疯狂发送 GET/HEAD 请求到 CDN 造成 115 严重风控告警。直接拦截不仅能防风控，还能秒开。
-    if "Lavf/" in player_ua or "FFmpeg" in player_ua:
-        logger.info(f"已拦截飞牛影视115媒体信息提取: pickcode={pickcode} filename={filename} method={method} ua={player_ua}")
+    # 核心风控拦截优化：
+    # 飞牛刮削器(Lavf/60.3.100)会疯狂拉取切片导致 115 封号风控，必须拦截返回 0 字节。
+    # Vidhub(Lavf/59.27.100)是真实播放器，115 CDN 原生支持该 UA 直连，必须放行走 302！
+    is_scraper = False
+    if "Go-http-client" in player_ua:
+        is_scraper = True
+    elif "Lavf/" in player_ua:
+        import re
+        match = re.search(r"Lavf/(\d+)", player_ua)
+        if match and int(match.group(1)) >= 60:
+            is_scraper = True
+            
+    if is_scraper:
+        logger.info(f"已拦截疑似刮削器探针: pickcode={pickcode} filename={filename} method={method} ua={player_ua}")
         from fastapi.responses import Response
         return Response(content=b"", status_code=200, media_type="video/mp4")
         
@@ -89,65 +99,14 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     config = get_config()
     target_ua = config.cloud115.play_ua
     
-    # 如果用户没有配置伪装UA，采用最原生的 302 跳转模式
-    if not target_ua:
-        player_ua = request.headers.get("user-agent", "Unknown")
-        url = await client_115.get_download_url(pickcode, user_agent=player_ua)
-        if not url:
-            raise HTTPException(status_code=404, detail="Download URL not found")
-        logger.info(f"🔄 [{method}] Redirecting {pickcode} to CDN directly (Player UA: {player_ua})")
-        return RedirectResponse(url=url, status_code=302)
-        
-    # 如果配置了伪装UA（例如 iPad），必须走流式代理！
-    # 因为 302 跳转无法强制播放器改变自身 UA，会导致 115 CDN 校验失败 (403)
-    url = await client_115.get_download_url(pickcode, user_agent=target_ua)
+    # 获取直链并执行 302 跳转。
+    # 彻底废弃所有形式的反代（Nginx/Python内存池），因为 115 WAF 对任何切片拉取都极度敏感。
+    # 根据用户反馈，直接 302 跳转 + 精准拦截刮削器 是最完美、最不会触发风控的方案！
+    request_ua = target_ua if target_ua else player_ua
+    url = await client_115.get_download_url(pickcode, user_agent=request_ua)
+    
     if not url:
         raise HTTPException(status_code=404, detail="Download URL not found")
         
-    logger.info(f"🔁 [{method}] Proxying {pickcode} via local stream (Spoofed UA: {target_ua})")
-    
-    proxy_headers = {"User-Agent": target_ua}
-    if "range" in request.headers:
-        proxy_headers["Range"] = request.headers["range"]
-    if "if-range" in request.headers:
-        proxy_headers["If-Range"] = request.headers["if-range"]
-
-    # 极其重要：timeout=None 关闭 HTTPX 默认的 5 秒读取超时限制。
-    # 否则播放器缓冲满后暂停读取 TCP，代理就会因为 5 秒没读到数据而异常断开，导致死循环报错！
-    import httpx
-    client = httpx.AsyncClient(verify=False, timeout=httpx.Timeout(None))
-    req = client.build_request(method, url, headers=proxy_headers)
-    
-    if method == "HEAD":
-        try:
-            resp = await client.send(req)
-            resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ["server", "date", "transfer-encoding", "content-encoding", "connection", "content-disposition"]}
-            await client.aclose()
-            return Response(status_code=resp.status_code, headers=resp_headers)
-        except Exception as e:
-            logger.error(f"❌ [{method}] HEAD proxy failed: {e}")
-            await client.aclose()
-            raise HTTPException(status_code=502, detail="Bad Gateway")
-
-    try:
-        resp = await client.send(req, stream=True, follow_redirects=True)
-    except Exception as e:
-        logger.error(f"❌ [{method}] Proxy connection failed: {e}")
-        await client.aclose()
-        raise HTTPException(status_code=502, detail="Proxy connection failed")
-        
-    resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ["server", "date", "transfer-encoding", "content-encoding", "connection", "content-disposition"]}
-    
-    async def stream_generator():
-        try:
-            # 128KB 分块最适合流媒体
-            async for chunk in resp.aiter_bytes(chunk_size=128 * 1024):
-                yield chunk
-        except Exception as e:
-            logger.debug(f"⚠️ Proxy stream closed: {e}")
-        finally:
-            await resp.aclose()
-            await client.aclose()
-
-    from fastapi.responses import StreamingResponse
-    return StreamingResponse(stream_generator(), status_code=resp.status_code, headers=resp_headers)
+    logger.info(f"🔄 [{method}] Redirecting {pickcode} to CDN directly (115 API UA: {request_ua})")
+    return RedirectResponse(url=url, status_code=302)
