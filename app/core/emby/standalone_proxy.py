@@ -229,7 +229,8 @@ def create_proxy_app(instance) -> FastAPI:
 
         # Feiniu /v/ 路径前缀：VidHub 发 /emby/... 时自动补全为 /v/emby/...
         # 浏览器发 /v/emby/... 时已含前缀，不做改动
-        if not full_path.startswith("/v/") and full_path != "/v":
+        # 根路径 / 不补前缀，让飞牛自己 302 到 /v/
+        if full_path != "/" and not full_path.startswith("/v/") and full_path != "/v":
             full_path = f"/v{full_path}"
 
         # 拦截 PlaybackInfo
