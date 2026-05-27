@@ -5,19 +5,32 @@ server:
 database:
   path: data/python_strm.db
 cloud115:
-  enabled: false
-  cookie: ''
+  enabled: true
+  cookie: "UID=100000212_R2_1779870554; CID=a06b7263e4b5a5210c8f3a97dd932ffe; SEID=37524ad343a5ac611658d1dd566d8cb07fad0628e263cd8c195a67863848d3711223b9d56c59fd1895585211a31051b5df8e1723c56af71878f4351b;\n\
+    \    KID=f7c629d0e97e535715e79b6b033e4c94"
   strm_type: pickcode
+  play_ua: ''
+  api_type: app
+  sync_dirs:
+  - dir_id: '3436877579010923956'
+    name: archive
 cloud123:
   enabled: false
   access_token: ''
   strm_type: fileid
+  sync_dirs: []
 tmdb:
   api_key: ''
   language: zh-CN
   proxy: ''
 emby:
-  instances: []
+  proxy:
+    enabled: true
+    instances:
+    - name: fnOS
+      url: http://10.0.0.50:8005
+      api_key: ''
+      proxy_port: 8096
 strm:
   output_dir: strm_output
   base_url: http://localhost:8095
@@ -39,12 +52,22 @@ organize:
   wash:
     prefer_dolby: false
     prefer_larger: false
+  cloud115:
+    enabled: false
+    source_dirs: []
+    target_dir: ''
 monitor:
   telegram:
     enabled: false
     api_id: ''
     api_hash: ''
     channels: []
+    proxy: ''
+    keywords: []
+    target_dir_id: '0'
+    archive_dir_id: '0'
+    auto_organize: false
+    auto_strm: false
   poll_interval: 60
 notify:
   wecom:
@@ -56,6 +79,7 @@ notify:
     enabled: false
     bot_token: ''
     chat_id: ''
+    proxy: ''
   bark:
     enabled: true
     server: http://10.0.0.50:28080

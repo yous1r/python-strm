@@ -17,17 +17,17 @@ async def modify_config(request: Request):
         # Check if emby proxy config was updated
         old_config = get_config()
         old_proxy_enabled = old_config.emby.proxy.enabled
-        old_proxy_port = old_config.emby.proxy.port
+        old_instances = {(i.name, i.proxy_port, i.url) for i in old_config.emby.proxy.instances}
         
         new_config = update_config(data)
         
-        # Handle hot reload for proxy port
+        # Handle hot reload for proxy (detect any instance config change)
         if 'emby' in data and 'proxy' in data['emby']:
             from app.core.emby.standalone_proxy import restart_standalone_proxy
             import asyncio
             new_proxy_enabled = new_config.emby.proxy.enabled
-            new_proxy_port = new_config.emby.proxy.port
-            if old_proxy_enabled != new_proxy_enabled or old_proxy_port != new_proxy_port:
+            new_instances = {(i.name, i.proxy_port, i.url) for i in new_config.emby.proxy.instances}
+            if old_proxy_enabled != new_proxy_enabled or old_instances != new_instances:
                 asyncio.create_task(restart_standalone_proxy())
                 
         return {"status": "success", "config": new_config.model_dump()}

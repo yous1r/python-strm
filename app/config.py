@@ -39,10 +39,10 @@ class EmbyProxyInstanceConfig(BaseModel):
     name: str = ""
     url: str = ""
     api_key: str = ""
+    proxy_port: int = 0
 
 class EmbyProxyConfig(BaseModel):
     enabled: bool = False
-    port: int = 8096
     instances: List[EmbyProxyInstanceConfig] = []
 
 class EmbyConfig(BaseModel):
