@@ -249,7 +249,8 @@ def create_proxy_app(instance) -> FastAPI:
 
     @app.api_route("/", methods=["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH"])
     async def handle_root(request: Request):
-        return await handle_proxy("", request)
+        # 根路径直接 302 到 /v/，确保 VidHub 等客户端能正确跳转到飞牛入口
+        return RedirectResponse(url="/v/", status_code=302)
 
     return app
 
