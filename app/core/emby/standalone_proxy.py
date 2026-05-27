@@ -26,7 +26,7 @@ async def _resolve_playback_url(upstream_url: str, api_key: str, item_id: str, r
 
         async with httpx.AsyncClient(timeout=10) as client:
             res = await client.get(
-                f"{upstream_url}/emby/Items/{item_id}",
+                f"{upstream_url}/v/emby/Items/{item_id}",
                 params={"api_key": api_key}
             )
             if res.status_code != 200:
@@ -227,6 +227,11 @@ def create_proxy_app(instance) -> FastAPI:
             else:
                 return RedirectResponse(url=url, status_code=302)
 
+        # Feiniu /v/ 路径前缀：VidHub 发 /emby/... 时自动补全为 /v/emby/...
+        # 浏览器发 /v/emby/... 时已含前缀，不做改动
+        if not full_path.startswith("/v/") and full_path != "/v":
+            full_path = f"/v{full_path}"
+
         # 拦截 PlaybackInfo
         if playback_info_pattern.search(full_path):
             return await _intercept_playback_info(upstream_url, api_key, full_path, request)
@@ -266,7 +271,7 @@ async def start_standalone_proxy():
             continue
 
         proxy_app = create_proxy_app(instance)
-        uvicorn_config = uvicorn.Config(app=proxy_app, host="0.0.0.0", port=instance.proxy_port, log_level="warning")
+        uvicorn_config = uvicorn.Config(app=proxy_app, host="0.0.0.0", port=instance.proxy_port, log_level="debug")
         server = uvicorn.Server(uvicorn_config)
         _proxy_servers.append(server)
 
