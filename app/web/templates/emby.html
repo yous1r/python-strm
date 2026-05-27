@@ -18,12 +18,11 @@
     <div class="row" style="margin-bottom: 1.5rem;">
         <div class="col-md-6">
             <div class="form-group">
-                <label class="form-label">代理运行端口</label>
-                <div class="input-group">
-                    <span class="input-group-text"><i class="fa-solid fa-plug"></i></span>
-                    <input type="number" class="form-control" id="proxyPort" placeholder="默认: 8096">
+                <label class="form-label">运行说明</label>
+                <div class="alert alert-info" style="margin: 0;">
+                    <i class="fa-solid fa-circle-info"></i> 每个实例绑定独立端口，客户端通过 <code>http://IP:端口</code> 直接访问。
+                    如需暴露多个端口，请在 <code>docker-compose.yml</code> 中添加端口映射。
                 </div>
-                <small class="form-text text-muted">修改端口后保存，服务将自动热重载。如果使用 Docker，请确保在 docker-compose.yml 中已开放该端口。</small>
             </div>
         </div>
     </div>
@@ -50,14 +49,15 @@
         <table class="table" style="color: var(--text-primary);">
             <thead>
                 <tr>
-                    <th>实例名称 (路径前缀)</th>
+                    <th>实例名称</th>
+                    <th>代理端口</th>
                     <th>上游服务器地址</th>
                     <th>API Key</th>
                     <th style="text-align: right;">操作</th>
                 </tr>
             </thead>
             <tbody id="instanceList">
-                <tr><td colspan="4" style="text-align: center; padding: 2rem;">正在加载配置...</td></tr>
+                <tr><td colspan="5" style="text-align: center; padding: 2rem;">正在加载配置...</td></tr>
             </tbody>
         </table>
     </div>
@@ -74,9 +74,14 @@
         <form id="instanceForm" onsubmit="submitInstance(event)">
             <input type="hidden" id="editIndex" value="-1">
             <div class="form-group">
-                <label class="form-label">实例名称 (作为代理路径)</label>
-                <input type="text" id="inst_name" class="form-control" placeholder="例如: fnOS, emby" required pattern="[A-Za-z0-9_-]+">
-                <small class="form-text text-muted">只能包含字母、数字、下划线。客户端将通过 <code>http://IP:端口/名称</code> 访问</small>
+                <label class="form-label">实例名称</label>
+                <input type="text" id="inst_name" class="form-control" placeholder="例如: fnOS" required>
+                <small class="form-text text-muted">仅用于管理标识</small>
+            </div>
+            <div class="form-group">
+                <label class="form-label">代理端口</label>
+                <input type="number" id="inst_proxy_port" class="form-control" placeholder="例如: 8096" required min="1" max="65535">
+                <small class="form-text text-muted">客户端通过 <code>http://IP:此端口</code> 访问</small>
             </div>
             <div class="form-group">
                 <label class="form-label">上游服务器地址</label>
@@ -108,7 +113,6 @@ async function loadConfig() {
         const proxyConfig = globalConfig.emby.proxy;
         
         document.getElementById('proxyEnabled').checked = proxyConfig.enabled;
-        document.getElementById('proxyPort').value = proxyConfig.port || 8096;
         
         renderInstances(proxyConfig.instances || []);
     } catch (e) {
@@ -121,7 +125,7 @@ function renderInstances(instances) {
     tbody.innerHTML = '';
     
     if (instances.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; padding: 2rem; color: var(--text-secondary);">暂无配置实例，请添加</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem; color: var(--text-secondary);">暂无配置实例，请添加</td></tr>';
         return;
     }
     
@@ -129,8 +133,9 @@ function renderInstances(instances) {
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td style="vertical-align: middle;"><strong>${inst.name}</strong></td>
+            <td style="vertical-align: middle;"><code>${inst.proxy_port || '未设置'}</code></td>
             <td style="vertical-align: middle;"><code>${inst.url}</code></td>
-            <td style="vertical-align: middle;"><code>${inst.api_key ? (inst.api_key.length > 8 ? inst.api_key.substring(0,4) + '...' + inst.api_key.substring(inst.api_key.length-4) : '已配置') : '未配置 (不影响代理)'}</code></td>
+            <td style="vertical-align: middle;"><code>${inst.api_key ? (inst.api_key.length > 8 ? inst.api_key.substring(0,4) + '...' + inst.api_key.substring(inst.api_key.length-4) : '已配置') : '未配置'}</code></td>
             <td style="text-align: right; vertical-align: middle; white-space: nowrap;">
                 <button class="btn btn-sm btn-info" onclick="testConnection(${index})" title="测试连接">
                     <i class="fa-solid fa-bolt"></i>
@@ -163,7 +168,6 @@ async function saveProxySettings() {
         emby: {
             proxy: {
                 enabled: document.getElementById('proxyEnabled').checked,
-                port: parseInt(document.getElementById('proxyPort').value) || 8096,
                 instances: globalConfig.emby.proxy.instances
             }
         }
@@ -205,8 +209,10 @@ function openInstanceModal(index = -1) {
         document.getElementById('inst_name').value = inst.name;
         document.getElementById('inst_url').value = inst.url;
         document.getElementById('inst_apikey').value = inst.api_key;
+        document.getElementById('inst_proxy_port').value = inst.proxy_port || '';
     } else {
         document.getElementById('modalTitle').innerHTML = '<i class="fa-solid fa-plus"></i> 添加新实例';
+        document.getElementById('inst_proxy_port').value = '';
     }
     
     modal.style.display = 'flex';
@@ -224,7 +230,8 @@ function submitInstance(e) {
     const newInst = {
         name: document.getElementById('inst_name').value.trim(),
         url: document.getElementById('inst_url').value.trim(),
-        api_key: document.getElementById('inst_apikey').value.trim()
+        api_key: document.getElementById('inst_apikey').value.trim(),
+        proxy_port: parseInt(document.getElementById('inst_proxy_port').value) || 0
     };
     
     if (!globalConfig.emby.proxy.instances) {
