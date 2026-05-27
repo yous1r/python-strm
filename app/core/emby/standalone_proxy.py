@@ -100,10 +100,10 @@ async def _proxy_request(upstream_url: str, api_key: str, path: str, request: Re
         logger.error(f"Proxy request failed to {upstream_url}{path}: {repr(e)}")
         return Response(status_code=502, content="Bad Gateway")
 
-async def _intercept_playback_info(upstream_url: str, api_key: str, path: str, request: Request) -> Response:
+async def _intercept_playback_info(upstream_url: str, api_key: str, full_path: str, instance_name: str, request: Request) -> Response:
     """拦截 PlaybackInfo 请求，硬塞 115 直链以绕过探针"""
     # 针对 PlaybackInfo 这种小文件，直接读到内存中，因为需要修改 JSON
-    url = f"{upstream_url}{path}"
+    url = f"{upstream_url}{full_path}"
     params = dict(request.query_params)
     if "api_key" not in params and api_key:
         params["api_key"] = api_key
@@ -154,10 +154,6 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, path: str, r
             return resp
             
         media_sources = data.get("MediaSources", [])
-        
-        # 从请求体中提取 instance_name
-        # 典型的 path: /fnOS/emby/Items/...
-        instance_name = path.strip("/").split("/")[0]
         
         # 构造 absolute base url，因为 IsRemote=True 时必须提供绝对地址
         # 必须考虑反向代理（如 Nginx/HTTPS）的情况，否则会导致 iOS 播放器拦截 HTTP 请求
@@ -251,7 +247,7 @@ async def handle_proxy_all(instance_name: str, path: str, request: Request):
             return RedirectResponse(url=url, status_code=302)
             
     if playback_info_pattern.search(full_path):
-        return await _intercept_playback_info(upstream_url, api_key, full_path, request)
+        return await _intercept_playback_info(upstream_url, api_key, full_path, instance_name, request)
         
     match = video_stream_pattern.search(full_path)
     if match:
