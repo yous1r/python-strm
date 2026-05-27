@@ -28,7 +28,7 @@ emby:
     enabled: true
     instances:
     - name: fnOS
-      url: http://10.0.0.50:8005
+      url: http://10.0.0.50:8005/v
       api_key: ''
       proxy_port: 8096
 strm:
