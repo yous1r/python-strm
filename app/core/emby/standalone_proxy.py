@@ -186,7 +186,8 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, full_path: s
         # 而是将播放链接指向本代理的一个专属中转接口，在该接口中动态获取真正的播放器 UA
         if not is_native_player:
             logger.debug(f"⏭️ [STANDALONE PROXY] Skipped PlaybackInfo injection for Web Browser to prevent CORS infinite loop (UA: {client_ua})")
-            return resp
+            resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ['content-encoding', 'transfer-encoding']}
+            return Response(content=resp.content, status_code=resp.status_code, headers=resp_headers)
             
         media_sources = data.get("MediaSources", [])
         
@@ -228,7 +229,9 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, full_path: s
     except Exception as e:
         logger.error(f"Failed to modify PlaybackInfo JSON: {repr(e)}")
         
-    return resp
+    # 未修改时，把 httpx Response 转为 FastAPI Response 返回
+    resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ['content-encoding', 'transfer-encoding']}
+    return Response(content=resp.content, status_code=resp.status_code, headers=resp_headers)
 
 # 匹配 115play 中转请求
 proxy_play_pattern = re.compile(r'/115play/([^/|?]+)', re.IGNORECASE)
