@@ -24,7 +24,7 @@ async def _resolve_playback_url(upstream_url: str, api_key: str, item_id: str, r
         if not api_key:
             return None
 
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, headers={"User-Agent": "Emby/4.8.0"}) as client:
             res = await client.get(
                 f"{upstream_url}/v/emby/Items/{item_id}",
                 params={"api_key": api_key}
@@ -63,6 +63,9 @@ async def _proxy_request(upstream_url: str, api_key: str, full_path: str, reques
             params["api_key"] = api_key
 
         headers = {k: v for k, v in request.headers.items() if k.lower() not in ['host', 'accept-encoding']}
+
+        # 伪装为 Emby 客户端 UA，让飞牛返回 Emby API JSON 而非 Web 管理页 HTML
+        headers["User-Agent"] = "Emby/4.8.0"
 
         client = httpx.AsyncClient(timeout=None, follow_redirects=False)
 
@@ -115,7 +118,7 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, full_path: s
     body = await request.body()
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, headers={"User-Agent": "Emby/4.8.0"}) as client:
             resp = await client.request(
                 method=request.method,
                 url=url,
