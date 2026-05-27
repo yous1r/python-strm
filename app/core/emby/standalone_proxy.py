@@ -56,7 +56,7 @@ async def _resolve_playback_url(upstream_url: str, api_key: str, item_id: str, r
         logger.error(f"Failed to resolve playback url: {e}")
         return None
 
-async def _proxy_request(upstream_url: str, api_key: str, path: str, request: Request) -> Response:
+async def _proxy_request(upstream_url: str, api_key: str, path: str, request: Request, instance_name: str = "") -> Response:
     """透明代理请求到真实的Emby服务器，使用流式响应"""
     try:
         url = f"{upstream_url}{path}"
@@ -66,7 +66,7 @@ async def _proxy_request(upstream_url: str, api_key: str, path: str, request: Re
             
         headers = {k: v for k, v in request.headers.items() if k.lower() not in ['host', 'accept-encoding']}
         
-        client = httpx.AsyncClient(timeout=None)  # 禁用超时，避免大文件或视频流断开
+        client = httpx.AsyncClient(timeout=None, follow_redirects=False)
         
         req = client.build_request(
             method=request.method,
@@ -78,6 +78,18 @@ async def _proxy_request(upstream_url: str, api_key: str, path: str, request: Re
         
         resp = await client.send(req, stream=True)
         resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ['content-encoding', 'content-length', 'transfer-encoding']}
+        
+        # 重写重定向 Location，加上实例名前缀
+        if 300 <= resp.status_code < 400 and instance_name:
+            location = resp.headers.get("location", "")
+            if location.startswith("/") and not location.startswith(f"/{instance_name}"):
+                new_location = f"/{instance_name}{location}"
+                resp_headers["location"] = new_location
+                logger.debug(f"[PROXY] Rewrote redirect: {location} -> {new_location}")
+                # 重定向无 body，直接返回
+                await resp.aclose()
+                await client.aclose()
+                return Response(status_code=resp.status_code, headers=resp_headers)
         
         async def stream_generator():
             try:
@@ -256,7 +268,7 @@ async def handle_proxy_all(instance_name: str, path: str, request: Request):
         if redirect_url:
             return RedirectResponse(url=redirect_url, status_code=302)
             
-    return await _proxy_request(upstream_url, api_key, full_path, request)
+    return await _proxy_request(upstream_url, api_key, full_path, request, instance_name)
 
 @proxy_app.api_route("/{instance_name}", methods=["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH"])
 async def handle_proxy_root(instance_name: str, request: Request):
