@@ -230,12 +230,6 @@ def create_proxy_app(instance) -> FastAPI:
             else:
                 return RedirectResponse(url=url, status_code=302)
 
-        # Feiniu /v/ 路径前缀：VidHub 发 /emby/... 时自动补全为 /v/emby/...
-        # 浏览器发 /v/emby/... 时已含前缀，不做改动
-        # 根路径 / 不补前缀，让飞牛自己 302 到 /v/
-        if full_path != "/" and not full_path.startswith("/v/") and full_path != "/v":
-            full_path = f"/v{full_path}"
-
         # 拦截 PlaybackInfo
         if playback_info_pattern.search(full_path):
             return await _intercept_playback_info(upstream_url, api_key, full_path, request)
@@ -252,8 +246,8 @@ def create_proxy_app(instance) -> FastAPI:
 
     @app.api_route("/", methods=["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH"])
     async def handle_root(request: Request):
-        # 根路径直接 302 到 /v/，确保 VidHub 等客户端能正确跳转到飞牛入口
-        return RedirectResponse(url="/v/", status_code=302)
+        # 透传到飞牛 /v/ 入口页面，让 VidHub 能检测到飞牛服务器
+        return await _proxy_request(upstream_url, api_key, "/v/", request)
 
     return app
 
