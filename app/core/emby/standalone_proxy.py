@@ -200,6 +200,7 @@ def create_proxy_app(instance) -> FastAPI:
     @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH"])
     async def handle_proxy(path: str, request: Request):
         full_path = f"/{path}"
+        logger.info(f"[PROXY] {request.method} /{path}{f'?{request.url.query}' if request.url.query else ''} (UA: {request.headers.get('user-agent', 'Unknown')[:60]})")
         config = get_config()
 
         # 115play 中转：播放器真正请求时拿到真实 UA，动态取 CDN 链
@@ -265,7 +266,7 @@ async def start_standalone_proxy():
             continue
 
         proxy_app = create_proxy_app(instance)
-        uvicorn_config = uvicorn.Config(app=proxy_app, host="0.0.0.0", port=instance.proxy_port, log_level="error")
+        uvicorn_config = uvicorn.Config(app=proxy_app, host="0.0.0.0", port=instance.proxy_port, log_level="warning")
         server = uvicorn.Server(uvicorn_config)
         _proxy_servers.append(server)
 
