@@ -91,20 +91,25 @@ async def _proxy_request(upstream_url: str, api_key: str, path: str, request: Re
                 await client.aclose()
                 return Response(status_code=resp.status_code, headers=resp_headers)
 
-        # 注入 <base> 标签：让浏览器把 HTML 中的相对路径 /v/assets/... 解析为 /fnos/v/assets/...
+        # 重写 HTML 中根相对路径的静态资源 URL，加上实例名前缀
+        # 飞牛的 HTML 里 src="/v/assets/..." 需要变成 src="/fnos/v/assets/..."
+        # <base> 标签对根相对路径无效，必须在 HTML body 中直接替换
         content_type = resp.headers.get("content-type", "")
         if instance_name and "text/html" in content_type:
             html_body = await resp.aread()
             await resp.aclose()
             await client.aclose()
             html_text = html_body.decode("utf-8", errors="replace")
-            base_tag = f'<base href="/{instance_name}/">'
-            if "<head>" in html_text:
-                html_text = html_text.replace("<head>", f"<head>\n    {base_tag}", 1)
-            elif "<html>" in html_text:
-                html_text = html_text.replace("<html>", f"<html>\n<head>{base_tag}</head>", 1)
-            else:
-                html_text = f"<!DOCTYPE html>\n<html>\n<head>{base_tag}</head>\n<body>\n{html_text}\n</body>\n</html>"
+            # 匹配 src="/..." 或 href="/..." 且不包含 scheme，且不以 /{instance_name}/ 开头
+            prefix = f"/{instance_name}"
+            def _rewrite_path(m: re.Match) -> str:
+                attr = m.group(1)
+                path = m.group(2)
+                if path.startswith(prefix + "/") or path.startswith(prefix + "?"):
+                    return m.group(0)
+                return f'{attr}="{prefix}{path}"'
+            html_text = re.sub(r'(src|href)="(/[^"]*)"', _rewrite_path, html_text)
+            html_text = re.sub(r"(src|href)='(/[^']*)'", _rewrite_path, html_text)
             resp_headers["content-length"] = str(len(html_text.encode("utf-8")))
             resp_headers.pop("transfer-encoding", None)
             return Response(content=html_text, media_type="text/html", status_code=resp.status_code, headers=resp_headers)
