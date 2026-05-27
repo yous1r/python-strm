@@ -247,12 +247,17 @@ async def handle_proxy_all(instance_name: str, path: str, request: Request):
             break
             
     if not target_instance:
-        return Response(status_code=404, content=f"Emby instance '{instance_name}' not found in configuration")
+        # 兜底：实例名不匹配时，回退到第一个配置的实例（处理 JS XHR 不带前缀的路径如 /v/api/...）
+        if config.emby.proxy.instances:
+            target_instance = config.emby.proxy.instances[0]
+            # 把 instance_name 作为 path 的一部分拼回去
+            full_path = f"/{instance_name}/{path}"
+            logger.debug(f"[PROXY] Fallback: routing /{instance_name}{full_path} to default instance '{target_instance.name}'")
+        else:
+            return Response(status_code=404, content=f"Emby instance '{instance_name}' not found in configuration")
         
     upstream_url = target_instance.url.rstrip("/")
     api_key = target_instance.api_key
-    
-    full_path = f"/{path}"
     
     # 处理专属的 115play 中转请求
     # 这里才是视频播放器真正发起请求的地方，我们可以拿到播放器真正的 UA
