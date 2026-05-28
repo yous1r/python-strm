@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
+import httpx
 from pydantic import BaseModel
 from loguru import logger
 from app.core.cloud115.client import client_115
@@ -72,8 +73,8 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     client_param = request.query_params.get("client")
     
     # === 飞牛/Emby 探针处理逻辑 ===
-    # 飞牛后台的媒体刮削器和播放前的动态探测都会使用 Lavf(ffprobe) 和 Go-http-client。
-    # 直接返回 200，不代理 CDN。PlaybackInfo 已由反向代理注入，不需要 ffprobe 实际扫描。
+    # - 直连飞牛（无 client 参数，纯刮削/扫库）：直接返回 200，不代理 CDN
+    # - 代理播放触发（有 client 参数）：token bucket 允许少量 CDN 请求，让 ffprobe 获取媒体信息
     is_probe = False
     if "Go-http-client" in player_ua:
         is_probe = True
@@ -81,8 +82,69 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
         is_probe = True
 
     if is_probe:
-        logger.debug(f"[飞牛探针] pickcode={pickcode} method={method} ua={player_ua[:60]} → 直接返回 200，不代理 CDN")
-        return Response(status_code=200)
+        # 直连飞牛 → 直接 200
+        if not client_param:
+            logger.debug(f"[飞牛探针] pickcode={pickcode} 直连扫库 → 直接返回 200")
+            return Response(status_code=200)
+
+        # 代理播放 → token bucket 限流，允许少量 CDN 访问
+        import time
+        if not hasattr(play_video, '_token_bucket'):
+            play_video._token_bucket = {}
+
+        now = time.time()
+        bucket = play_video._token_bucket.get(pickcode, {"tokens": 5, "last_refill": now, "window": 30})
+
+        # 超过窗口期重置 token
+        if now - bucket["last_refill"] > bucket["window"]:
+            bucket["tokens"] = 5
+            bucket["last_refill"] = now
+
+        if bucket["tokens"] <= 0:
+            logger.debug(f"[飞牛探针] pickcode={pickcode} token 耗尽 → 返回 200")
+            play_video._token_bucket[pickcode] = bucket
+            return Response(status_code=200)
+
+        bucket["tokens"] -= 1
+        play_video._token_bucket[pickcode] = bucket
+
+        logger.info(f"[飞牛探针] pickcode={pickcode} method={method} range={request.headers.get('range')} tokens_left={bucket['tokens']}")
+
+        # 代理少量 CDN 请求
+        config = get_config()
+        browser_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        url = await client_115.get_download_url(pickcode, user_agent=browser_ua)
+        if not url:
+            return Response(status_code=404)
+
+        proxy_headers = {"User-Agent": browser_ua}
+        if "range" in request.headers:
+            proxy_headers["Range"] = request.headers["range"]
+
+        proxy_client = httpx.AsyncClient(timeout=httpx.Timeout(connect=10, read=60, write=10, pool=10))
+        try:
+            req = proxy_client.build_request(method, url, headers=proxy_headers)
+            cdn_resp = await proxy_client.send(req, stream=True, follow_redirects=True)
+
+            resp_headers = {k: v for k, v in cdn_resp.headers.items() if k.lower() in ("content-type", "content-length", "content-range", "accept-ranges")}
+            resp_headers["Accept-Ranges"] = "bytes"
+
+            from fastapi.responses import StreamingResponse
+            async def stream_from_cdn():
+                try:
+                    async for chunk in cdn_resp.aiter_bytes(chunk_size=65536):
+                        yield chunk
+                except Exception:
+                    pass
+                finally:
+                    await cdn_resp.aclose()
+                    await proxy_client.aclose()
+
+            return StreamingResponse(stream_from_cdn(), status_code=cdn_resp.status_code, headers=resp_headers)
+        except Exception as e:
+            await proxy_client.aclose()
+            logger.warning(f"[飞牛探针] CDN请求异常: {repr(e)}")
+            return Response(status_code=200)
 
     # ============== 获取 115 直链 (真实播放) ==============
     # 如果用户配置了统一伪装UA，则优先使用；否则使用请求本身的UA
