@@ -18,6 +18,25 @@ playback_info_pattern = re.compile(r'/Items/(\w+)/PlaybackInfo', re.IGNORECASE)
 proxy_play_pattern = re.compile(r'/115play/([^/|?]+)', re.IGNORECASE)
 
 
+def _resolve_local_strm_path(feiniu_path: str) -> str | None:
+    """将飞牛返回的 Docker 容器内路径映射为代理本地路径"""
+    import os
+    # 飞牛路径: /vol1/docker-data/python-strm/strm_output/...
+    # 本地路径: strm_output/...
+    for marker in ["python-strm/strm_output/", "strm_output/"]:
+        idx = feiniu_path.find(marker)
+        if idx >= 0:
+            relative = feiniu_path[idx + len(marker):]
+            candidates = [
+                os.path.join("strm_output", relative),
+                os.path.join("/app/strm_output", relative),
+            ]
+            for c in candidates:
+                if os.path.exists(c):
+                    return c
+    return None
+
+
 async def _resolve_playback_url(upstream_url: str, api_key: str, item_id: str, request: Request) -> str:
     """解析出真实播放地址"""
     try:
@@ -163,22 +182,42 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, full_path: s
         for source in media_sources:
             path_url = source.get("Path", "")
             logger.debug(f"[PROXY] PlaybackInfo MediaSource Path: {path_url[:300] if path_url else '(empty)'}")
+            
+            pickcode = None
+            
+            # 路径包含 115 play URL：直接从 URL 提取 pickcode
             if path_url and "/api/v1/115/play/" in path_url:
                 match = re.search(r'/api/v1/115/play/([^/|?]+)', path_url)
                 if match:
                     pickcode = match.group(1)
-                    proxy_play_url = f"{base_url}/115play/{pickcode}"
-                    source["Path"] = proxy_play_url
-                    source["DirectStreamUrl"] = proxy_play_url
-                    source["IsRemote"] = True
-                    source["Protocol"] = "Http"
-                    source["SupportsDirectPlay"] = True
-                    source["SupportsDirectStream"] = True
-                    source["SupportsTranscoding"] = False
-                    source["RequiresOpening"] = False
-                    source["RequiresClosing"] = False
-                    modified = True
-                    logger.info(f"[PROXY] Injected proxy play URL for pickcode {pickcode} (UA: {client_ua})")
+            
+            # 路径是 .strm 文件：尝试本地读取提取 pickcode
+            if not pickcode and path_url and path_url.endswith(".strm"):
+                local_path = _resolve_local_strm_path(path_url)
+                if local_path:
+                    try:
+                        with open(local_path, "r", encoding="utf-8") as f:
+                            strm_content = f.read().strip()
+                        match = re.search(r'/api/v1/115/play/([^/|?]+)', strm_content)
+                        if match:
+                            pickcode = match.group(1)
+                            logger.info(f"[PROXY] Extracted pickcode {pickcode} from local STRM file: {local_path}")
+                    except Exception as e:
+                        logger.warning(f"[PROXY] Failed to read local STRM {local_path}: {e}")
+            
+            if pickcode:
+                proxy_play_url = f"{base_url}/115play/{pickcode}"
+                source["Path"] = proxy_play_url
+                source["DirectStreamUrl"] = proxy_play_url
+                source["IsRemote"] = True
+                source["Protocol"] = "Http"
+                source["SupportsDirectPlay"] = True
+                source["SupportsDirectStream"] = True
+                source["SupportsTranscoding"] = False
+                source["RequiresOpening"] = False
+                source["RequiresClosing"] = False
+                modified = True
+                logger.info(f"[PROXY] Injected proxy play URL for pickcode {pickcode} (UA: {client_ua})")
 
         if modified:
             content = json.dumps(data).encode("utf-8")
