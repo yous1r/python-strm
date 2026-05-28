@@ -162,6 +162,7 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, full_path: s
 
         for source in media_sources:
             path_url = source.get("Path", "")
+            logger.debug(f"[PROXY] PlaybackInfo MediaSource Path: {path_url[:300] if path_url else '(empty)'}")
             if path_url and "/api/v1/115/play/" in path_url:
                 match = re.search(r'/api/v1/115/play/([^/|?]+)', path_url)
                 if match:
