@@ -65,7 +65,7 @@ async def _proxy_request(upstream_url: str, api_key: str, full_path: str, reques
         headers = {k: v for k, v in request.headers.items() if k.lower() not in ['host', 'accept-encoding']}
 
         # 伪装为 Emby 客户端 UA，让飞牛返回 Emby API JSON 而非 Web 管理页 HTML
-        headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        # headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
         client = httpx.AsyncClient(timeout=None, follow_redirects=False)
 
@@ -143,7 +143,7 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, full_path: s
         # 仅原生播放器进行劫持注入，Web 浏览器跳过（防 CORS 死循环）
         is_native_player = False
         ua_lower = client_ua.lower()
-        native_keywords = ["vidhub", "infuse", "applecoremedia", "vlc", "potplayer", "iina", "kodi", "lavf", "mpv", "xbmc", "embyclient"]
+        native_keywords = ["vidhub", "infuse", "senplayer", "fileball", "applecoremedia", "vlc", "potplayer", "iina", "kodi", "lavf", "mpv", "xbmc", "embyclient"]
         for kw in native_keywords:
             if kw in ua_lower:
                 is_native_player = True
@@ -221,7 +221,7 @@ def create_proxy_app(instance) -> FastAPI:
                 return Response(status_code=404, content="Failed to get 115 download url")
 
             needs_m3u8 = False
-            if "VidHub" in player_ua or "Infuse" in player_ua or ("Lavf/" in player_ua and "Lavf/60." not in player_ua):
+            if "VidHub" in player_ua or "Infuse" in player_ua or "SenPlayer" in player_ua or ("Lavf/" in player_ua and "Lavf/60." not in player_ua):
                 needs_m3u8 = True
 
             if needs_m3u8:
