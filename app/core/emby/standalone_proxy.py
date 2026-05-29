@@ -183,6 +183,7 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, full_path: s
 
     headers = {k: v for k, v in request.headers.items() if k.lower() not in ['host', 'accept-encoding']}
     body = await request.body()
+    logger.debug(f"[PROXY] PlaybackInfo request payload ({len(body)} bytes): {body[:2000].decode('utf-8', errors='replace') if body else '(empty)'}")
 
     try:
         async with httpx.AsyncClient(timeout=30.0, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}) as client:
@@ -196,6 +197,7 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, full_path: s
 
             if resp.status_code != 200:
                 logger.warning(f"[PROXY] PlaybackInfo upstream returned {resp.status_code}, attempting synthetic fallback")
+                logger.debug(f"[PROXY] PlaybackInfo upstream error response body: {resp.content[:2000].decode('utf-8', errors='replace')}")
 
                 # 上游 Emby 探测 STRM 失败（通常因为探针只返回了空 200）
                 # 对原生播放器尝试构造合成 PlaybackInfo，绕过 Emby 探针失败
@@ -249,6 +251,7 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, full_path: s
                 return Response(content=resp.content, status_code=resp.status_code, headers=resp_headers)
 
             data = resp.json()
+            logger.debug(f"[PROXY] PlaybackInfo upstream response payload: {json.dumps(data, ensure_ascii=False)[:3000]}")
     except Exception as e:
         logger.error(f"Failed to fetch PlaybackInfo from {url}: {repr(e)}")
         return Response(status_code=502, content="Bad Gateway")
@@ -343,6 +346,12 @@ def create_proxy_app(instance) -> FastAPI:
         full_path = f"/{path}"
         logger.info(f"[PROXY] {request.method} /{path}{f'?{request.url.query}' if request.url.query else ''} (UA: {request.headers.get('user-agent', 'Unknown')})")
         logger.debug(f"[PROXY] handle_proxy headers: {dict(request.headers)}")
+        if request.method in ('POST', 'PUT', 'PATCH'):
+            try:
+                body_bytes = await request.body()
+                logger.debug(f"[PROXY] handle_proxy request payload ({len(body_bytes)} bytes): {body_bytes[:2000].decode('utf-8', errors='replace') if body_bytes else '(empty)'}")
+            except Exception:
+                logger.debug("[PROXY] handle_proxy request payload: (unable to read)")
         config = get_config()
 
         # 115play 中转：播放器真正请求时拿到真实 UA，动态取 CDN 链
