@@ -38,11 +38,13 @@ def _resolve_local_strm_path(feiniu_path: str) -> str | None:
     return None
 
 
-async def _extract_pickcode_from_item(upstream_url: str, api_key: str, item_id: str) -> str | None:
+async def _extract_pickcode_from_item(upstream_url: str, api_key: str, item_id: str, request: Request) -> str | None:
     """从 Emby item 信息中提取 115 pickcode（用于上游 PlaybackInfo 失败时的 fallback）"""
     try:
+        req_token = request.headers.get("x-emby-token")
+        emby_token = req_token if req_token else api_key
         async with httpx.AsyncClient(timeout=10, headers={
-            "X-Emby-Token": api_key,
+            "X-Emby-Token": emby_token,
             "Accept": "application/json",
         }) as client:
             res = await client.get(
@@ -91,11 +93,13 @@ async def _resolve_playback_url(upstream_url: str, api_key: str, item_id: str, r
     """解析出真实播放地址"""
     logger.debug(f"[PROXY] Resolving playback URL for item_id={item_id}")
     try:
-        if not api_key:
+        req_token = request.headers.get("x-emby-token")
+        emby_token = req_token if req_token else api_key
+        if not emby_token:
             return None
 
         async with httpx.AsyncClient(timeout=10, headers={
-            "X-Emby-Token": api_key,
+            "X-Emby-Token": emby_token,
             "Accept": "application/json",
         }) as client:
             res = await client.get(
@@ -224,7 +228,7 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, full_path: s
                     pb_match = playback_info_pattern.search(full_path)
                     if pb_match:
                         item_id = pb_match.group(1)
-                        pickcode = await _extract_pickcode_from_item(upstream_url, api_key, item_id)
+                        pickcode = await _extract_pickcode_from_item(upstream_url, api_key, item_id, request)
                         if pickcode:
                             scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
                             host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
