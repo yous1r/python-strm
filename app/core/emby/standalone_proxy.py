@@ -41,10 +41,13 @@ def _resolve_local_strm_path(feiniu_path: str) -> str | None:
 async def _extract_pickcode_from_item(upstream_url: str, api_key: str, item_id: str) -> str | None:
     """从 Emby item 信息中提取 115 pickcode（用于上游 PlaybackInfo 失败时的 fallback）"""
     try:
-        async with httpx.AsyncClient(timeout=10, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}) as client:
+        async with httpx.AsyncClient(timeout=10, headers={
+            "X-Emby-Token": api_key,
+            "Accept": "application/json",
+        }) as client:
             res = await client.get(
                 f"{upstream_url}/emby/Items/{item_id}",
-                params={"api_key": api_key, "Fields": "Path,MediaSources"}
+                params={"Fields": "Path,MediaSources"}
             )
             if res.status_code != 200:
                 logger.warning(f"[PROXY] Failed to fetch item info for {item_id}: status={res.status_code}")
@@ -91,10 +94,13 @@ async def _resolve_playback_url(upstream_url: str, api_key: str, item_id: str, r
         if not api_key:
             return None
 
-        async with httpx.AsyncClient(timeout=10, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}) as client:
+        async with httpx.AsyncClient(timeout=10, headers={
+            "X-Emby-Token": api_key,
+            "Accept": "application/json",
+        }) as client:
             res = await client.get(
                 f"{upstream_url}/emby/Items/{item_id}",
-                params={"api_key": api_key, "Fields": "Path,MediaSources"}
+                params={"Fields": "Path,MediaSources"}
             )
             if res.status_code != 200:
                 return None
