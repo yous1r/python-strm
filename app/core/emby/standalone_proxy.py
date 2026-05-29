@@ -3,7 +3,7 @@ import httpx
 import re
 import json
 import uuid
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, BackgroundTasks
 from fastapi.responses import RedirectResponse
 from loguru import logger
 import uvicorn
@@ -417,7 +417,7 @@ def create_proxy_app(instance) -> FastAPI:
     app = FastAPI(title=f"Python-STRM Proxy - {instance.name}", docs_url=None, redoc_url=None)
 
     @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH"])
-    async def handle_proxy(path: str, request: Request):
+    async def handle_proxy(path: str, request: Request, background_tasks: BackgroundTasks):
         full_path = f"/{path}"
         logger.info(f"[PROXY] {request.method} /{path}{f'?{request.url.query}' if request.url.query else ''} (UA: {request.headers.get('user-agent', 'Unknown')})")
         logger.debug(f"[PROXY] handle_proxy headers: {dict(request.headers)}")
