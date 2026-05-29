@@ -447,27 +447,19 @@ def create_proxy_app(instance) -> FastAPI:
                                 
                                 async def sync_progress(u_id, i_id, ticks, headers_to_use):
                                     try:
-                                        get_url = f"{upstream_url}/emby/Users/{u_id}/Items/{i_id}"
-                                        post_url = f"{upstream_url}/emby/Users/{u_id}/Items/{i_id}/UserData"
+                                        # 使用 Emby 专门的离线/无状态进度上报接口
+                                        progress_url = f"{upstream_url}/emby/Users/{u_id}/PlayingItems/{i_id}/Progress"
                                         async with httpx.AsyncClient() as client:
-                                            # 获取当前的 UserData 以进行合并，避免覆盖 Played 等状态
-                                            get_resp = await client.get(get_url, headers=headers_to_use, timeout=5.0)
-                                            if get_resp.status_code == 200:
-                                                item_data = get_resp.json()
-                                                user_data = item_data.get("UserData", {})
-                                                user_data["PlaybackPositionTicks"] = ticks
-                                                
-                                                post_resp = await client.post(post_url, headers=headers_to_use, json=user_data, timeout=5.0)
-                                                if post_resp.status_code >= 400:
-                                                    logger.error(f"[PROXY] Force sync failed with {post_resp.status_code}: {post_resp.content}")
-                                                else:
-                                                    logger.info(f"[PROXY] Force synced playback progress for {i_id} (Ticks: {ticks}) to bypass fake session limitation.")
+                                            post_resp = await client.post(
+                                                progress_url, 
+                                                params={"PositionTicks": ticks}, 
+                                                headers=headers_to_use, 
+                                                timeout=5.0
+                                            )
+                                            if post_resp.status_code >= 400:
+                                                logger.error(f"[PROXY] Force sync failed with {post_resp.status_code}: {post_resp.content}")
                                             else:
-                                                logger.warning(f"[PROXY] Failed to GET item UserData (status {get_resp.status_code}), attempting fallback POST.")
-                                                # 如果获取失败，尝试直接提交最基本的数据
-                                                fallback_data = {"PlaybackPositionTicks": ticks, "Played": False}
-                                                post_resp = await client.post(post_url, headers=headers_to_use, json=fallback_data, timeout=5.0)
-                                                logger.info(f"[PROXY] Force synced playback progress (fallback) for {i_id} (Ticks: {ticks}), status={post_resp.status_code}.")
+                                                logger.info(f"[PROXY] Force synced playback progress for {i_id} (Ticks: {ticks}) via PlayingItems endpoint.")
                                     except Exception as e:
                                         logger.error(f"[PROXY] Failed to force sync progress for {i_id}: {e}")
                                 
