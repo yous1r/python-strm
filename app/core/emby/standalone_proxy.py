@@ -38,8 +38,8 @@ def _resolve_local_strm_path(feiniu_path: str) -> str | None:
     return None
 
 
-async def _extract_pickcode_from_item(upstream_url: str, api_key: str, item_id: str, request: Request) -> str | None:
-    """从 Emby item 信息中提取 115 pickcode（用于上游 PlaybackInfo 失败时的 fallback）"""
+async def _extract_pickcode_from_item(upstream_url: str, api_key: str, item_id: str, request: Request) -> tuple[str | None, dict | None]:
+    """从 Emby item 信息中提取 115 pickcode 及元数据（用于上游 PlaybackInfo 失败时的 fallback）"""
     try:
         req_token = request.headers.get("x-emby-token")
         emby_token = req_token if req_token else api_key
@@ -65,26 +65,27 @@ async def _extract_pickcode_from_item(upstream_url: str, api_key: str, item_id: 
             )
             if res.status_code != 200:
                 logger.warning(f"[PROXY] Failed to fetch item info for {item_id}: status={res.status_code}")
-                return None
+                return None, None
 
             try:
                 item_data = res.json()
             except Exception:
                 logger.warning(f"[PROXY] Item {item_id} response is not JSON: {res.text[:500]}")
-                return None
+                return None, None
             path = item_data.get("Path", "")
             if not path and item_data.get("MediaSources"):
                 path = item_data["MediaSources"][0].get("Path", "")
             logger.debug(f"[PROXY] Item {item_id} Path: {path[:300] if path else '(empty)'}")
 
+            pickcode = None
             # 路径包含 115 play URL：直接提取 pickcode
             if path and "/api/v1/115/play/" in path:
                 match = re.search(r'/api/v1/115/play/([^/|?]+)', path)
                 if match:
-                    return match.group(1)
+                    pickcode = match.group(1)
 
             # 路径是 .strm 文件：尝试本地读取提取 pickcode
-            if path and path.endswith(".strm"):
+            elif path and path.endswith(".strm"):
                 local_path = _resolve_local_strm_path(path)
                 if local_path:
                     try:
@@ -93,14 +94,14 @@ async def _extract_pickcode_from_item(upstream_url: str, api_key: str, item_id: 
                         match = re.search(r'/api/v1/115/play/([^/|?]+)', strm_content)
                         if match:
                             logger.info(f"[PROXY] Extracted pickcode from local STRM for fallback: {local_path}")
-                            return match.group(1)
+                            pickcode = match.group(1)
                     except Exception as e:
                         logger.warning(f"[PROXY] Failed to read local STRM {local_path}: {e}")
 
-        return None
+            return pickcode, item_data
     except Exception as e:
         logger.error(f"[PROXY] Failed to extract pickcode from item {item_id}: {repr(e)}")
-        return None
+        return None, None
 
 
 async def _resolve_playback_url(upstream_url: str, api_key: str, item_id: str, request: Request) -> str:
@@ -255,34 +256,51 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, full_path: s
                     pb_match = playback_info_pattern.search(full_path)
                     if pb_match:
                         item_id = pb_match.group(1)
-                        pickcode = await _extract_pickcode_from_item(upstream_url, api_key, item_id, request)
-                        if pickcode:
+                        pickcode, item_data = await _extract_pickcode_from_item(upstream_url, api_key, item_id, request)
+                        if pickcode and item_data:
                             scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
                             host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
                             base_url = f"{scheme}://{host}"
                             proxy_play_url = f"{base_url}/115play/{pickcode}"
 
+                            media_source = {
+                                "Id": item_id,
+                                "Name": "115 Cloud Video",
+                                "Path": proxy_play_url,
+                                "DirectStreamUrl": proxy_play_url,
+                                "Protocol": "Http",
+                                "Type": "Default",
+                                "Container": "mkv",
+                                "IsRemote": True,
+                                "ReadAtNativeFramerate": False,
+                                "SupportsDirectPlay": True,
+                                "SupportsDirectStream": True,
+                                "SupportsTranscoding": False,
+                                "RequiresOpening": False,
+                                "RequiresClosing": False,
+                                "MediaStreams": [],
+                                "Formats": [],
+                                "Bitrate": 0,
+                                "RequiredHttpHeaders": {},
+                            }
+
+                            if "RunTimeTicks" in item_data:
+                                media_source["RunTimeTicks"] = item_data["RunTimeTicks"]
+                            if "MediaSources" in item_data and item_data["MediaSources"]:
+                                orig_source = item_data["MediaSources"][0]
+                                if "RunTimeTicks" in orig_source:
+                                    media_source["RunTimeTicks"] = orig_source["RunTimeTicks"]
+                                if "MediaStreams" in orig_source:
+                                    media_source["MediaStreams"] = orig_source["MediaStreams"]
+                                if "Container" in orig_source:
+                                    media_source["Container"] = orig_source["Container"]
+                                if "Id" in orig_source:
+                                    media_source["Id"] = orig_source["Id"]
+                                if "Bitrate" in orig_source:
+                                    media_source["Bitrate"] = orig_source["Bitrate"]
+
                             synthetic_data = {
-                                "MediaSources": [{
-                                    "Id": item_id,
-                                    "Name": "115 Cloud Video",
-                                    "Path": proxy_play_url,
-                                    "DirectStreamUrl": proxy_play_url,
-                                    "Protocol": "Http",
-                                    "Type": "Default",
-                                    "Container": "mkv",
-                                    "IsRemote": True,
-                                    "ReadAtNativeFramerate": False,
-                                    "SupportsDirectPlay": True,
-                                    "SupportsDirectStream": True,
-                                    "SupportsTranscoding": False,
-                                    "RequiresOpening": False,
-                                    "RequiresClosing": False,
-                                    "MediaStreams": [],
-                                    "Formats": [],
-                                    "Bitrate": 0,
-                                    "RequiredHttpHeaders": {},
-                                }],
+                                "MediaSources": [media_source],
                                 "PlaySessionId": uuid.uuid4().hex,
                             }
                             content = json.dumps(synthetic_data).encode("utf-8")
