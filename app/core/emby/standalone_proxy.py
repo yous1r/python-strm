@@ -432,11 +432,11 @@ def create_proxy_app(instance) -> FastAPI:
                 return Response(status_code=404, content="Failed to get 115 download url")
 
             needs_m3u8 = False
-            if "VidHub" in player_ua or "Infuse" in player_ua or "SenPlayer" in player_ua or "Filmly" in player_ua or ("Lavf/" in player_ua and "Lavf/60." not in player_ua):
+            if "Infuse" in player_ua or "SenPlayer" in player_ua or "Filmly" in player_ua or ("Lavf/" in player_ua and "Lavf/60." not in player_ua):
                 needs_m3u8 = True
 
             if needs_m3u8:
-                m3u8_content = f"#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:-1,Video\n{url}\n"
+                m3u8_content = f"#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:-1,Video\n{url}\n#EXT-X-ENDLIST\n"
                 return Response(content=m3u8_content.encode("utf-8"), media_type="application/vnd.apple.mpegurl")
             else:
                 return RedirectResponse(url=url, status_code=302)
