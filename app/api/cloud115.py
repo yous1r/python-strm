@@ -17,7 +17,9 @@ async def update_cookie(req: AuthRequest):
     """更新115 Cookie"""
     success = auth_manager.update_cookie(req.cookie)
     if success:
+        logger.info("[115 API] Cookie updated successfully")
         return {"status": "success", "message": "Cookie updated"}
+    logger.error("[115 API] Failed to update cookie: Invalid cookie provided")
     raise HTTPException(status_code=400, detail="Invalid cookie")
 
 @router.get("/user")
@@ -25,6 +27,7 @@ async def get_user():
     """获取用户信息"""
     info = await auth_manager.get_user_info()
     if "error" in info:
+        logger.error(f"[115 API] Failed to get user info: {info['error']}")
         raise HTTPException(status_code=400, detail=info["error"])
     return info
 
@@ -33,6 +36,7 @@ async def get_qr_token():
     """获取登录二维码"""
     info = await auth_manager.get_qr_token()
     if "error" in info:
+        logger.error(f"[115 API] Failed to get QR token: {info['error']}")
         raise HTTPException(status_code=400, detail=info["error"])
     return info
 
@@ -41,6 +45,7 @@ async def check_qr_status(payload: dict):
     """检查二维码状态"""
     info = await auth_manager.check_qr_status(payload)
     if "error" in info:
+        logger.error(f"[115 API] QR status check error: {info['error']}")
         raise HTTPException(status_code=400, detail=info["error"])
     return info
 
@@ -49,6 +54,7 @@ async def list_files(dir_id: str = '0', limit: int = 100, offset: int = 0):
     """获取文件列表"""
     res = await client_115.list_files(dir_id, limit, offset)
     if "error" in res:
+        logger.error(f"[115 API] Failed to list files (dir_id={dir_id}): {res['error']}")
         raise HTTPException(status_code=400, detail=res["error"])
     return res
 
@@ -57,6 +63,7 @@ async def list_dirs(dir_id: str = '0'):
     """获取纯文件夹列表 (用于目录选择器)"""
     res = await client_115.list_dirs(dir_id)
     if "error" in res:
+        logger.error(f"[115 API] Failed to list dirs (dir_id={dir_id}): {res['error']}")
         raise HTTPException(status_code=400, detail=res["error"])
     return res
 
@@ -71,6 +78,9 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     
     player_ua = request.headers.get("user-agent", "Unknown")
     client_param = request.query_params.get("client")
+    
+    logger.info(f"[115 API] Requesting play_video: pickcode={pickcode}, client_ip={client_ip}, method={method}, UA={player_ua}, client={client_param}")
+    logger.debug(f"[115 API] Request headers: {dict(request.headers)}")
     
     # === 飞牛/Emby 探针处理逻辑 ===
     # - 直连飞牛（无 client 参数，纯刮削/扫库）：直接返回 200，不代理 CDN
@@ -154,7 +164,10 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     
     url = await client_115.get_download_url(pickcode, user_agent=request_ua)
     if not url:
+        logger.error(f"[115 API] Failed to get download URL for pickcode={pickcode}")
         raise HTTPException(status_code=404, detail="Download URL not found")
+
+    logger.info(f"[115 API] Got download URL for pickcode={pickcode}: {url}")
 
     # 针对某些对 302 跳转支持不佳的播放器（例如 Vidhub 的部分旧模式或 Infuse），使用 M3U8 播放列表伪装直链。
     # 注意：我们现在放开了对 Lavf/60. 的限制，因为已经通过 client=vidhub 排除了刮削器风险。

@@ -39,6 +39,7 @@ def _resolve_local_strm_path(feiniu_path: str) -> str | None:
 
 async def _resolve_playback_url(upstream_url: str, api_key: str, item_id: str, request: Request) -> str:
     """解析出真实播放地址"""
+    logger.debug(f"[PROXY] Resolving playback URL for item_id={item_id}")
     try:
         if not api_key:
             return None
@@ -82,6 +83,8 @@ async def _proxy_request(upstream_url: str, api_key: str, full_path: str, reques
             params["api_key"] = api_key
 
         headers = {k: v for k, v in request.headers.items() if k.lower() not in ['host', 'accept-encoding']}
+        
+        logger.debug(f"[PROXY] Forwarding request to {url} with params={params}, headers={headers}")
 
         # 伪装为 Emby 客户端 UA，让飞牛返回 Emby API JSON 而非 Web 管理页 HTML
         # headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -98,6 +101,7 @@ async def _proxy_request(upstream_url: str, api_key: str, full_path: str, reques
 
         resp = await client.send(req, stream=True)
         resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ['content-encoding', 'content-length', 'transfer-encoding']}
+        logger.debug(f"[PROXY] Received upstream response from {url}: status={resp.status_code}")
 
         # 3xx 重定向：透传 Location（端口代理不需要改写前缀）
         if 300 <= resp.status_code < 400:
@@ -129,6 +133,7 @@ async def _proxy_request(upstream_url: str, api_key: str, full_path: str, reques
 async def _intercept_playback_info(upstream_url: str, api_key: str, full_path: str, request: Request) -> Response:
     """拦截 PlaybackInfo 请求，注入代理播放 URL 绕过探针"""
     url = f"{upstream_url}{full_path}"
+    logger.info(f"[PROXY] Intercepting PlaybackInfo for {url}")
     params = dict(request.query_params)
     if "api_key" not in params and api_key:
         params["api_key"] = api_key
@@ -243,7 +248,8 @@ def create_proxy_app(instance) -> FastAPI:
     @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH"])
     async def handle_proxy(path: str, request: Request):
         full_path = f"/{path}"
-        logger.info(f"[PROXY] {request.method} /{path}{f'?{request.url.query}' if request.url.query else ''} (UA: {request.headers.get('user-agent', 'Unknown')[:60]})")
+        logger.info(f"[PROXY] {request.method} /{path}{f'?{request.url.query}' if request.url.query else ''} (UA: {request.headers.get('user-agent', 'Unknown')})")
+        logger.debug(f"[PROXY] handle_proxy headers: {dict(request.headers)}")
         config = get_config()
 
         # 115play 中转：播放器真正请求时拿到真实 UA，动态取 CDN 链
