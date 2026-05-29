@@ -73,6 +73,8 @@ async def _extract_pickcode_from_item(upstream_url: str, api_key: str, item_id: 
                 logger.warning(f"[PROXY] Item {item_id} response is not JSON: {res.text[:500]}")
                 return None
             path = item_data.get("Path", "")
+            if not path and item_data.get("MediaSources"):
+                path = item_data["MediaSources"][0].get("Path", "")
             logger.debug(f"[PROXY] Item {item_id} Path: {path[:300] if path else '(empty)'}")
 
             # 路径包含 115 play URL：直接提取 pickcode
@@ -138,6 +140,8 @@ async def _resolve_playback_url(upstream_url: str, api_key: str, item_id: str, r
                 logger.warning(f"[PROXY] Item {item_id} response is not JSON in _resolve_playback_url")
                 return None
             path = item_data.get("Path", "")
+            if not path and item_data.get("MediaSources"):
+                path = item_data["MediaSources"][0].get("Path", "")
 
             if path and "/api/v1/115/play/" in path:
                 match = re.search(r'/api/v1/115/play/([^/|?]+)', path)
