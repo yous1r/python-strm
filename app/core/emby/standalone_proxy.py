@@ -442,34 +442,36 @@ def create_proxy_app(instance) -> FastAPI:
                                 user_id = match.group(1)
                             
                             if item_id and user_id and position_ticks is not None:
-                                async def sync_progress(u_id, i_id, ticks):
+                                client_headers = {k: v for k, v in request.headers.items() if k.lower() not in ['host', 'accept-encoding', 'content-length']}
+                                client_headers["content-type"] = "application/json"
+                                
+                                async def sync_progress(u_id, i_id, ticks, headers_to_use):
                                     try:
                                         get_url = f"{upstream_url}/emby/Users/{u_id}/Items/{i_id}"
                                         post_url = f"{upstream_url}/emby/Users/{u_id}/Items/{i_id}/UserData"
                                         async with httpx.AsyncClient() as client:
-                                            headers = {
-                                                "x-emby-token": api_key,
-                                                "content-type": "application/json"
-                                            }
                                             # 获取当前的 UserData 以进行合并，避免覆盖 Played 等状态
-                                            get_resp = await client.get(get_url, headers=headers, timeout=5.0)
+                                            get_resp = await client.get(get_url, headers=headers_to_use, timeout=5.0)
                                             if get_resp.status_code == 200:
                                                 item_data = get_resp.json()
                                                 user_data = item_data.get("UserData", {})
                                                 user_data["PlaybackPositionTicks"] = ticks
                                                 
-                                                await client.post(post_url, headers=headers, json=user_data, timeout=5.0)
-                                                logger.info(f"[PROXY] Force synced playback progress for {i_id} (Ticks: {ticks}) to bypass fake session limitation.")
+                                                post_resp = await client.post(post_url, headers=headers_to_use, json=user_data, timeout=5.0)
+                                                if post_resp.status_code >= 400:
+                                                    logger.error(f"[PROXY] Force sync failed with {post_resp.status_code}: {post_resp.content}")
+                                                else:
+                                                    logger.info(f"[PROXY] Force synced playback progress for {i_id} (Ticks: {ticks}) to bypass fake session limitation.")
                                             else:
+                                                logger.warning(f"[PROXY] Failed to GET item UserData (status {get_resp.status_code}), attempting fallback POST.")
                                                 # 如果获取失败，尝试直接提交最基本的数据
                                                 fallback_data = {"PlaybackPositionTicks": ticks, "Played": False}
-                                                await client.post(post_url, headers=headers, json=fallback_data, timeout=5.0)
-                                                logger.info(f"[PROXY] Force synced playback progress (fallback) for {i_id} (Ticks: {ticks}).")
+                                                post_resp = await client.post(post_url, headers=headers_to_use, json=fallback_data, timeout=5.0)
+                                                logger.info(f"[PROXY] Force synced playback progress (fallback) for {i_id} (Ticks: {ticks}), status={post_resp.status_code}.")
                                     except Exception as e:
                                         logger.error(f"[PROXY] Failed to force sync progress for {i_id}: {e}")
                                 
-                                # 后台执行，不阻塞主流程
-                                asyncio.create_task(sync_progress(user_id, item_id, position_ticks))
+                                background_tasks.add_task(sync_progress, user_id, item_id, position_ticks, client_headers)
                     except Exception as e:
                         logger.debug(f"[PROXY] Failed to intercept progress sync: {e}")
             except Exception:
