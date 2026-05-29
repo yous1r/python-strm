@@ -43,12 +43,24 @@ async def _extract_pickcode_from_item(upstream_url: str, api_key: str, item_id: 
     try:
         req_token = request.headers.get("x-emby-token")
         emby_token = req_token if req_token else api_key
-        async with httpx.AsyncClient(timeout=10, headers={
-            "X-Emby-Token": emby_token,
-            "Accept": "application/json",
-        }) as client:
+        
+        headers = {"Accept": "application/json"}
+        if emby_token:
+            headers["X-Emby-Token"] = emby_token
+        if "x-emby-authorization" in request.headers:
+            headers["X-Emby-Authorization"] = request.headers["x-emby-authorization"]
+
+        user_id = request.query_params.get("UserId") or request.query_params.get("userId")
+        if not user_id and "x-emby-authorization" in request.headers:
+            match = re.search(r'UserId="([^"]+)"', request.headers["x-emby-authorization"], re.IGNORECASE)
+            if match:
+                user_id = match.group(1)
+
+        api_path = f"/emby/Users/{user_id}/Items/{item_id}" if user_id else f"/emby/Items/{item_id}"
+
+        async with httpx.AsyncClient(timeout=10, headers=headers) as client:
             res = await client.get(
-                f"{upstream_url}/emby/Items/{item_id}",
+                f"{upstream_url}{api_path}",
                 params={"Fields": "Path,MediaSources"}
             )
             if res.status_code != 200:
@@ -98,12 +110,23 @@ async def _resolve_playback_url(upstream_url: str, api_key: str, item_id: str, r
         if not emby_token:
             return None
 
-        async with httpx.AsyncClient(timeout=10, headers={
-            "X-Emby-Token": emby_token,
-            "Accept": "application/json",
-        }) as client:
+        headers = {"Accept": "application/json"}
+        if emby_token:
+            headers["X-Emby-Token"] = emby_token
+        if "x-emby-authorization" in request.headers:
+            headers["X-Emby-Authorization"] = request.headers["x-emby-authorization"]
+
+        user_id = request.query_params.get("UserId") or request.query_params.get("userId")
+        if not user_id and "x-emby-authorization" in request.headers:
+            match = re.search(r'UserId="([^"]+)"', request.headers["x-emby-authorization"], re.IGNORECASE)
+            if match:
+                user_id = match.group(1)
+
+        api_path = f"/emby/Users/{user_id}/Items/{item_id}" if user_id else f"/emby/Items/{item_id}"
+
+        async with httpx.AsyncClient(timeout=10, headers=headers) as client:
             res = await client.get(
-                f"{upstream_url}/emby/Items/{item_id}",
+                f"{upstream_url}{api_path}",
                 params={"Fields": "Path,MediaSources"}
             )
             if res.status_code != 200:
