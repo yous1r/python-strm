@@ -2,6 +2,7 @@ import asyncio
 import httpx
 import re
 import json
+import uuid
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import RedirectResponse
 from loguru import logger
@@ -35,6 +36,48 @@ def _resolve_local_strm_path(feiniu_path: str) -> str | None:
                 if os.path.exists(c):
                     return c
     return None
+
+
+async def _extract_pickcode_from_item(upstream_url: str, api_key: str, item_id: str) -> str | None:
+    """从 Emby item 信息中提取 115 pickcode（用于上游 PlaybackInfo 失败时的 fallback）"""
+    try:
+        async with httpx.AsyncClient(timeout=10, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}) as client:
+            res = await client.get(
+                f"{upstream_url}/v/emby/Items/{item_id}",
+                params={"api_key": api_key}
+            )
+            if res.status_code != 200:
+                logger.warning(f"[PROXY] Failed to fetch item info for {item_id}: status={res.status_code}")
+                return None
+
+            item_data = res.json()
+            path = item_data.get("Path", "")
+            logger.debug(f"[PROXY] Item {item_id} Path: {path[:300] if path else '(empty)'}")
+
+            # 路径包含 115 play URL：直接提取 pickcode
+            if path and "/api/v1/115/play/" in path:
+                match = re.search(r'/api/v1/115/play/([^/|?]+)', path)
+                if match:
+                    return match.group(1)
+
+            # 路径是 .strm 文件：尝试本地读取提取 pickcode
+            if path and path.endswith(".strm"):
+                local_path = _resolve_local_strm_path(path)
+                if local_path:
+                    try:
+                        with open(local_path, "r", encoding="utf-8") as f:
+                            strm_content = f.read().strip()
+                        match = re.search(r'/api/v1/115/play/([^/|?]+)', strm_content)
+                        if match:
+                            logger.info(f"[PROXY] Extracted pickcode from local STRM for fallback: {local_path}")
+                            return match.group(1)
+                    except Exception as e:
+                        logger.warning(f"[PROXY] Failed to read local STRM {local_path}: {e}")
+
+        return None
+    except Exception as e:
+        logger.error(f"[PROXY] Failed to extract pickcode from item {item_id}: {repr(e)}")
+        return None
 
 
 async def _resolve_playback_url(upstream_url: str, api_key: str, item_id: str, request: Request) -> str:
@@ -152,6 +195,56 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, full_path: s
             )
 
             if resp.status_code != 200:
+                logger.warning(f"[PROXY] PlaybackInfo upstream returned {resp.status_code}, attempting synthetic fallback")
+
+                # 上游 Emby 探测 STRM 失败（通常因为探针只返回了空 200）
+                # 对原生播放器尝试构造合成 PlaybackInfo，绕过 Emby 探针失败
+                client_ua = request.headers.get("user-agent", "Unknown")
+                ua_lower = client_ua.lower()
+                native_keywords = ["vidhub", "infuse", "senplayer", "fileball", "filmly", "applecoremedia", "vlc", "potplayer", "iina", "kodi", "lavf", "mpv", "xbmc", "embyclient"]
+                is_native_player = any(kw in ua_lower for kw in native_keywords)
+
+                if is_native_player:
+                    pb_match = playback_info_pattern.search(full_path)
+                    if pb_match:
+                        item_id = pb_match.group(1)
+                        pickcode = await _extract_pickcode_from_item(upstream_url, api_key, item_id)
+                        if pickcode:
+                            scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+                            host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
+                            base_url = f"{scheme}://{host}"
+                            proxy_play_url = f"{base_url}/115play/{pickcode}"
+
+                            synthetic_data = {
+                                "MediaSources": [{
+                                    "Id": item_id,
+                                    "Name": "115 Cloud Video",
+                                    "Path": proxy_play_url,
+                                    "DirectStreamUrl": proxy_play_url,
+                                    "Protocol": "Http",
+                                    "Type": "Default",
+                                    "Container": "mkv",
+                                    "IsRemote": True,
+                                    "ReadAtNativeFramerate": False,
+                                    "SupportsDirectPlay": True,
+                                    "SupportsDirectStream": True,
+                                    "SupportsTranscoding": False,
+                                    "RequiresOpening": False,
+                                    "RequiresClosing": False,
+                                    "MediaStreams": [],
+                                    "Formats": [],
+                                    "Bitrate": 0,
+                                    "RequiredHttpHeaders": {},
+                                }],
+                                "PlaySessionId": uuid.uuid4().hex,
+                            }
+                            content = json.dumps(synthetic_data).encode("utf-8")
+                            logger.info(f"[PROXY] Synthetic PlaybackInfo built for pickcode={pickcode}, item_id={item_id} (UA: {client_ua})")
+                            return Response(content=content, status_code=200, media_type="application/json")
+                        else:
+                            logger.warning(f"[PROXY] Could not extract pickcode for item, passing upstream {resp.status_code}")
+
+                # 非原生播放器或无法提取 pickcode → 透传上游错误
                 resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ['content-encoding', 'content-length', 'transfer-encoding']}
                 return Response(content=resp.content, status_code=resp.status_code, headers=resp_headers)
 
