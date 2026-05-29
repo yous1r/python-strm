@@ -180,12 +180,17 @@ async def _proxy_request(upstream_url: str, api_key: str, full_path: str, reques
 
         client = httpx.AsyncClient(timeout=None, follow_redirects=False)
 
+        if request.method in ('POST', 'PUT', 'PATCH'):
+            req_content = await request.body()
+        else:
+            req_content = request.stream()
+
         req = client.build_request(
             method=request.method,
             url=url,
             params=params,
             headers=headers,
-            content=request.stream()
+            content=req_content
         )
 
         resp = await client.send(req, stream=True)
