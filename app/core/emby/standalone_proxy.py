@@ -43,14 +43,18 @@ async def _extract_pickcode_from_item(upstream_url: str, api_key: str, item_id: 
     try:
         async with httpx.AsyncClient(timeout=10, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}) as client:
             res = await client.get(
-                f"{upstream_url}/v/emby/Items/{item_id}",
-                params={"api_key": api_key}
+                f"{upstream_url}/emby/Items/{item_id}",
+                params={"api_key": api_key, "Fields": "Path,MediaSources"}
             )
             if res.status_code != 200:
                 logger.warning(f"[PROXY] Failed to fetch item info for {item_id}: status={res.status_code}")
                 return None
 
-            item_data = res.json()
+            try:
+                item_data = res.json()
+            except Exception:
+                logger.warning(f"[PROXY] Item {item_id} response is not JSON: {res.text[:500]}")
+                return None
             path = item_data.get("Path", "")
             logger.debug(f"[PROXY] Item {item_id} Path: {path[:300] if path else '(empty)'}")
 
@@ -89,13 +93,17 @@ async def _resolve_playback_url(upstream_url: str, api_key: str, item_id: str, r
 
         async with httpx.AsyncClient(timeout=10, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}) as client:
             res = await client.get(
-                f"{upstream_url}/v/emby/Items/{item_id}",
-                params={"api_key": api_key}
+                f"{upstream_url}/emby/Items/{item_id}",
+                params={"api_key": api_key, "Fields": "Path,MediaSources"}
             )
             if res.status_code != 200:
                 return None
 
-            item_data = res.json()
+            try:
+                item_data = res.json()
+            except Exception:
+                logger.warning(f"[PROXY] Item {item_id} response is not JSON in _resolve_playback_url")
+                return None
             path = item_data.get("Path", "")
 
             if path and "/api/v1/115/play/" in path:
