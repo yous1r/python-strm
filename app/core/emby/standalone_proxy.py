@@ -197,6 +197,13 @@ async def _proxy_request(upstream_url: str, api_key: str, full_path: str, reques
         resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ['content-encoding', 'content-length', 'transfer-encoding']}
         logger.debug(f"[PROXY] Received upstream response from {url}: status={resp.status_code}")
 
+        # 拦截 PlaySession 错误：如果因为虚假 Session ID 导致飞牛报错，直接返回 204，防止播放器崩溃
+        if resp.status_code >= 400 and "/Sessions/Playing" in url:
+            logger.warning(f"[PROXY] Upstream Emby rejected {url} with {resp.status_code}, rewriting to 204 No Content to prevent client crash.")
+            await resp.aclose()
+            await client.aclose()
+            return Response(status_code=204, headers={})
+
         # 3xx 重定向：透传 Location（端口代理不需要改写前缀）
         if 300 <= resp.status_code < 400:
             await resp.aclose()
