@@ -459,6 +459,11 @@ def create_proxy_app(instance) -> FastAPI:
                             is_stopped = "/Sessions/Playing/Stopped" in full_path
                             event_type = "Start" if is_start else ("Progress" if is_progress else ("Stopped" if is_stopped else "Unknown"))
                             
+                            # 缓存/获取真实视频时长
+                            if item_id and runtime_ticks:
+                                _item_runtimes[item_id] = runtime_ticks
+                            effective_runtime_ticks = runtime_ticks if runtime_ticks else _item_runtimes.get(item_id)
+                            
                             # 提取本次请求对应的可用 Headers
                             effective_headers = _get_emby_headers(request, api_key)
                             has_token = "X-Emby-Token" in effective_headers
@@ -467,7 +472,7 @@ def create_proxy_app(instance) -> FastAPI:
                             logger.info(
                                 f"[PROXY] 🎬 Intercepted Sessions/Playing event: {event_type}, "
                                 f"ItemId={item_id}, UserId={user_id}, PositionTicks={position_ticks}, "
-                                f"RunTimeTicks={runtime_ticks}, api_key={'CONFIGURED' if has_config else ('CLIENT_TOKEN' if has_token else 'EMPTY')}"
+                                f"RunTimeTicks={effective_runtime_ticks}, api_key={'CONFIGURED' if has_config else ('CLIENT_TOKEN' if has_token else 'EMPTY')}"
                             )
                             
                             if item_id and user_id:
@@ -475,6 +480,10 @@ def create_proxy_app(instance) -> FastAPI:
                                     """修正 RunTimeTicks 并同步播放进度"""
                                     logger.info(f"[PROXY] 🔧 Background task started for {i_id} (Event: {evt_type}, rt_ticks={rt_ticks}, pos_ticks={pos_ticks})")
                                     
+                                    if evt_type == "Stopped":
+                                        # 延迟 1.5 秒以确保飞牛处理完 Stopped 接口的清零操作后再强制写回进度
+                                        await asyncio.sleep(1.5)
+                                        
                                     if not _headers.get("X-Emby-Token"):
                                         logger.error(f"[PROXY] ❌ Both configured api_key and client token are empty! Cannot call Emby API for {i_id}")
                                         return
@@ -543,7 +552,7 @@ def create_proxy_app(instance) -> FastAPI:
                                 
                                 background_tasks.add_task(
                                     fix_runtime_and_sync, user_id, item_id, 
-                                    position_ticks, runtime_ticks, event_type,
+                                    position_ticks, effective_runtime_ticks, event_type,
                                     upstream_url, effective_headers
                                 )
                                 logger.info(f"[PROXY] 📋 Background task dispatched for {item_id} (Event: {event_type})")
@@ -599,6 +608,10 @@ def create_proxy_app(instance) -> FastAPI:
         return await _proxy_request(upstream_url, api_key, "/v/", request)
 
     return app
+
+
+# 缓存 video item 的真实时长 (ItemId -> RunTimeTicks)
+_item_runtimes: dict[str, int] = {}
 
 
 # ── 生命周期管理 ──────────────────────────────────────────────
