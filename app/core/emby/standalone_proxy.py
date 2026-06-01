@@ -493,27 +493,34 @@ def create_proxy_app(instance) -> FastAPI:
                                             # ── 步骤 1：修正 RunTimeTicks ──
                                             if rt_ticks and rt_ticks > 10_000_000:
                                                 try:
-                                                    item_url = f"{_upstream_url}/emby/Items/{i_id}"
-                                                    logger.debug(f"[PROXY] GET {item_url}...")
-                                                    item_resp = await client.get(item_url)
-                                                    logger.info(f"[PROXY] GET Items/{i_id} status={item_resp.status_code}")
+                                                    # 从用户特有路径获取以防普通 token 权限不足
+                                                    read_url = f"{_upstream_url}/emby/Users/{u_id}/Items/{i_id}"
+                                                    logger.debug(f"[PROXY] GET {read_url}...")
+                                                    item_resp = await client.get(read_url)
+                                                    logger.info(f"[PROXY] GET UserItem status={item_resp.status_code}")
                                                     
                                                     if item_resp.status_code == 200:
-                                                        item_dto = item_resp.json()
-                                                        db_runtime = item_dto.get("RunTimeTicks", 0) or 0
-                                                        logger.info(f"[PROXY] DB RunTimeTicks={db_runtime} ({db_runtime/10_000_000:.1f}s), Real={rt_ticks} ({rt_ticks/10_000_000:.1f}s)")
-                                                        
-                                                        if abs(db_runtime - rt_ticks) > 10_000_000:
-                                                            item_dto["RunTimeTicks"] = rt_ticks
-                                                            update_resp = await client.post(item_url, json=item_dto)
-                                                            if update_resp.status_code < 400:
-                                                                logger.info(f"[PROXY] ✅ Fixed RunTimeTicks for {i_id}: {db_runtime} → {rt_ticks}")
+                                                        content_type = item_resp.headers.get("content-type", "").lower()
+                                                        if "application/json" in content_type:
+                                                            item_dto = item_resp.json()
+                                                            db_runtime = item_dto.get("RunTimeTicks", 0) or 0
+                                                            logger.info(f"[PROXY] DB RunTimeTicks={db_runtime} ({db_runtime/10_000_000:.1f}s), Real={rt_ticks} ({rt_ticks/10_000_000:.1f}s)")
+                                                            
+                                                            if abs(db_runtime - rt_ticks) > 10_000_000:
+                                                                # 只有管理员 API Key 才能修改全局 Item 元数据
+                                                                item_dto["RunTimeTicks"] = rt_ticks
+                                                                item_url = f"{_upstream_url}/emby/Items/{i_id}"
+                                                                update_resp = await client.post(item_url, json=item_dto)
+                                                                if update_resp.status_code < 400:
+                                                                    logger.info(f"[PROXY] ✅ Fixed RunTimeTicks for {i_id}: {db_runtime} → {rt_ticks}")
+                                                                else:
+                                                                    logger.warning(f"[PROXY] ⚠️ Failed to update RunTimeTicks (usually requires admin api_key): status={update_resp.status_code}")
                                                             else:
-                                                                logger.error(f"[PROXY] ❌ Failed to fix RunTimeTicks: status={update_resp.status_code}, body={update_resp.text[:500]}")
+                                                                    logger.info(f"[PROXY] RunTimeTicks already correct for {i_id}, skip")
                                                         else:
-                                                            logger.info(f"[PROXY] RunTimeTicks already correct for {i_id}, skip")
+                                                            logger.warning(f"[PROXY] ⚠️ GET UserItem returned non-JSON (possibly fnOS redirect HTML), skip duration fix")
                                                     else:
-                                                        logger.error(f"[PROXY] ❌ GET Items failed: status={item_resp.status_code}, body={item_resp.text[:500]}")
+                                                        logger.error(f"[PROXY] ❌ GET UserItem failed: status={item_resp.status_code}")
                                                 except Exception as e:
                                                     logger.error(f"[PROXY] RunTimeTicks fix error for {i_id}: {repr(e)}")
                                             else:
