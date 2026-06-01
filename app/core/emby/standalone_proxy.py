@@ -38,11 +38,23 @@ def _resolve_local_strm_path(feiniu_path: str) -> str | None:
     return None
 
 
+def _get_emby_token(request: Request, configured_key: str = "") -> str | None:
+    """优先从请求头、查询参数或 x-emby-authorization 头中提取 Emby Token，若无则使用配置的全局 api_key"""
+    token = request.headers.get("x-emby-token")
+    if not token:
+        token = request.query_params.get("api_key")
+    if not token:
+        auth_header = request.headers.get("x-emby-authorization", "")
+        match = re.search(r'Token="([^"]+)"', auth_header, re.IGNORECASE)
+        if match:
+            token = match.group(1)
+    return token if token else configured_key
+
+
 async def _extract_pickcode_from_item(upstream_url: str, api_key: str, item_id: str, request: Request) -> tuple[str | None, dict | None]:
     """从 Emby item 信息中提取 115 pickcode 及元数据（用于上游 PlaybackInfo 失败时的 fallback）"""
     try:
-        req_token = request.headers.get("x-emby-token")
-        emby_token = req_token if req_token else api_key
+        emby_token = _get_emby_token(request, api_key)
         
         headers = {"Accept": "application/json"}
         if emby_token:
@@ -108,8 +120,7 @@ async def _resolve_playback_url(upstream_url: str, api_key: str, item_id: str, r
     """解析出真实播放地址"""
     logger.debug(f"[PROXY] Resolving playback URL for item_id={item_id}")
     try:
-        req_token = request.headers.get("x-emby-token")
-        emby_token = req_token if req_token else api_key
+        emby_token = _get_emby_token(request, api_key)
         if not emby_token:
             return None
 
@@ -446,7 +457,14 @@ def create_proxy_app(instance) -> FastAPI:
                             is_stopped = "/Sessions/Playing/Stopped" in full_path
                             event_type = "Start" if is_start else ("Progress" if is_progress else ("Stopped" if is_stopped else "Unknown"))
                             
-                            logger.info(f"[PROXY] 🎬 Intercepted Sessions/Playing event: {event_type}, ItemId={item_id}, UserId={user_id}, PositionTicks={position_ticks}, RunTimeTicks={runtime_ticks}, api_key={'SET' if api_key else 'EMPTY'}")
+                            # 提取本次请求对应的可用 Token
+                            effective_api_key = _get_emby_token(request, api_key)
+                            
+                            logger.info(
+                                f"[PROXY] 🎬 Intercepted Sessions/Playing event: {event_type}, "
+                                f"ItemId={item_id}, UserId={user_id}, PositionTicks={position_ticks}, "
+                                f"RunTimeTicks={runtime_ticks}, api_key={'CONFIGURED' if api_key else ('CLIENT_TOKEN' if effective_api_key else 'EMPTY')}"
+                            )
                             
                             if item_id and user_id:
                                 async def fix_runtime_and_sync(u_id, i_id, pos_ticks, rt_ticks, evt_type, _upstream_url, _api_key):
@@ -454,7 +472,7 @@ def create_proxy_app(instance) -> FastAPI:
                                     logger.info(f"[PROXY] 🔧 Background task started for {i_id} (Event: {evt_type}, rt_ticks={rt_ticks}, pos_ticks={pos_ticks})")
                                     
                                     if not _api_key:
-                                        logger.error(f"[PROXY] ❌ api_key is empty! Cannot call Admin API for {i_id}")
+                                        logger.error(f"[PROXY] ❌ Both configured api_key and client token are empty! Cannot call Emby API for {i_id}")
                                         return
                                     
                                     try:
@@ -522,7 +540,7 @@ def create_proxy_app(instance) -> FastAPI:
                                 background_tasks.add_task(
                                     fix_runtime_and_sync, user_id, item_id, 
                                     position_ticks, runtime_ticks, event_type,
-                                    upstream_url, api_key
+                                    upstream_url, effective_api_key
                                 )
                                 logger.info(f"[PROXY] 📋 Background task dispatched for {item_id} (Event: {event_type})")
                             else:
