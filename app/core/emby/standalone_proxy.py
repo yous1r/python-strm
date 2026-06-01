@@ -426,46 +426,89 @@ def create_proxy_app(instance) -> FastAPI:
                 body_bytes = await request.body()
                 logger.debug(f"[PROXY] handle_proxy request payload ({len(body_bytes)} bytes): {body_bytes[:2000].decode('utf-8', errors='replace') if body_bytes else '(empty)'}")
 
-                # 拦截播放进度并强行同步到数据库（绕过由于合成 PlaybackInfo 导致的假 PlaySessionId 被 Emby 忽略的问题）
-                if request.method == "POST" and ("/Sessions/Playing/Progress" in full_path or "/Sessions/Playing/Stopped" in full_path):
+                # 拦截所有播放会话事件（开始/进度/停止），修正 RunTimeTicks 并强行同步进度
+                if request.method == "POST" and "/Sessions/Playing" in full_path:
                     try:
                         if body_bytes:
                             payload = json.loads(body_bytes)
                             item_id = payload.get("ItemId")
                             position_ticks = payload.get("PositionTicks")
+                            runtime_ticks = payload.get("RunTimeTicks")
                             
                             auth_header = request.headers.get("x-emby-authorization", "")
                             user_id = None
-                            import re
                             match = re.search(r'UserId="([^"]+)"', auth_header)
                             if match:
                                 user_id = match.group(1)
                             
-                            if item_id and user_id and position_ticks is not None:
+                            is_start = full_path.rstrip("/").endswith("/Sessions/Playing")
+                            is_progress = "/Sessions/Playing/Progress" in full_path
+                            is_stopped = "/Sessions/Playing/Stopped" in full_path
+                            event_type = "Start" if is_start else ("Progress" if is_progress else ("Stopped" if is_stopped else "Unknown"))
+                            
+                            if item_id and user_id:
                                 client_headers = {k: v for k, v in request.headers.items() if k.lower() not in ['host', 'accept-encoding', 'content-length']}
                                 client_headers["content-type"] = "application/json"
                                 
-                                async def sync_progress(u_id, i_id, ticks, headers_to_use):
+                                async def fix_runtime_and_sync(u_id, i_id, pos_ticks, rt_ticks, headers_to_use, evt_type):
+                                    """修正 RunTimeTicks 并同步播放进度"""
                                     try:
-                                        # 使用 Emby 专门的离线/无状态进度上报接口
-                                        progress_url = f"{upstream_url}/emby/Users/{u_id}/PlayingItems/{i_id}/Progress"
-                                        async with httpx.AsyncClient() as client:
-                                            post_resp = await client.post(
-                                                progress_url, 
-                                                params={"PositionTicks": ticks}, 
-                                                headers=headers_to_use, 
-                                                timeout=5.0
-                                            )
-                                            if post_resp.status_code >= 400:
-                                                logger.error(f"[PROXY] Force sync failed with {post_resp.status_code}: {post_resp.content}")
-                                            else:
-                                                logger.info(f"[PROXY] Force synced playback progress for {i_id} (Ticks: {ticks}) via PlayingItems endpoint.")
+                                        async with httpx.AsyncClient(timeout=10.0) as client:
+                                            # ── 步骤 1：修正 RunTimeTicks ──
+                                            # .strm 文件导致飞牛数据库存储的时长为 ≈1秒
+                                            # 必须用 VidHub 上报的真实时长覆盖，否则飞牛会把 >1秒的播放判定为"已播完"
+                                            if rt_ticks and rt_ticks > 10_000_000:  # 真实时长 > 1秒才有意义
+                                                try:
+                                                    item_url = f"{upstream_url}/emby/Items/{i_id}?api_key={api_key}"
+                                                    item_resp = await client.get(item_url)
+                                                    if item_resp.status_code == 200:
+                                                        item_dto = item_resp.json()
+                                                        db_runtime = item_dto.get("RunTimeTicks", 0) or 0
+                                                        # 如果数据库时长与真实时长差距 > 1秒，则修正
+                                                        if abs(db_runtime - rt_ticks) > 10_000_000:
+                                                            item_dto["RunTimeTicks"] = rt_ticks
+                                                            update_resp = await client.post(item_url, json=item_dto)
+                                                            if update_resp.status_code < 400:
+                                                                logger.info(f"[PROXY] ✅ Fixed RunTimeTicks for {i_id}: {db_runtime} → {rt_ticks} (db was {db_runtime/10_000_000:.1f}s, real is {rt_ticks/10_000_000:.1f}s)")
+                                                            else:
+                                                                logger.error(f"[PROXY] ❌ Failed to fix RunTimeTicks for {i_id}: status={update_resp.status_code}")
+                                                except Exception as e:
+                                                    logger.error(f"[PROXY] RunTimeTicks fix error for {i_id}: {e}")
+                                            
+                                            # ── 步骤 2：同步播放进度到 UserData（永久落盘） ──
+                                            if pos_ticks is not None and pos_ticks > 0:
+                                                try:
+                                                    from datetime import datetime, timezone, timedelta
+                                                    beijing_tz = timezone(timedelta(hours=8))
+                                                    
+                                                    # 获取当前 UserData
+                                                    useritem_url = f"{upstream_url}/emby/Users/{u_id}/Items/{i_id}?api_key={api_key}"
+                                                    get_resp = await client.get(useritem_url)
+                                                    if get_resp.status_code == 200:
+                                                        user_item = get_resp.json()
+                                                        user_data = user_item.get("UserData", {})
+                                                        
+                                                        user_data["PlaybackPositionTicks"] = pos_ticks
+                                                        user_data["Played"] = False
+                                                        user_data["LastPlayedDate"] = datetime.now(beijing_tz).isoformat()
+                                                        
+                                                        userdata_url = f"{upstream_url}/emby/Users/{u_id}/Items/{i_id}/UserData?api_key={api_key}"
+                                                        post_resp = await client.post(userdata_url, json=user_data)
+                                                        if post_resp.status_code < 400:
+                                                            logger.info(f"[PROXY] ✅ Synced UserData for {i_id} (Ticks: {pos_ticks}, Event: {evt_type})")
+                                                        else:
+                                                            logger.error(f"[PROXY] ❌ UserData sync failed for {i_id}: status={post_resp.status_code}")
+                                                except Exception as e:
+                                                    logger.error(f"[PROXY] UserData sync error for {i_id}: {e}")
                                     except Exception as e:
-                                        logger.error(f"[PROXY] Failed to force sync progress for {i_id}: {e}")
+                                        logger.error(f"[PROXY] fix_runtime_and_sync failed for {i_id}: {e}")
                                 
-                                background_tasks.add_task(sync_progress, user_id, item_id, position_ticks, client_headers)
+                                background_tasks.add_task(
+                                    fix_runtime_and_sync, user_id, item_id, 
+                                    position_ticks, runtime_ticks, client_headers, event_type
+                                )
                     except Exception as e:
-                        logger.debug(f"[PROXY] Failed to intercept progress sync: {e}")
+                        logger.debug(f"[PROXY] Failed to intercept Sessions/Playing: {e}")
             except Exception:
                 logger.debug("[PROXY] handle_proxy request payload: (unable to read)")
         config = get_config()
