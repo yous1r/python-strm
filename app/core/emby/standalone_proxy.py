@@ -441,49 +441,63 @@ def create_proxy_app(instance) -> FastAPI:
                             if match:
                                 user_id = match.group(1)
                             
-                            is_start = full_path.rstrip("/").endswith("/Sessions/Playing")
+                            is_start = full_path.rstrip("/").endswith("/Sessions/Playing") and "/Progress" not in full_path and "/Stopped" not in full_path
                             is_progress = "/Sessions/Playing/Progress" in full_path
                             is_stopped = "/Sessions/Playing/Stopped" in full_path
                             event_type = "Start" if is_start else ("Progress" if is_progress else ("Stopped" if is_stopped else "Unknown"))
                             
+                            logger.info(f"[PROXY] 🎬 Intercepted Sessions/Playing event: {event_type}, ItemId={item_id}, UserId={user_id}, PositionTicks={position_ticks}, RunTimeTicks={runtime_ticks}, api_key={'SET' if api_key else 'EMPTY'}")
+                            
                             if item_id and user_id:
-                                client_headers = {k: v for k, v in request.headers.items() if k.lower() not in ['host', 'accept-encoding', 'content-length']}
-                                client_headers["content-type"] = "application/json"
-                                
-                                async def fix_runtime_and_sync(u_id, i_id, pos_ticks, rt_ticks, headers_to_use, evt_type):
+                                async def fix_runtime_and_sync(u_id, i_id, pos_ticks, rt_ticks, evt_type, _upstream_url, _api_key):
                                     """修正 RunTimeTicks 并同步播放进度"""
+                                    logger.info(f"[PROXY] 🔧 Background task started for {i_id} (Event: {evt_type}, rt_ticks={rt_ticks}, pos_ticks={pos_ticks})")
+                                    
+                                    if not _api_key:
+                                        logger.error(f"[PROXY] ❌ api_key is empty! Cannot call Admin API for {i_id}")
+                                        return
+                                    
                                     try:
                                         async with httpx.AsyncClient(timeout=10.0) as client:
                                             # ── 步骤 1：修正 RunTimeTicks ──
-                                            # .strm 文件导致飞牛数据库存储的时长为 ≈1秒
-                                            # 必须用 VidHub 上报的真实时长覆盖，否则飞牛会把 >1秒的播放判定为"已播完"
-                                            if rt_ticks and rt_ticks > 10_000_000:  # 真实时长 > 1秒才有意义
+                                            if rt_ticks and rt_ticks > 10_000_000:
                                                 try:
-                                                    item_url = f"{upstream_url}/emby/Items/{i_id}?api_key={api_key}"
+                                                    item_url = f"{_upstream_url}/emby/Items/{i_id}?api_key={_api_key}"
+                                                    logger.debug(f"[PROXY] GET {item_url[:80]}...")
                                                     item_resp = await client.get(item_url)
+                                                    logger.info(f"[PROXY] GET Items/{i_id} status={item_resp.status_code}")
+                                                    
                                                     if item_resp.status_code == 200:
                                                         item_dto = item_resp.json()
                                                         db_runtime = item_dto.get("RunTimeTicks", 0) or 0
-                                                        # 如果数据库时长与真实时长差距 > 1秒，则修正
+                                                        logger.info(f"[PROXY] DB RunTimeTicks={db_runtime} ({db_runtime/10_000_000:.1f}s), Real={rt_ticks} ({rt_ticks/10_000_000:.1f}s)")
+                                                        
                                                         if abs(db_runtime - rt_ticks) > 10_000_000:
                                                             item_dto["RunTimeTicks"] = rt_ticks
                                                             update_resp = await client.post(item_url, json=item_dto)
                                                             if update_resp.status_code < 400:
-                                                                logger.info(f"[PROXY] ✅ Fixed RunTimeTicks for {i_id}: {db_runtime} → {rt_ticks} (db was {db_runtime/10_000_000:.1f}s, real is {rt_ticks/10_000_000:.1f}s)")
+                                                                logger.info(f"[PROXY] ✅ Fixed RunTimeTicks for {i_id}: {db_runtime} → {rt_ticks}")
                                                             else:
-                                                                logger.error(f"[PROXY] ❌ Failed to fix RunTimeTicks for {i_id}: status={update_resp.status_code}")
+                                                                logger.error(f"[PROXY] ❌ Failed to fix RunTimeTicks: status={update_resp.status_code}, body={update_resp.text[:500]}")
+                                                        else:
+                                                            logger.info(f"[PROXY] RunTimeTicks already correct for {i_id}, skip")
+                                                    else:
+                                                        logger.error(f"[PROXY] ❌ GET Items failed: status={item_resp.status_code}, body={item_resp.text[:500]}")
                                                 except Exception as e:
-                                                    logger.error(f"[PROXY] RunTimeTicks fix error for {i_id}: {e}")
+                                                    logger.error(f"[PROXY] RunTimeTicks fix error for {i_id}: {repr(e)}")
+                                            else:
+                                                logger.debug(f"[PROXY] No RunTimeTicks in payload or too small (rt_ticks={rt_ticks}), skip fix")
                                             
                                             # ── 步骤 2：同步播放进度到 UserData（永久落盘） ──
-                                            if pos_ticks is not None and pos_ticks > 0:
+                                            if pos_ticks is not None and pos_ticks >= 0:
                                                 try:
                                                     from datetime import datetime, timezone, timedelta
                                                     beijing_tz = timezone(timedelta(hours=8))
                                                     
-                                                    # 获取当前 UserData
-                                                    useritem_url = f"{upstream_url}/emby/Users/{u_id}/Items/{i_id}?api_key={api_key}"
+                                                    useritem_url = f"{_upstream_url}/emby/Users/{u_id}/Items/{i_id}?api_key={_api_key}"
                                                     get_resp = await client.get(useritem_url)
+                                                    logger.debug(f"[PROXY] GET UserItem status={get_resp.status_code}")
+                                                    
                                                     if get_resp.status_code == 200:
                                                         user_item = get_resp.json()
                                                         user_data = user_item.get("UserData", {})
@@ -492,23 +506,29 @@ def create_proxy_app(instance) -> FastAPI:
                                                         user_data["Played"] = False
                                                         user_data["LastPlayedDate"] = datetime.now(beijing_tz).isoformat()
                                                         
-                                                        userdata_url = f"{upstream_url}/emby/Users/{u_id}/Items/{i_id}/UserData?api_key={api_key}"
+                                                        userdata_url = f"{_upstream_url}/emby/Users/{u_id}/Items/{i_id}/UserData?api_key={_api_key}"
                                                         post_resp = await client.post(userdata_url, json=user_data)
                                                         if post_resp.status_code < 400:
                                                             logger.info(f"[PROXY] ✅ Synced UserData for {i_id} (Ticks: {pos_ticks}, Event: {evt_type})")
                                                         else:
-                                                            logger.error(f"[PROXY] ❌ UserData sync failed for {i_id}: status={post_resp.status_code}")
+                                                            logger.error(f"[PROXY] ❌ UserData sync failed: status={post_resp.status_code}, body={post_resp.text[:500]}")
+                                                    else:
+                                                        logger.error(f"[PROXY] ❌ GET UserItem failed: status={get_resp.status_code}")
                                                 except Exception as e:
-                                                    logger.error(f"[PROXY] UserData sync error for {i_id}: {e}")
+                                                    logger.error(f"[PROXY] UserData sync error for {i_id}: {repr(e)}")
                                     except Exception as e:
-                                        logger.error(f"[PROXY] fix_runtime_and_sync failed for {i_id}: {e}")
+                                        logger.error(f"[PROXY] fix_runtime_and_sync failed for {i_id}: {repr(e)}")
                                 
                                 background_tasks.add_task(
                                     fix_runtime_and_sync, user_id, item_id, 
-                                    position_ticks, runtime_ticks, client_headers, event_type
+                                    position_ticks, runtime_ticks, event_type,
+                                    upstream_url, api_key
                                 )
+                                logger.info(f"[PROXY] 📋 Background task dispatched for {item_id} (Event: {event_type})")
+                            else:
+                                logger.warning(f"[PROXY] ⚠️ Missing item_id={item_id} or user_id={user_id}, cannot dispatch task")
                     except Exception as e:
-                        logger.debug(f"[PROXY] Failed to intercept Sessions/Playing: {e}")
+                        logger.error(f"[PROXY] Failed to intercept Sessions/Playing: {repr(e)}")
             except Exception:
                 logger.debug("[PROXY] handle_proxy request payload: (unable to read)")
         config = get_config()
