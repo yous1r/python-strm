@@ -199,13 +199,13 @@ async function searchTmdb() {
                     const safeOrig = originalTitle ? originalTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : '';
                     
                     if (item.media_type === 'movie') {
-                        // 电影：包含中文或英文名，且包含年份
+                        // 电影：使用前瞻断言(lookahead)无序匹配片名和年份
                         let names = safeOrig && safeOrig !== safeTitle ? `(${safeTitle}|${safeOrig})` : safeTitle;
-                        regex = year ? `${names}.*${year}` : names;
+                        regex = year ? `^(?=.*${names})(?=.*${year}).*$` : `^(?=.*${names}).*$`;
                     } else {
-                        // 剧集：包含中文或英文名
+                        // 剧集：使用前瞻断言匹配片名
                         let names = safeOrig && safeOrig !== safeTitle ? `(${safeTitle}|${safeOrig})` : safeTitle;
-                        regex = names;
+                        regex = `^(?=.*${names}).*$`;
                     }
                     
                     if (await window.customConfirm(`为您生成正则：\n${regex}\n\n确认添加到规则列表吗？`)) {
