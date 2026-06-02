@@ -7,6 +7,9 @@ from app.core.notify.manager import notify_manager
 from app.core.media.organizer import organizer
 from app.core.sync.engine import sync_engine
 
+# 限制并发转存数量为1，避免短时间内大量触发115接口导致封控
+transfer_semaphore = asyncio.Semaphore(1)
+
 async def handle_new_link(link_data: dict, source: str, **kwargs):
     """
     Handle new links from Telegram or other monitors.
@@ -31,15 +34,20 @@ async def handle_new_link(link_data: dict, source: str, **kwargs):
         logger.warning("115 client not initialized. Skipping auto-transfer.")
         return
 
-    logger.info(f"Processing new 115 link: {share_url} with pwd: {receive_code}")
-    
-    # 1. 尝试转存
-    transfer_res = await client_115.share_receive(
-        share_url, 
-        receive_code, 
-        target_dir_id, 
-        filter_rules=config.filter_rules
-    )
+    async with transfer_semaphore:
+        logger.info(f"Processing new 115 link: {share_url} with pwd: {receive_code}")
+        
+        # 1. 尝试转存
+        transfer_res = await client_115.share_receive(
+            share_url, 
+            receive_code, 
+            target_dir_id, 
+            filter_rules=config.filter_rules
+        )
+        
+        # 转存后等待3秒，严格限制请求频率
+        await asyncio.sleep(3)
+        
     if not transfer_res.get("state"):
         logger.error(f"Failed to auto-transfer link {share_url}: {transfer_res.get('error')}")
         await notify_manager.notify(

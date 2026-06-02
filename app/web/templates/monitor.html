@@ -74,7 +74,10 @@
     </form>
 </div>
 
-<div style="max-width: 800px; display: flex; justify-content: flex-end;">
+<div style="max-width: 800px; display: flex; justify-content: flex-end; gap: 1rem;">
+    <button class="btn btn-outline" style="padding: 0.75rem 1.5rem; font-size: 1.1rem; color: var(--primary); border-color: var(--primary);" onclick="testTgMonitor(this)">
+        <i class="fa-solid fa-plug-circle-check"></i> 测试节点连通性
+    </button>
     <button class="btn btn-primary" style="padding: 0.75rem 2rem; font-size: 1.1rem; box-shadow: 0 0 15px rgba(99,102,241,0.4);" onclick="saveMonitorConfig()" id="saveBtn">
         <i class="fa-solid fa-floppy-disk"></i> 保存并热加载
     </button>
@@ -313,16 +316,51 @@ async function saveMonitorConfig() {
                 btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> 保存并热加载';
                 btn.style.background = '';
             }, 2000);
+            return true;
         } else {
             const err = await res.json();
             alert('保存失败: ' + err.detail);
             btn.disabled = false;
             btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> 保存并热加载';
+            return false;
         }
     } catch (e) {
         alert('网络请求失败');
         btn.disabled = false;
         btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> 保存并热加载';
+        return false;
+    }
+}
+
+async function testTgMonitor(btn) {
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 测试中...';
+    
+    // 测试前先保存配置，确保测试的是最新数据
+    const saved = await saveMonitorConfig();
+    if (!saved) {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+        return;
+    }
+    
+    try {
+        const res = await fetch('/api/v1/system/test-monitor/telegram', {
+            method: 'POST'
+        });
+        const data = await res.json();
+        
+        if (data.status === 'success') {
+            await window.customConfirm(`✅ 测试成功！\n\n${data.message}`);
+        } else {
+            await window.customConfirm(`❌ 测试失败！\n\n${data.message}`);
+        }
+    } catch (e) {
+        alert('网络请求失败');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
     }
 }
 </script>
