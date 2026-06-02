@@ -99,6 +99,9 @@ async def search_tmdb(keyword: str, media_type: str = "multi", year: Optional[in
     """可视化配置：通过TMDB搜索影视剧以生成正则"""
     from app.core.tmdb.client import tmdb_client
     
+    if not tmdb_client.config.api_key:
+        return {"status": "error", "message": "TMDB API Key 未配置，请先在高级配置中设置"}
+    
     results = []
     if media_type in ("movie", "multi"):
         movies = await tmdb_client.search_movie(keyword, year)

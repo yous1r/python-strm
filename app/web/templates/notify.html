@@ -287,6 +287,10 @@ async function searchTmdb() {
         const res = await fetch(`/api/v1/search/tmdb?keyword=${encodeURIComponent(keyword)}&media_type=${type}`);
         const data = await res.json();
         
+        if (data.status === 'error') {
+            throw new Error(data.message || '搜索失败');
+        }
+        
         if (data.status === 'success' && data.data && data.data.length > 0) {
             resultsContainer.innerHTML = '';
             data.data.forEach(item => {
