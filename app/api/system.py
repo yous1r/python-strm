@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
 from app.config import get_config, update_config
 from pydantic import BaseModel
 from typing import List, Optional
@@ -9,6 +9,14 @@ class TelegramTestRequest(BaseModel):
     bot_token: str = ""
     proxy: str = ""
     channels: List[str] = []
+
+class TelegramScrapeRequest(BaseModel):
+    api_id: str
+    api_hash: str
+    bot_token: str = ""
+    proxy: str = ""
+    channels: List[str] = []
+    keywords: List[str] = []
 
 router = APIRouter(prefix="/system", tags=["System Config"])
 
@@ -178,6 +186,106 @@ async def test_telegram_monitor(req: TelegramTestRequest):
             
     except Exception as e:
         return {"status": "error", "message": f"测试失败: {str(e)}"}
+
+@router.post("/scrape-monitor/telegram")
+async def scrape_telegram_monitor(req: TelegramScrapeRequest, background_tasks: BackgroundTasks):
+    """手动触发：根据关键字抓取频道的历史消息并提取链接排队转存"""
+    if not req.api_id or not req.api_hash:
+        raise HTTPException(status_code=400, detail="API ID 和 API Hash 不能为空")
+    if not req.channels:
+        raise HTTPException(status_code=400, detail="未配置任何监听频道，无法抓取")
+        
+    from app.core.monitor.telegram import telegram_monitor
+    from app.events import event_bus, EVENT_MONITOR_NEW_LINK
+    import re
+    import logging
+    logger = logging.getLogger("strm")
+    
+    def parse_ch(ch):
+        ch = ch.strip()
+        match_c = re.search(r't\.me/c/(\d+)', ch)
+        if match_c: return int(f"-100{match_c.group(1)}")
+        match_u = re.search(r't\.me/([a-zA-Z0-9_]+)', ch)
+        if match_u and match_u.group(1) not in ['c', 'joinchat', 'setlanguage']: return match_u.group(1)
+        if ch.startswith('@'): return ch[1:]
+        try: return int(ch)
+        except ValueError: return ch
+
+    parsed_channels = [parse_ch(c) for c in req.channels if c.strip()]
+    
+    async def bg_scrape():
+        is_auth = False
+        client_to_use = None
+        disconnect_after = False
+        
+        if telegram_monitor.client and telegram_monitor.client.is_connected():
+            is_auth = await telegram_monitor.client.is_user_authorized()
+            client_to_use = telegram_monitor.client
+        else:
+            from telethon import TelegramClient
+            import urllib.parse
+            client_kwargs = {}
+            if req.proxy:
+                proxy_str = req.proxy
+                if not proxy_str.startswith(("http://", "https://", "socks5://", "socks5h://")):
+                    proxy_str = f"http://{proxy_str}"
+                parsed = urllib.parse.urlparse(proxy_str)
+                proxy_type = parsed.scheme.lower()
+                if proxy_type in ["http", "https"]: proxy_type = "http"
+                elif proxy_type in ["socks5", "socks5h"]: proxy_type = "socks5"
+                client_kwargs["proxy"] = {"proxy_type": proxy_type, "addr": parsed.hostname, "port": parsed.port}
+            
+            client_to_use = TelegramClient('session_strm', req.api_id, req.api_hash, **client_kwargs)
+            await client_to_use.connect()
+            disconnect_after = True
+            
+            if not await client_to_use.is_user_authorized():
+                if req.bot_token:
+                    try:
+                        await client_to_use.start(bot_token=req.bot_token)
+                        is_auth = True
+                    except:
+                        pass
+            else:
+                is_auth = True
+                
+        if not is_auth:
+            if disconnect_after: await client_to_use.disconnect()
+            logger.error("Scrape History failed: Telegram client not authorized.")
+            return
+            
+        try:
+            total_links_found = 0
+            valid_kws = [kw.strip().lower() for kw in req.keywords if kw.strip()]
+            for ch in parsed_channels:
+                try:
+                    if valid_kws:
+                        for kw in valid_kws:
+                            async for msg in client_to_use.iter_messages(ch, search=kw, limit=50):
+                                text = msg.message or ""
+                                links = telegram_monitor.extract_links(text)
+                                for link_data in links:
+                                    total_links_found += 1
+                                    await event_bus.emit(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
+                    else:
+                        async for msg in client_to_use.iter_messages(ch, limit=50):
+                            text = msg.message or ""
+                            links = telegram_monitor.extract_links(text)
+                            for link_data in links:
+                                total_links_found += 1
+                                await event_bus.emit(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
+                except Exception as inner_e:
+                    logger.error(f"Failed to scrape channel {ch}: {inner_e}")
+                    
+            logger.info(f"Telegram history scraping finished. Found {total_links_found} links added to queue.")
+        except Exception as e:
+            logger.error(f"Error during Telegram history scraping: {str(e)}")
+        finally:
+            if disconnect_after:
+                await client_to_use.disconnect()
+
+    background_tasks.add_task(bg_scrape)
+    return {"status": "success", "message": "历史消息抓取任务已加入后台！\n匹配到的资源链接将自动进入排队系统，并按照防封控频率（间隔 3 秒）依次转存。您可以去主日志查看实时抓取和转存进度。"}
 
 @router.post("/test-emby")
 async def test_emby(request: Request):

@@ -10,6 +10,9 @@
             <button type="button" class="btn btn-secondary" style="padding: 0.3rem 0.8rem; font-size: 0.9rem;" onclick="testTgMonitor(this)">
                 <i class="fa-solid fa-plug-circle-check"></i> 测试连通性
             </button>
+            <button type="button" class="btn btn-secondary" style="padding: 0.3rem 0.8rem; font-size: 0.9rem; color: var(--accent); border-color: var(--accent);" onclick="scrapeTgMonitor(this)">
+                <i class="fa-solid fa-clock-rotate-left"></i> 抓取历史消息
+            </button>
         </span>
         <label class="switch">
             <input type="checkbox" id="mon_tg_enabled">
@@ -368,6 +371,54 @@ async function testTgMonitor(btn) {
             await window.customConfirm(`✅ 测试成功！\n\n${data.message}`);
         } else {
             await window.customConfirm(`❌ 测试失败！\n\n${data.message}`);
+        }
+    } catch (e) {
+        alert('网络请求失败');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+    }
+}
+
+async function scrapeTgMonitor(btn) {
+    const originalText = btn.innerHTML;
+    
+    // 获取当前填写的配置，但不保存
+    const tgChannels = document.getElementById('mon_tg_channels').value.split('\n').map(l => l.trim()).filter(l => l);
+    const tgKeywords = document.getElementById('mon_tg_keywords').value.split('\n').map(l => l.trim()).filter(l => l);
+    
+    if (tgChannels.length === 0) {
+        alert("请先添加至少一个监听频道后再试！");
+        return;
+    }
+    
+    const confirmScrape = await window.customConfirm(`是否立即触发历史消息检索？\n\n- 将对您填写的频道进行最近 50 条历史消息/匹配关键字检索。\n- 提取到的分享链接将加入后台队列，间隔3秒慢慢转存。\n- 请不要频繁点击此按钮，以免被 115 封控。`);
+    if (!confirmScrape) return;
+    
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 任务投递中...';
+
+    const requestData = {
+        api_id: document.getElementById('mon_tg_api_id').value,
+        api_hash: document.getElementById('mon_tg_api_hash').value,
+        bot_token: document.getElementById('mon_tg_bot_token').value,
+        proxy: document.getElementById('mon_tg_proxy').value,
+        channels: tgChannels,
+        keywords: tgKeywords
+    };
+    
+    try {
+        const res = await fetch('/api/v1/system/scrape-monitor/telegram', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestData)
+        });
+        const data = await res.json();
+        
+        if (data.status === 'success') {
+            await window.customConfirm(`✅ 任务投递成功！\n\n${data.message}`);
+        } else {
+            await window.customConfirm(`❌ 任务失败！\n\n${data.message}`);
         }
     } catch (e) {
         alert('网络请求失败');
