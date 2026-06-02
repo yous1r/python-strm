@@ -53,6 +53,11 @@
                 </a>
             </li>
             <li>
+                <a href="/monitor" class="nav-link {% if request.url.path == '/monitor' %}active{% endif %}">
+                    <i class="fa-solid fa-satellite-dish"></i> 频道监控
+                </a>
+            </li>
+            <li>
                 <a href="/organize" class="nav-link {% if request.url.path.startswith('/organize') %}active{% endif %}">
                     <i class="fa-solid fa-film"></i> 刮削与整理
                 </a>

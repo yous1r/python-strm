@@ -1,80 +1,8 @@
 {% extends "base.html" %}
 
-{% block subtitle %}统一管理通知推送与 Telegram 自动监控节点{% endblock %}
+{% block subtitle %}统一管理通知推送{% endblock %}
 
 {% block content %}
-<div class="glass-panel animate-fade-in delay-1" style="max-width: 800px; margin-bottom: 2rem;">
-    <h2 style="margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: space-between;">
-        <span><i class="fa-solid fa-satellite-dish"></i> Telegram 监控节点设置</span>
-        <label class="switch">
-            <input type="checkbox" id="mon_tg_enabled">
-            <span class="slider round"></span>
-        </label>
-    </h2>
-    <form id="monitorForm">
-        <div class="form-group">
-            <label class="form-label">API ID (来自 my.telegram.org)</label>
-            <input type="text" id="mon_tg_api_id" class="form-control" placeholder="1234567">
-        </div>
-        <div class="form-group">
-            <label class="form-label">API Hash</label>
-            <input type="password" id="mon_tg_api_hash" class="form-control" placeholder="xxxxxxxxxxxxxxxxxxxxxx">
-        </div>
-        <div class="form-group">
-            <label class="form-label">Proxy 代理 (可选, 如 http://127.0.0.1:7890)</label>
-            <input type="text" id="mon_tg_proxy" class="form-control" placeholder="http://127.0.0.1:7890">
-        </div>
-        <div class="form-group">
-            <label class="form-label">监听频道列表 (每行一个 ID 或 Username)</label>
-            <textarea id="mon_tg_channels" class="form-control" rows="3" placeholder="-1001234567890&#10;my_share_channel"></textarea>
-        </div>
-        </div>
-        <div class="form-group">
-            <label class="form-label">消息关键字过滤 (可选，每行一个。Telegram消息包含任意关键字即处理)</label>
-            <textarea id="mon_tg_keywords" class="form-control" rows="3" placeholder="蓝光&#10;洗版"></textarea>
-        </div>
-        <div class="form-group">
-            <label class="form-label">资源匹配过滤规则 (可选，正则表达式，每行一个。仅转存115分享链接内文件名匹配的资源)</label>
-            <div style="display: flex; gap: 0.5rem; flex-direction: column;">
-                <textarea id="mon_tg_filter_rules" class="form-control" rows="3" placeholder="1080p&#10;.*S01.*"></textarea>
-                <button type="button" class="btn btn-outline" style="align-self: flex-start; padding: 0.3rem 0.6rem; font-size: 0.9rem;" onclick="openTmdbModal()"><i class="fa-solid fa-film"></i> TMDB 可视化配置正则</button>
-            </div>
-        </div>
-        <div class="form-group">
-            <label class="form-label">115 转存中转目录 ID (必填，转存后存放的位置)</label>
-            <div style="display: flex; gap: 0.5rem;">
-                <input type="text" id="mon_tg_target_dir_id" class="form-control" placeholder="点击右侧按钮选择..." readonly>
-                <button type="button" class="btn btn-secondary" onclick="window.openDirectoryPicker(id => document.getElementById('mon_tg_target_dir_id').value = id, '115')" style="white-space: nowrap; padding: 0.5rem 1rem;">
-                    <i class="fa-solid fa-folder-open"></i> 选择目录
-                </button>
-            </div>
-        </div>
-        <div class="form-group">
-            <label class="form-label">115 整理归档根目录 ID (可选，开启自动整理后归档目标根路径)</label>
-            <div style="display: flex; gap: 0.5rem;">
-                <input type="text" id="mon_tg_archive_dir_id" class="form-control" placeholder="点击右侧按钮选择..." readonly>
-                <button type="button" class="btn btn-secondary" onclick="window.openDirectoryPicker(id => document.getElementById('mon_tg_archive_dir_id').value = id, '115')" style="white-space: nowrap; padding: 0.5rem 1rem;">
-                    <i class="fa-solid fa-folder-open"></i> 选择目录
-                </button>
-            </div>
-        </div>
-        <div class="form-group" style="display: flex; align-items: center; gap: 1rem; margin-top: 1rem;">
-            <label class="form-label" style="margin-bottom: 0;">自动整理转存的文件</label>
-            <label class="switch">
-                <input type="checkbox" id="mon_tg_auto_organize">
-                <span class="slider round"></span>
-            </label>
-        </div>
-        <div class="form-group" style="display: flex; align-items: center; gap: 1rem; margin-top: 1rem;">
-            <label class="form-label" style="margin-bottom: 0;">转存整理后自动触发全局 STRM 生成</label>
-            <label class="switch">
-                <input type="checkbox" id="mon_tg_auto_strm">
-                <span class="slider round"></span>
-            </label>
-        </div>
-    </form>
-</div>
-
 <div class="glass-panel animate-fade-in delay-2" style="max-width: 800px; margin-bottom: 2rem;">
     <h2 style="margin-bottom: 1.5rem;"><i class="fa-solid fa-bell"></i> 消息推送通道设置</h2>
     
@@ -241,114 +169,6 @@ input:checked + .slider:before {
 }
 </style>
 
-<!-- TMDB Modal -->
-<div id="tmdbModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 10000; align-items: center; justify-content: center;">
-    <div class="glass-panel animate-fade-in" style="width: 90%; max-width: 600px; padding: 1.5rem; display: flex; flex-direction: column; max-height: 80vh;">
-        <h3 style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center;">
-            <span><i class="fa-solid fa-film"></i> TMDB 可视化配置正则</span>
-            <i class="fa-solid fa-xmark" style="cursor: pointer; color: var(--text-secondary);" onclick="closeTmdbModal()"></i>
-        </h3>
-        <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
-            <select id="tmdbSearchType" class="form-control" style="width: 120px;">
-                <option value="multi">全部</option>
-                <option value="movie">电影</option>
-                <option value="tv">剧集</option>
-            </select>
-            <input type="text" id="tmdbSearchKeyword" class="form-control" placeholder="输入影视剧名称搜索..." style="flex: 1;" onkeydown="if(event.key==='Enter') searchTmdb()">
-            <button type="button" class="btn btn-primary" onclick="searchTmdb()"><i class="fa-solid fa-search"></i> 搜索</button>
-        </div>
-        <div id="tmdbSearchResults" style="flex: 1; overflow-y: auto; background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 0.5rem; min-height: 300px; padding: 0.5rem; display: flex; flex-direction: column; gap: 0.5rem;">
-            <!-- 结果将渲染在这里 -->
-        </div>
-    </div>
-</div>
-
-<script>
-function openTmdbModal() {
-    document.getElementById('tmdbModal').style.display = 'flex';
-    document.getElementById('tmdbSearchKeyword').focus();
-}
-
-function closeTmdbModal() {
-    document.getElementById('tmdbModal').style.display = 'none';
-    document.getElementById('tmdbSearchResults').innerHTML = '';
-}
-
-async function searchTmdb() {
-    const keyword = document.getElementById('tmdbSearchKeyword').value.trim();
-    const type = document.getElementById('tmdbSearchType').value;
-    const resultsContainer = document.getElementById('tmdbSearchResults');
-    
-    if (!keyword) return;
-    
-    resultsContainer.innerHTML = '<div style="text-align: center; padding: 1rem;">搜索中...</div>';
-    
-    try {
-        const res = await fetch(`/api/v1/search/tmdb?keyword=${encodeURIComponent(keyword)}&media_type=${type}`);
-        const data = await res.json();
-        
-        if (data.status === 'error') {
-            throw new Error(data.message || '搜索失败');
-        }
-        
-        if (data.status === 'success' && data.data && data.data.length > 0) {
-            resultsContainer.innerHTML = '';
-            data.data.forEach(item => {
-                const title = item.title || item.name;
-                const originalTitle = item.original_title || item.original_name || '';
-                const releaseDate = item.release_date || item.first_air_date || '';
-                const year = releaseDate ? releaseDate.substring(0, 4) : '';
-                const poster = item.poster_path ? `https://image.tmdb.org/t/p/w92${item.poster_path}` : 'https://via.placeholder.com/45x68?text=No+Image';
-                
-                const div = document.createElement('div');
-                div.style.cssText = 'display: flex; gap: 1rem; align-items: center; padding: 0.5rem; background: var(--bg-secondary); border-radius: 4px; cursor: pointer; transition: background 0.2s; border: 1px solid var(--border-color);';
-                div.onmouseover = () => div.style.background = 'var(--bg-hover)';
-                div.onmouseout = () => div.style.background = 'var(--bg-secondary)';
-                
-                div.onclick = async () => {
-                    let regex = '';
-                    const safeTitle = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                    const safeOrig = originalTitle ? originalTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : '';
-                    
-                    if (item.media_type === 'movie') {
-                        // 电影：包含中文或英文名，且包含年份
-                        let names = safeOrig && safeOrig !== safeTitle ? `(${safeTitle}|${safeOrig})` : safeTitle;
-                        regex = year ? `${names}.*${year}` : names;
-                    } else {
-                        // 剧集：包含中文或英文名
-                        let names = safeOrig && safeOrig !== safeTitle ? `(${safeTitle}|${safeOrig})` : safeTitle;
-                        regex = names;
-                    }
-                    
-                    if (await window.customConfirm(`为您生成正则：\n${regex}\n\n确认添加到规则列表吗？`)) {
-                        const textarea = document.getElementById('mon_tg_filter_rules');
-                        const val = textarea.value.trim();
-                        textarea.value = val ? val + '\n' + regex : regex;
-                        closeTmdbModal();
-                    }
-                };
-                
-                div.innerHTML = `
-                    <img src="${poster}" style="width: 45px; height: 68px; object-fit: cover; border-radius: 2px;">
-                    <div style="flex: 1;">
-                        <div style="font-weight: bold; margin-bottom: 0.2rem;">${title} <span style="color: var(--text-muted); font-weight: normal;">(${year})</span></div>
-                        <div style="font-size: 0.85rem; color: var(--text-muted);">${originalTitle}</div>
-                    </div>
-                    <div style="padding: 0 1rem; color: var(--primary);">
-                        <i class="fa-solid fa-plus"></i>
-                    </div>
-                `;
-                resultsContainer.appendChild(div);
-            });
-        } else {
-            resultsContainer.innerHTML = '<div style="text-align: center; padding: 1rem;">没有找到相关结果</div>';
-        }
-    } catch (e) {
-        resultsContainer.innerHTML = '<div style="text-align: center; padding: 1rem; color: var(--danger);">搜索失败: ' + e.message + '</div>';
-    }
-}
-</script>
-
 <script>
 // 页面加载时自动获取配置
 document.addEventListener('DOMContentLoaded', async () => {
@@ -356,19 +176,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         const res = await fetch('/api/v1/system/config');
         if (res.ok) {
             const config = await res.json();
-            
-            // 填充 Monitor Telegram
-            document.getElementById('mon_tg_enabled').checked = config.monitor.telegram.enabled;
-            document.getElementById('mon_tg_api_id').value = config.monitor.telegram.api_id;
-            document.getElementById('mon_tg_api_hash').value = config.monitor.telegram.api_hash;
-            document.getElementById('mon_tg_proxy').value = config.monitor.telegram.proxy || '';
-            document.getElementById('mon_tg_channels').value = (config.monitor.telegram.channels || []).join('\n');
-            document.getElementById('mon_tg_keywords').value = (config.monitor.telegram.keywords || []).join('\n');
-            document.getElementById('mon_tg_filter_rules').value = (config.monitor.telegram.filter_rules || []).join('\n');
-            document.getElementById('mon_tg_target_dir_id').value = config.monitor.telegram.target_dir_id || '0';
-            document.getElementById('mon_tg_archive_dir_id').value = config.monitor.telegram.archive_dir_id || '0';
-            document.getElementById('mon_tg_auto_organize').checked = config.monitor.telegram.auto_organize;
-            document.getElementById('mon_tg_auto_strm').checked = config.monitor.telegram.auto_strm;
             
             // 填充 Notify WeCom
             document.getElementById('not_wecom_enabled').checked = config.notify.wecom.enabled;
@@ -402,27 +209,7 @@ async function saveNotifyConfig(silent = false) {
         btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 保存中...';
     }
     
-    // 提取通道列表并过滤空行
-    const tgChannels = document.getElementById('mon_tg_channels').value.split('\n').map(c => c.trim()).filter(c => c);
-    const tgKeywords = document.getElementById('mon_tg_keywords').value.split('\n').map(c => c.trim()).filter(c => c);
-    const tgFilterRules = document.getElementById('mon_tg_filter_rules').value.split('\n').map(c => c.trim()).filter(c => c);
-
     const payload = {
-        monitor: {
-            telegram: {
-                enabled: document.getElementById('mon_tg_enabled').checked,
-                api_id: document.getElementById('mon_tg_api_id').value,
-                api_hash: document.getElementById('mon_tg_api_hash').value,
-                proxy: document.getElementById('mon_tg_proxy').value,
-                channels: tgChannels,
-                keywords: tgKeywords,
-                filter_rules: tgFilterRules,
-                target_dir_id: document.getElementById('mon_tg_target_dir_id').value,
-                archive_dir_id: document.getElementById('mon_tg_archive_dir_id').value,
-                auto_organize: document.getElementById('mon_tg_auto_organize').checked,
-                auto_strm: document.getElementById('mon_tg_auto_strm').checked
-            }
-        },
         notify: {
             wecom: {
                 enabled: document.getElementById('not_wecom_enabled').checked,

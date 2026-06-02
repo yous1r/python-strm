@@ -48,6 +48,12 @@ async def page_notify(request: Request):
         "title": "消息推送"
     })
 
+@router.get("/monitor")
+async def page_monitor(request: Request):
+    return templates.TemplateResponse(request, "monitor.html", {
+        "title": "频道监控"
+    })
+
 @router.get("/organize")
 async def page_organize(request: Request):
     return templates.TemplateResponse(request, "organize.html", {
