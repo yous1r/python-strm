@@ -67,39 +67,44 @@ async def test_telegram_monitor():
     """测试 Telegram 监控节点登录状态"""
     try:
         from app.config import get_config
+        from app.core.monitor.telegram import telegram_monitor
         config = get_config().monitor.telegram
         if not config.api_id or not config.api_hash:
             raise HTTPException(status_code=400, detail="API ID 和 API Hash 未配置")
             
-        from telethon import TelegramClient
-        import urllib.parse
-        
-        client_kwargs = {}
-        if config.proxy:
-            proxy_str = config.proxy
-            if not proxy_str.startswith(("http://", "https://", "socks5://", "socks5h://")):
-                proxy_str = f"http://{proxy_str}"
-            parsed = urllib.parse.urlparse(proxy_str)
-            proxy_type = parsed.scheme.lower()
-            if proxy_type in ["http", "https"]:
-                proxy_type = "http"
-            elif proxy_type in ["socks5", "socks5h"]:
-                proxy_type = "socks5"
-            client_kwargs["proxy"] = {
-                "proxy_type": proxy_type,
-                "addr": parsed.hostname,
-                "port": parsed.port
-            }
+        is_auth = False
+        if telegram_monitor.client and telegram_monitor.client.is_connected():
+            is_auth = await telegram_monitor.client.is_user_authorized()
+        else:
+            from telethon import TelegramClient
+            import urllib.parse
+            
+            client_kwargs = {}
+            if config.proxy:
+                proxy_str = config.proxy
+                if not proxy_str.startswith(("http://", "https://", "socks5://", "socks5h://")):
+                    proxy_str = f"http://{proxy_str}"
+                parsed = urllib.parse.urlparse(proxy_str)
+                proxy_type = parsed.scheme.lower()
+                if proxy_type in ["http", "https"]:
+                    proxy_type = "http"
+                elif proxy_type in ["socks5", "socks5h"]:
+                    proxy_type = "socks5"
+                client_kwargs["proxy"] = {
+                    "proxy_type": proxy_type,
+                    "addr": parsed.hostname,
+                    "port": parsed.port
+                }
 
-        client = TelegramClient('session_strm', config.api_id, config.api_hash, **client_kwargs)
-        await client.connect()
-        is_auth = await client.is_user_authorized()
-        await client.disconnect()
+            client = TelegramClient('session_strm', config.api_id, config.api_hash, **client_kwargs)
+            await client.connect()
+            is_auth = await client.is_user_authorized()
+            await client.disconnect()
         
         if is_auth:
             return {"status": "success", "message": "连接并鉴权成功！节点账号已就绪。"}
         else:
-            return {"status": "error", "message": "连接成功，但尚未登录。请在后端运行 python main.py 完成扫码或验证码登录。"}
+            return {"status": "error", "message": "连接成功，但尚未登录。请在后端运行 python login_tg.py 完成扫码或验证码登录。"}
             
     except Exception as e:
         return {"status": "error", "message": f"测试连接失败: {str(e)}"}
