@@ -39,6 +39,19 @@ async def modify_config(request: Request):
             if old_proxy_enabled != new_proxy_enabled or old_instances != new_instances:
                 asyncio.create_task(restart_standalone_proxy())
                 
+        # Handle hot reload for Telegram monitor
+        if 'monitor' in data and 'telegram' in data['monitor']:
+            from app.core.monitor.telegram import telegram_monitor
+            import asyncio
+            
+            async def restart_telegram_monitor():
+                await telegram_monitor.stop()
+                if new_config.monitor.telegram.enabled:
+                    await asyncio.sleep(1) # wait for db lock release
+                    await telegram_monitor.start()
+                    
+            asyncio.create_task(restart_telegram_monitor())
+                
         return {"status": "success", "config": new_config.model_dump()}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"配置更新失败或格式校验不通过: {str(e)}")
