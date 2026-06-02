@@ -74,6 +74,7 @@ class TelegramConfig(BaseModel):
     enabled: bool = False
     api_id: str = ""
     api_hash: str = ""
+    bot_token: str = ""
     channels: List[str] = []
     proxy: str = ""
     keywords: List[str] = []

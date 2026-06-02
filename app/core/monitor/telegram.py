@@ -92,7 +92,17 @@ class TelegramMonitor:
                 for link_data in links:
                     await event_bus.emit(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
 
-        await self.client.start()
+        await self.client.connect()
+        if not await self.client.is_user_authorized():
+            if getattr(self.config, 'bot_token', ''):
+                await self.client.start(bot_token=self.config.bot_token)
+            else:
+                logger.error("Telegram Monitor not authorized! Please run login_tg.py manually.")
+                await self.client.disconnect()
+                return
+        else:
+            await self.client.start()
+
         logger.info("Telegram monitor started.")
 
     async def stop(self):

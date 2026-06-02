@@ -98,13 +98,24 @@ async def test_telegram_monitor():
 
             client = TelegramClient('session_strm', config.api_id, config.api_hash, **client_kwargs)
             await client.connect()
-            is_auth = await client.is_user_authorized()
+            if not await client.is_user_authorized():
+                if getattr(config, 'bot_token', ''):
+                    try:
+                        await client.start(bot_token=config.bot_token)
+                        is_auth = True
+                    except Exception as e:
+                        await client.disconnect()
+                        return {"status": "error", "message": f"Bot Token 登录失败: {str(e)}"}
+                else:
+                    is_auth = False
+            else:
+                is_auth = True
             await client.disconnect()
         
         if is_auth:
             return {"status": "success", "message": "连接并鉴权成功！节点账号已就绪。"}
         else:
-            return {"status": "error", "message": "连接成功，但尚未登录。请在后端运行 python login_tg.py 完成扫码或验证码登录。"}
+            return {"status": "error", "message": "连接成功，但尚未登录。请填写 Bot Token 或在后端运行 python login_tg.py 完成扫码登录。"}
             
     except Exception as e:
         return {"status": "error", "message": f"测试连接失败: {str(e)}"}

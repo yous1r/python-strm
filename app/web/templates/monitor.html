@@ -26,6 +26,10 @@
             <input type="password" id="mon_tg_api_hash" class="form-control" placeholder="xxxxxxxxxxxxxxxxxxxxxx">
         </div>
         <div class="form-group">
+            <label class="form-label">Bot Token (可选，若不填则作为 Userbot 运行，需进终端手动扫码登录)</label>
+            <input type="password" id="mon_tg_bot_token" class="form-control" placeholder="123456789:ABCdefGHIjklmNoPqrsTuvwxyZ">
+        </div>
+        <div class="form-group">
             <label class="form-label">Proxy 代理 (可选, 如 http://127.0.0.1:7890)</label>
             <input type="text" id="mon_tg_proxy" class="form-control" placeholder="http://127.0.0.1:7890">
         </div>
@@ -261,6 +265,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('mon_tg_enabled').checked = config.monitor.telegram.enabled;
             document.getElementById('mon_tg_api_id').value = config.monitor.telegram.api_id || '';
             document.getElementById('mon_tg_api_hash').value = config.monitor.telegram.api_hash || '';
+            document.getElementById('mon_tg_bot_token').value = config.monitor.telegram.bot_token || '';
             document.getElementById('mon_tg_proxy').value = config.monitor.telegram.proxy || '';
             document.getElementById('mon_tg_channels').value = (config.monitor.telegram.channels || []).join('\n');
             document.getElementById('mon_tg_keywords').value = (config.monitor.telegram.keywords || []).join('\n');
@@ -291,6 +296,7 @@ async function saveMonitorConfig() {
                 enabled: document.getElementById('mon_tg_enabled').checked,
                 api_id: document.getElementById('mon_tg_api_id').value,
                 api_hash: document.getElementById('mon_tg_api_hash').value,
+                bot_token: document.getElementById('mon_tg_bot_token').value,
                 proxy: document.getElementById('mon_tg_proxy').value,
                 channels: tgChannels,
                 keywords: tgKeywords,
