@@ -35,7 +35,10 @@
         </div>
         <div class="form-group">
             <label class="form-label">资源匹配过滤规则 (可选，正则表达式，每行一个。仅转存115分享链接内文件名匹配的资源)</label>
-            <textarea id="mon_tg_filter_rules" class="form-control" rows="3" placeholder="1080p&#10;.*S01.*"></textarea>
+            <div style="display: flex; gap: 0.5rem; flex-direction: column;">
+                <textarea id="mon_tg_filter_rules" class="form-control" rows="3" placeholder="1080p&#10;.*S01.*"></textarea>
+                <button type="button" class="btn btn-outline" style="align-self: flex-start; padding: 0.3rem 0.6rem; font-size: 0.9rem;" onclick="openTmdbModal()"><i class="fa-solid fa-film"></i> TMDB 可视化配置正则</button>
+            </div>
         </div>
         <div class="form-group">
             <label class="form-label">115 转存中转目录 ID (必填，转存后存放的位置)</label>
@@ -237,6 +240,112 @@ input:checked + .slider:before {
   border-radius: 50%;
 }
 </style>
+
+<!-- TMDB Modal -->
+<div id="tmdbModal" class="modal">
+    <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+            <h3>TMDB 可视化配置正则</h3>
+            <button class="close-btn" onclick="closeTmdbModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+                <select id="tmdbSearchType" class="form-control" style="width: 120px;">
+                    <option value="multi">全部</option>
+                    <option value="movie">电影</option>
+                    <option value="tv">剧集</option>
+                </select>
+                <input type="text" id="tmdbSearchKeyword" class="form-control" placeholder="输入影视剧名称搜索..." style="flex: 1;" onkeydown="if(event.key==='Enter') searchTmdb()">
+                <button type="button" class="btn btn-primary" onclick="searchTmdb()"><i class="fa-solid fa-search"></i> 搜索</button>
+            </div>
+            <div id="tmdbSearchResults" style="max-height: 400px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem;">
+                <!-- 结果将渲染在这里 -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function openTmdbModal() {
+    document.getElementById('tmdbModal').style.display = 'block';
+    document.getElementById('tmdbSearchKeyword').focus();
+}
+
+function closeTmdbModal() {
+    document.getElementById('tmdbModal').style.display = 'none';
+    document.getElementById('tmdbSearchResults').innerHTML = '';
+}
+
+async function searchTmdb() {
+    const keyword = document.getElementById('tmdbSearchKeyword').value.trim();
+    const type = document.getElementById('tmdbSearchType').value;
+    const resultsContainer = document.getElementById('tmdbSearchResults');
+    
+    if (!keyword) return;
+    
+    resultsContainer.innerHTML = '<div style="text-align: center; padding: 1rem;">搜索中...</div>';
+    
+    try {
+        const res = await fetch(`/api/v1/search/tmdb?keyword=${encodeURIComponent(keyword)}&media_type=${type}`);
+        const data = await res.json();
+        
+        if (data.status === 'success' && data.data && data.data.length > 0) {
+            resultsContainer.innerHTML = '';
+            data.data.forEach(item => {
+                const title = item.title || item.name;
+                const originalTitle = item.original_title || item.original_name || '';
+                const releaseDate = item.release_date || item.first_air_date || '';
+                const year = releaseDate ? releaseDate.substring(0, 4) : '';
+                const poster = item.poster_path ? `https://image.tmdb.org/t/p/w92${item.poster_path}` : 'https://via.placeholder.com/45x68?text=No+Image';
+                
+                const div = document.createElement('div');
+                div.style.cssText = 'display: flex; gap: 1rem; align-items: center; padding: 0.5rem; background: var(--bg-secondary); border-radius: 4px; cursor: pointer; transition: background 0.2s; border: 1px solid var(--border-color);';
+                div.onmouseover = () => div.style.background = 'var(--bg-hover)';
+                div.onmouseout = () => div.style.background = 'var(--bg-secondary)';
+                
+                div.onclick = () => {
+                    let regex = '';
+                    const safeTitle = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    const safeOrig = originalTitle ? originalTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : '';
+                    
+                    if (item.media_type === 'movie') {
+                        // 电影：包含中文或英文名，且包含年份
+                        let names = safeOrig && safeOrig !== safeTitle ? `(${safeTitle}|${safeOrig})` : safeTitle;
+                        regex = year ? `${names}.*${year}` : names;
+                    } else {
+                        // 剧集：包含中文或英文名
+                        let names = safeOrig && safeOrig !== safeTitle ? `(${safeTitle}|${safeOrig})` : safeTitle;
+                        regex = names;
+                    }
+                    
+                    if (confirm(`为您生成正则：\n${regex}\n\n确认添加到规则列表吗？`)) {
+                        const textarea = document.getElementById('mon_tg_filter_rules');
+                        const val = textarea.value.trim();
+                        textarea.value = val ? val + '\n' + regex : regex;
+                        closeTmdbModal();
+                    }
+                };
+                
+                div.innerHTML = `
+                    <img src="${poster}" style="width: 45px; height: 68px; object-fit: cover; border-radius: 2px;">
+                    <div style="flex: 1;">
+                        <div style="font-weight: bold; margin-bottom: 0.2rem;">${title} <span style="color: var(--text-muted); font-weight: normal;">(${year})</span></div>
+                        <div style="font-size: 0.85rem; color: var(--text-muted);">${originalTitle}</div>
+                    </div>
+                    <div style="padding: 0 1rem; color: var(--primary);">
+                        <i class="fa-solid fa-plus"></i>
+                    </div>
+                `;
+                resultsContainer.appendChild(div);
+            });
+        } else {
+            resultsContainer.innerHTML = '<div style="text-align: center; padding: 1rem;">没有找到相关结果</div>';
+        }
+    } catch (e) {
+        resultsContainer.innerHTML = '<div style="text-align: center; padding: 1rem; color: var(--danger);">搜索失败: ' + e.message + '</div>';
+    }
+}
+</script>
 
 <script>
 // 页面加载时自动获取配置

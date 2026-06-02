@@ -94,6 +94,28 @@ async def search_resources(keyword: str, source_type: str = "all", plugins: Opti
     result = await pansou_client.search(keyword, source_type, plugins)
     return result
 
+@router.get("/tmdb")
+async def search_tmdb(keyword: str, media_type: str = "multi", year: Optional[int] = None):
+    """可视化配置：通过TMDB搜索影视剧以生成正则"""
+    from app.core.tmdb.client import tmdb_client
+    
+    results = []
+    if media_type in ("movie", "multi"):
+        movies = await tmdb_client.search_movie(keyword, year)
+        for m in movies:
+            m['media_type'] = 'movie'
+        results.extend(movies)
+        
+    if media_type in ("tv", "multi"):
+        tvs = await tmdb_client.search_tv(keyword, year)
+        for t in tvs:
+            t['media_type'] = 'tv'
+        results.extend(tvs)
+        
+    # 按热度排序
+    results.sort(key=lambda x: x.get('popularity', 0), reverse=True)
+    return {"status": "success", "data": results[:10]}
+
 @router.post("/transfer")
 async def transfer_resource(req: TransferRequest, background_tasks: BackgroundTasks):
     """一键转存分享链接或推送离线下载"""
