@@ -259,16 +259,26 @@ async def scrape_telegram_monitor(req: TelegramScrapeRequest, background_tasks: 
             valid_kws = [kw.strip().lower() for kw in req.keywords if kw.strip()]
             for ch in parsed_channels:
                 try:
+                    import asyncio
+                    msg_count = 0
                     if valid_kws:
                         for kw in valid_kws:
-                            async for msg in client_to_use.iter_messages(ch, search=kw, limit=50):
+                            async for msg in client_to_use.iter_messages(ch, search=kw, limit=None):
+                                msg_count += 1
+                                if msg_count % 100 == 0:
+                                    await asyncio.sleep(2)  # 每处理100条消息强制休眠2秒，避免触发 Telegram FloodWait
+                                    
                                 text = msg.message or ""
                                 links = telegram_monitor.extract_links(text)
                                 for link_data in links:
                                     total_links_found += 1
                                     await event_bus.emit(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
                     else:
-                        async for msg in client_to_use.iter_messages(ch, limit=50):
+                        async for msg in client_to_use.iter_messages(ch, limit=None):
+                            msg_count += 1
+                            if msg_count % 100 == 0:
+                                await asyncio.sleep(2)  # 每处理100条消息强制休眠2秒，避免触发 Telegram FloodWait
+                                
                             text = msg.message or ""
                             links = telegram_monitor.extract_links(text)
                             for link_data in links:
@@ -285,7 +295,7 @@ async def scrape_telegram_monitor(req: TelegramScrapeRequest, background_tasks: 
                 await client_to_use.disconnect()
 
     background_tasks.add_task(bg_scrape)
-    return {"status": "success", "message": "历史消息抓取任务已加入后台！\n匹配到的资源链接将自动进入排队系统，并按照防封控频率（间隔 3 秒）依次转存。您可以去主日志查看实时抓取和转存进度。"}
+    return {"status": "success", "message": "全量历史消息抓取任务已加入后台！\n匹配到的资源链接将自动进入排队系统，并按照防封控频率（间隔 3 秒）依次转存。您可以去主日志查看实时抓取和转存进度。"}
 
 @router.post("/test-emby")
 async def test_emby(request: Request):
