@@ -242,32 +242,30 @@ input:checked + .slider:before {
 </style>
 
 <!-- TMDB Modal -->
-<div id="tmdbModal" class="modal">
-    <div class="modal-content" style="max-width: 600px;">
-        <div class="modal-header">
-            <h3>TMDB 可视化配置正则</h3>
-            <button class="close-btn" onclick="closeTmdbModal()">&times;</button>
+<div id="tmdbModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 10000; align-items: center; justify-content: center;">
+    <div class="glass-panel animate-fade-in" style="width: 90%; max-width: 600px; padding: 1.5rem; display: flex; flex-direction: column; max-height: 80vh;">
+        <h3 style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center;">
+            <span><i class="fa-solid fa-film"></i> TMDB 可视化配置正则</span>
+            <i class="fa-solid fa-xmark" style="cursor: pointer; color: var(--text-secondary);" onclick="closeTmdbModal()"></i>
+        </h3>
+        <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+            <select id="tmdbSearchType" class="form-control" style="width: 120px;">
+                <option value="multi">全部</option>
+                <option value="movie">电影</option>
+                <option value="tv">剧集</option>
+            </select>
+            <input type="text" id="tmdbSearchKeyword" class="form-control" placeholder="输入影视剧名称搜索..." style="flex: 1;" onkeydown="if(event.key==='Enter') searchTmdb()">
+            <button type="button" class="btn btn-primary" onclick="searchTmdb()"><i class="fa-solid fa-search"></i> 搜索</button>
         </div>
-        <div class="modal-body">
-            <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
-                <select id="tmdbSearchType" class="form-control" style="width: 120px;">
-                    <option value="multi">全部</option>
-                    <option value="movie">电影</option>
-                    <option value="tv">剧集</option>
-                </select>
-                <input type="text" id="tmdbSearchKeyword" class="form-control" placeholder="输入影视剧名称搜索..." style="flex: 1;" onkeydown="if(event.key==='Enter') searchTmdb()">
-                <button type="button" class="btn btn-primary" onclick="searchTmdb()"><i class="fa-solid fa-search"></i> 搜索</button>
-            </div>
-            <div id="tmdbSearchResults" style="max-height: 400px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem;">
-                <!-- 结果将渲染在这里 -->
-            </div>
+        <div id="tmdbSearchResults" style="flex: 1; overflow-y: auto; background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 0.5rem; min-height: 300px; padding: 0.5rem; display: flex; flex-direction: column; gap: 0.5rem;">
+            <!-- 结果将渲染在这里 -->
         </div>
     </div>
 </div>
 
 <script>
 function openTmdbModal() {
-    document.getElementById('tmdbModal').style.display = 'block';
+    document.getElementById('tmdbModal').style.display = 'flex';
     document.getElementById('tmdbSearchKeyword').focus();
 }
 
@@ -303,7 +301,7 @@ async function searchTmdb() {
                 div.onmouseover = () => div.style.background = 'var(--bg-hover)';
                 div.onmouseout = () => div.style.background = 'var(--bg-secondary)';
                 
-                div.onclick = () => {
+                div.onclick = async () => {
                     let regex = '';
                     const safeTitle = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                     const safeOrig = originalTitle ? originalTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : '';
@@ -318,7 +316,7 @@ async function searchTmdb() {
                         regex = names;
                     }
                     
-                    if (confirm(`为您生成正则：\n${regex}\n\n确认添加到规则列表吗？`)) {
+                    if (await window.customConfirm(`为您生成正则：\n${regex}\n\n确认添加到规则列表吗？`)) {
                         const textarea = document.getElementById('mon_tg_filter_rules');
                         const val = textarea.value.trim();
                         textarea.value = val ? val + '\n' + regex : regex;
