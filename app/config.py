@@ -77,6 +77,7 @@ class TelegramConfig(BaseModel):
     channels: List[str] = []
     proxy: str = ""
     keywords: List[str] = []
+    filter_rules: List[str] = []
     target_dir_id: str = "0"
     archive_dir_id: str = "0"
     auto_organize: bool = False

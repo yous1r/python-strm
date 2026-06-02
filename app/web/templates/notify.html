@@ -28,9 +28,14 @@
             <label class="form-label">监听频道列表 (每行一个 ID 或 Username)</label>
             <textarea id="mon_tg_channels" class="form-control" rows="3" placeholder="-1001234567890&#10;my_share_channel"></textarea>
         </div>
+        </div>
         <div class="form-group">
-            <label class="form-label">关键字匹配 (可选，每行一个。包含任意关键字即处理)</label>
+            <label class="form-label">消息关键字过滤 (可选，每行一个。Telegram消息包含任意关键字即处理)</label>
             <textarea id="mon_tg_keywords" class="form-control" rows="3" placeholder="蓝光&#10;洗版"></textarea>
+        </div>
+        <div class="form-group">
+            <label class="form-label">资源匹配过滤规则 (可选，正则表达式，每行一个。仅转存115分享链接内文件名匹配的资源)</label>
+            <textarea id="mon_tg_filter_rules" class="form-control" rows="3" placeholder="1080p&#10;.*S01.*"></textarea>
         </div>
         <div class="form-group">
             <label class="form-label">115 转存中转目录 ID (必填，转存后存放的位置)</label>
@@ -248,6 +253,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('mon_tg_proxy').value = config.monitor.telegram.proxy || '';
             document.getElementById('mon_tg_channels').value = (config.monitor.telegram.channels || []).join('\n');
             document.getElementById('mon_tg_keywords').value = (config.monitor.telegram.keywords || []).join('\n');
+            document.getElementById('mon_tg_filter_rules').value = (config.monitor.telegram.filter_rules || []).join('\n');
             document.getElementById('mon_tg_target_dir_id').value = config.monitor.telegram.target_dir_id || '0';
             document.getElementById('mon_tg_archive_dir_id').value = config.monitor.telegram.archive_dir_id || '0';
             document.getElementById('mon_tg_auto_organize').checked = config.monitor.telegram.auto_organize;
@@ -288,6 +294,7 @@ async function saveNotifyConfig(silent = false) {
     // 提取通道列表并过滤空行
     const tgChannels = document.getElementById('mon_tg_channels').value.split('\n').map(c => c.trim()).filter(c => c);
     const tgKeywords = document.getElementById('mon_tg_keywords').value.split('\n').map(c => c.trim()).filter(c => c);
+    const tgFilterRules = document.getElementById('mon_tg_filter_rules').value.split('\n').map(c => c.trim()).filter(c => c);
 
     const payload = {
         monitor: {
@@ -298,6 +305,7 @@ async function saveNotifyConfig(silent = false) {
                 proxy: document.getElementById('mon_tg_proxy').value,
                 channels: tgChannels,
                 keywords: tgKeywords,
+                filter_rules: tgFilterRules,
                 target_dir_id: document.getElementById('mon_tg_target_dir_id').value,
                 archive_dir_id: document.getElementById('mon_tg_archive_dir_id').value,
                 auto_organize: document.getElementById('mon_tg_auto_organize').checked,

@@ -34,7 +34,12 @@ async def handle_new_link(link_data: dict, source: str, **kwargs):
     logger.info(f"Processing new 115 link: {share_url} with pwd: {receive_code}")
     
     # 1. 尝试转存
-    transfer_res = await client_115.share_receive(share_url, receive_code, target_dir_id)
+    transfer_res = await client_115.share_receive(
+        share_url, 
+        receive_code, 
+        target_dir_id, 
+        filter_rules=config.filter_rules
+    )
     if not transfer_res.get("state"):
         logger.error(f"Failed to auto-transfer link {share_url}: {transfer_res.get('error')}")
         await notify_manager.notify(

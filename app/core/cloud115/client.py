@@ -250,7 +250,7 @@ class Cloud115Client:
                 logger.error(f"Failed to add offline task: {e}")
                 return {"state": False, "error": str(e)}
 
-    async def share_receive(self, share_url: str, receive_code: str, target_dir_id: str = "0") -> Dict[str, Any]:
+    async def share_receive(self, share_url: str, receive_code: str, target_dir_id: str = "0", filter_rules: List[str] = None) -> Dict[str, Any]:
         """转存115分享链接"""
         if not self.client:
             return {"state": False, "error": "Client not initialized"}
@@ -287,15 +287,35 @@ class Cloud115Client:
                 if not share_info.get("state"):
                     return {"state": False, "error": share_info.get("error_msg", "Failed to get share info")}
                     
-                # 获取根目录的所有 file_id
+                # 获取根目录的所有 file_id，并根据 filter_rules 进行过滤
+                import re
+                valid_rules = []
+                if filter_rules:
+                    for r in filter_rules:
+                        r = r.strip()
+                        if r:
+                            try:
+                                valid_rules.append(re.compile(r, re.IGNORECASE))
+                            except Exception as e:
+                                logger.error(f"Invalid regex rule {r}: {e}")
+                                
                 file_ids = []
                 for item in share_info.get("data", {}).get("list", []):
                     fid = item.get("f") or item.get("fid") or item.get("cid")
+                    fname = item.get("n") or item.get("fn") or ""
+                    
                     if fid:
-                        file_ids.append(str(fid))
+                        if valid_rules:
+                            if any(rule.search(fname) for rule in valid_rules):
+                                file_ids.append(str(fid))
+                                logger.info(f"Matched rule for resource: {fname}")
+                            else:
+                                logger.debug(f"Resource {fname} ignored (not matching rules)")
+                        else:
+                            file_ids.append(str(fid))
                     
                 if not file_ids:
-                    return {"state": False, "error": "No files found in share"}
+                    return {"state": False, "error": "No files found in share or none matched filter rules"}
                     
                 # 构造 payload 进行转存
                 receive_payload = {
