@@ -137,10 +137,15 @@ input:checked + .slider:before {
             <i class="fa-solid fa-xmark" style="cursor: pointer; color: var(--text-secondary);" onclick="closeTmdbModal()"></i>
         </h3>
         <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
-            <select id="tmdbSearchType" class="form-control" style="width: 120px;">
+            <select id="tmdbSearchType" class="form-control" style="width: 100px; padding: 0.3rem;">
                 <option value="multi">全部</option>
                 <option value="movie">电影</option>
                 <option value="tv">剧集</option>
+            </select>
+            <select id="tmdbYearPolicy" class="form-control" style="width: 140px; padding: 0.3rem;">
+                <option value="auto">年份: 自动配置</option>
+                <option value="force">年份: 强制包含</option>
+                <option value="none">年份: 不包含</option>
             </select>
             <input type="text" id="tmdbSearchKeyword" class="form-control" placeholder="输入影视剧名称搜索..." style="flex: 1;" onkeydown="if(event.key==='Enter') searchTmdb()">
             <button type="button" class="btn btn-primary" onclick="searchTmdb()"><i class="fa-solid fa-search"></i> 搜索</button>
@@ -198,13 +203,17 @@ async function searchTmdb() {
                     const safeTitle = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                     const safeOrig = originalTitle ? originalTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : '';
                     
-                    if (item.media_type === 'movie') {
-                        // 电影：使用前瞻断言(lookahead)无序匹配片名和年份
-                        let names = safeOrig && safeOrig !== safeTitle ? `(${safeTitle}|${safeOrig})` : safeTitle;
-                        regex = year ? `^(?=.*${names})(?=.*${year}).*$` : `^(?=.*${names}).*$`;
+                    const yearPolicy = document.getElementById('tmdbYearPolicy').value;
+                    let names = safeOrig && safeOrig !== safeTitle ? `(${safeTitle}|${safeOrig})` : safeTitle;
+                    
+                    let shouldIncludeYear = false;
+                    if (yearPolicy === 'force') shouldIncludeYear = true;
+                    else if (yearPolicy === 'none') shouldIncludeYear = false;
+                    else shouldIncludeYear = (item.media_type === 'movie');
+                    
+                    if (shouldIncludeYear && year) {
+                        regex = `^(?=.*${names})(?=.*${year}).*$`;
                     } else {
-                        // 剧集：使用前瞻断言匹配片名
-                        let names = safeOrig && safeOrig !== safeTitle ? `(${safeTitle}|${safeOrig})` : safeTitle;
                         regex = `^(?=.*${names}).*$`;
                     }
                     
