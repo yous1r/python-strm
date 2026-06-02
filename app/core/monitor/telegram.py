@@ -46,7 +46,34 @@ class TelegramMonitor:
 
         self.client = TelegramClient('session_strm', self.config.api_id, self.config.api_hash, **client_kwargs)
         
-        @self.client.on(events.NewMessage(chats=self.config.channels))
+        parsed_channels = []
+        for ch in (self.config.channels or []):
+            ch = ch.strip()
+            if not ch: continue
+            
+            # https://t.me/c/1234567890/123 -> -1001234567890
+            match_c = re.search(r't\.me/c/(\d+)', ch)
+            if match_c:
+                parsed_channels.append(int(f"-100{match_c.group(1)}"))
+                continue
+                
+            # https://t.me/username or @username
+            match_u = re.search(r't\.me/([a-zA-Z0-9_]+)', ch)
+            if match_u and match_u.group(1) not in ['c', 'joinchat', 'setlanguage']:
+                parsed_channels.append(match_u.group(1))
+                continue
+                
+            if ch.startswith('@'):
+                parsed_channels.append(ch[1:])
+                continue
+                
+            # Try to convert to int (like -100... or just digits)
+            try:
+                parsed_channels.append(int(ch))
+            except ValueError:
+                parsed_channels.append(ch)
+        
+        @self.client.on(events.NewMessage(chats=parsed_channels))
         async def handler(event):
             self.config = get_config().monitor.telegram
             text = event.message.message or ""
