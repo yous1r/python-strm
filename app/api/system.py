@@ -1,5 +1,14 @@
 from fastapi import APIRouter, Request, HTTPException
 from app.config import get_config, update_config
+from pydantic import BaseModel
+from typing import List, Optional
+
+class TelegramTestRequest(BaseModel):
+    api_id: str
+    api_hash: str
+    bot_token: str = ""
+    proxy: str = ""
+    channels: List[str] = []
 
 router = APIRouter(prefix="/system", tags=["System Config"])
 
@@ -63,25 +72,48 @@ async def test_notify(channel: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/test-monitor/telegram")
-async def test_telegram_monitor():
-    """测试 Telegram 监控节点登录状态"""
+async def test_telegram_monitor(req: TelegramTestRequest):
+    """测试 Telegram 监控节点登录状态并获取第一条测试消息"""
     try:
-        from app.config import get_config
         from app.core.monitor.telegram import telegram_monitor
-        config = get_config().monitor.telegram
-        if not config.api_id or not config.api_hash:
-            raise HTTPException(status_code=400, detail="API ID 和 API Hash 未配置")
+        if not req.api_id or not req.api_hash:
+            raise HTTPException(status_code=400, detail="API ID 和 API Hash 不能为空")
             
+        if not req.channels:
+            raise HTTPException(status_code=400, detail="未配置频道！请在前端添加至少一个监听频道后再试。")
+            
+        import re
+        first_channel = req.channels[0].strip()
+        parsed_channel = first_channel
+        match_c = re.search(r't\.me/c/(\d+)', first_channel)
+        if match_c:
+            parsed_channel = int(f"-100{match_c.group(1)}")
+        else:
+            match_u = re.search(r't\.me/([a-zA-Z0-9_]+)', first_channel)
+            if match_u and match_u.group(1) not in ['c', 'joinchat', 'setlanguage']:
+                parsed_channel = match_u.group(1)
+            elif first_channel.startswith('@'):
+                parsed_channel = first_channel[1:]
+            else:
+                try:
+                    parsed_channel = int(first_channel)
+                except ValueError:
+                    pass
+
         is_auth = False
+        client_to_use = None
+        disconnect_after = False
+        
         if telegram_monitor.client and telegram_monitor.client.is_connected():
             is_auth = await telegram_monitor.client.is_user_authorized()
+            client_to_use = telegram_monitor.client
         else:
             from telethon import TelegramClient
             import urllib.parse
             
             client_kwargs = {}
-            if config.proxy:
-                proxy_str = config.proxy
+            if req.proxy:
+                proxy_str = req.proxy
                 if not proxy_str.startswith(("http://", "https://", "socks5://", "socks5h://")):
                     proxy_str = f"http://{proxy_str}"
                 parsed = urllib.parse.urlparse(proxy_str)
@@ -96,29 +128,43 @@ async def test_telegram_monitor():
                     "port": parsed.port
                 }
 
-            client = TelegramClient('session_strm', config.api_id, config.api_hash, **client_kwargs)
-            await client.connect()
-            if not await client.is_user_authorized():
-                if getattr(config, 'bot_token', ''):
+            client_to_use = TelegramClient('session_strm', req.api_id, req.api_hash, **client_kwargs)
+            await client_to_use.connect()
+            disconnect_after = True
+            
+            if not await client_to_use.is_user_authorized():
+                if req.bot_token:
                     try:
-                        await client.start(bot_token=config.bot_token)
+                        await client_to_use.start(bot_token=req.bot_token)
                         is_auth = True
                     except Exception as e:
-                        await client.disconnect()
+                        await client_to_use.disconnect()
                         return {"status": "error", "message": f"Bot Token 登录失败: {str(e)}"}
                 else:
                     is_auth = False
             else:
                 is_auth = True
-            await client.disconnect()
         
-        if is_auth:
-            return {"status": "success", "message": "连接并鉴权成功！节点账号已就绪。"}
-        else:
+        if not is_auth:
+            if disconnect_after:
+                await client_to_use.disconnect()
             return {"status": "error", "message": "连接成功，但尚未登录。请填写 Bot Token 或在后端运行 python login_tg.py 完成扫码登录。"}
             
+        # 测试读取第一个频道
+        try:
+            messages = await client_to_use.get_messages(parsed_channel, limit=1)
+            msg_text = messages[0].text if messages and messages[0].text else "[图片/非文本消息或空消息]"
+            success_msg = f"连接并鉴权成功！\n成功读取到频道 [{first_channel}] 的最新一条消息：\n\n{msg_text}"
+        except Exception as e:
+            success_msg = f"连接并鉴权成功！但读取频道 [{first_channel}] 失败，可能您还未加入该频道，或者权限不足。\n错误信息: {str(e)}"
+
+        if disconnect_after:
+            await client_to_use.disconnect()
+            
+        return {"status": "success", "message": success_msg}
+            
     except Exception as e:
-        return {"status": "error", "message": f"测试连接失败: {str(e)}"}
+        return {"status": "error", "message": f"测试失败: {str(e)}"}
 
 @router.post("/test-emby")
 async def test_emby(request: Request):

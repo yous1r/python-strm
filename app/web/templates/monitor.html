@@ -345,17 +345,22 @@ async function testTgMonitor(btn) {
     btn.disabled = true;
     btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 测试中...';
     
-    // 测试前先保存配置，确保测试的是最新数据
-    const saved = await saveMonitorConfig();
-    if (!saved) {
-        btn.disabled = false;
-        btn.innerHTML = originalText;
-        return;
-    }
+    // 获取当前填写的配置，但不保存
+    const tgChannels = document.getElementById('mon_tg_channels').value.split('\n').map(l => l.trim()).filter(l => l);
+    
+    const requestData = {
+        api_id: document.getElementById('mon_tg_api_id').value,
+        api_hash: document.getElementById('mon_tg_api_hash').value,
+        bot_token: document.getElementById('mon_tg_bot_token').value,
+        proxy: document.getElementById('mon_tg_proxy').value,
+        channels: tgChannels
+    };
     
     try {
         const res = await fetch('/api/v1/system/test-monitor/telegram', {
-            method: 'POST'
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestData)
         });
         const data = await res.json();
         
