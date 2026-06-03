@@ -99,21 +99,9 @@ async def upload_tg_json(background_tasks: BackgroundTasks, file: UploadFile = F
                     msg_id = msg.get('id')
                 
                     from guessit import guessit
-                    from app.core.tmdb.client import tmdb_client
-                
                     guessed = guessit(title)
                     base_title = guessed.get("title") or title
-                    year = str(guessed.get("year", ""))
                     poster_url = None
-                
-                    try:
-                        res = await tmdb_client.search_movie(base_title, year)
-                        if not res:
-                            res = await tmdb_client.search_tv(base_title, year)
-                        if res and res[0].get('poster_path'):
-                            poster_url = f"https://image.tmdb.org/t/p/w342{res[0]['poster_path']}"
-                    except:
-                        pass
                 
                     for link_data in links:
                         resource = {
@@ -199,7 +187,7 @@ async def migrate_legacy(background_tasks: BackgroundTasks):
         import asyncio
         async with get_db_conn() as db:
             db.row_factory = dict_factory
-            cursor = await db.execute("SELECT id, title FROM tg_resources WHERE base_title IS NULL")
+            cursor = await db.execute("SELECT id, title FROM tg_resources WHERE poster_url IS NULL")
             rows = await cursor.fetchall()
             for row in rows:
                 guessed = guessit(row['title'])
