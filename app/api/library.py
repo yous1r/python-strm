@@ -189,31 +189,39 @@ async def transfer_batch(base_title: str = Form(...)):
 class TransferSelectedRequest(BaseModel):
     ids: List[int]
     base_title: str = ""
+    transfer_all: bool = False
 
 @router.post("/transfer_selected")
 async def transfer_selected(req: TransferSelectedRequest):
     """批量转存选中的剧集，创建统一 task_id 追踪"""
     import uuid
     from app.events import event_bus, EVENT_MONITOR_NEW_LINK
-    
-    if not req.ids:
-        return {"status": "error", "message": "未选择任何资源"}
-    
+
     task_id = str(uuid.uuid4())
-    
+
     async with get_db_conn() as db:
         db.row_factory = dict_factory
-        
-        placeholders = ','.join('?' * len(req.ids))
-        cursor = await db.execute(
-            f"SELECT * FROM tg_resources WHERE id IN ({placeholders}) AND status IN ('pending', 'failed')",
-            req.ids
-        )
-        rows = await cursor.fetchall()
+
+        if req.transfer_all and req.base_title:
+            # 整剧转存：查该 base_title 下所有 pending/failed 的剧集
+            cursor = await db.execute(
+                "SELECT * FROM tg_resources WHERE base_title = ? AND status IN ('pending', 'failed')",
+                (req.base_title,)
+            )
+            rows = await cursor.fetchall()
+        elif req.ids:
+            placeholders = ','.join('?' * len(req.ids))
+            cursor = await db.execute(
+                f"SELECT * FROM tg_resources WHERE id IN ({placeholders}) AND status IN ('pending', 'failed')",
+                req.ids
+            )
+            rows = await cursor.fetchall()
+        else:
+            return {"status": "error", "message": "未指定资源"}
         
         if not rows:
             return {"status": "success", "message": "所选资源均已转存，无需重复操作"}
-        
+
         # 更新状态
         actual_ids = [r['id'] for r in rows]
         id_placeholders = ','.join('?' * len(actual_ids))

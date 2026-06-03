@@ -34,40 +34,12 @@
 .preview-item i.fa-rotate-left { color: var(--warning); }
 </style>
 
-<!-- Transfer Receive Card -->
-<div class="glass-panel transfer-card animate-fade-in delay-1">
-    <h2 style="margin-bottom: 1rem; display: flex; align-items: center;">
-        <i class="fa-solid fa-cloud-arrow-down" style="color: var(--accent-primary); margin-right: 0.75rem;"></i> 转存接收
-    </h2>
-    <div class="form-row" style="margin-bottom: 1rem;">
-        <div style="flex: 3; min-width: 250px;">
-            <label class="form-label">115 分享链接</label>
-            <input type="text" class="form-control" id="shareUrl" placeholder="https://115.com/s/xxxx?password=xxxx">
-        </div>
-        <div style="flex: 1; min-width: 100px;">
-            <label class="form-label">提取码</label>
-            <input type="text" class="form-control" id="receiveCode" placeholder="如未设置可不填">
-        </div>
-    </div>
-    <div class="form-row" style="margin-bottom: 1rem;">
-        <div style="flex: 2; min-width: 200px;">
-            <label class="form-label">目标临时目录（可选，默认使用配置）</label>
-            <div style="display: flex; gap: 0.5rem;">
-                <input type="text" class="form-control" id="targetDirId" placeholder="留空则使用配置的 temp_dir_id" readonly>
-                <button type="button" class="btn btn-secondary" onclick="openDirPicker()" style="white-space: nowrap;">
-                    <i class="fa-solid fa-folder-open"></i> 选择
-                </button>
-            </div>
-        </div>
-    </div>
-    <div style="display: flex; gap: 1rem;">
-        <button class="btn btn-primary" id="receiveBtn" onclick="submitReceive()">
-            <i class="fa-solid fa-download"></i> 开始接收
-        </button>
-        <button class="btn btn-secondary" id="refreshBtn" onclick="loadTasks()">
-            <i class="fa-solid fa-arrows-rotate"></i> 刷新列表
-        </button>
-    </div>
+<!-- 日常转存请前往“资源图鉴”页面操作，此处仅追踪任务进度 -->
+<div class="glass-panel transfer-card animate-fade-in delay-1" style="text-align: center; padding: 1.5rem;">
+    <p style="color: var(--text-secondary); margin: 0;">
+        <i class="fa-solid fa-circle-info" style="margin-right: 0.5rem; color: var(--accent-primary);"></i>
+        日常转存请前往 <a href="/library" style="color: var(--accent-primary); font-weight: 600;">资源图鉴</a> 页面操作，此处仅追踪整理任务进度与还原。
+    </p>
 </div>
 
 <!-- Tasks List -->
