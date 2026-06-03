@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Form
 from app.database import get_db_conn, insert_tg_resource
 from app.core.monitor.telegram import telegram_monitor
 import json
@@ -8,31 +8,38 @@ router = APIRouter(prefix="/library", tags=["Resource Library"])
 @router.get("/tg_resources")
 async def get_tg_resources(page: int = 1, page_size: int = 20, search: str = ""):
     offset = (page - 1) * page_size
-    query = "SELECT * FROM tg_resources"
     params = []
+    
+    # 获取唯一的 base_title 列表（带分页）
+    base_query = "SELECT base_title, MAX(poster_url) as poster_url, COUNT(*) as ep_count, MAX(msg_date) as last_updated FROM tg_resources"
     if search:
-        query += " WHERE title LIKE ? OR raw_text LIKE ?"
+        base_query += " WHERE title LIKE ? OR raw_text LIKE ?"
         params.extend([f"%{search}%", f"%{search}%"])
-        
-    query += " ORDER BY msg_date DESC LIMIT ? OFFSET ?"
+    base_query += " GROUP BY base_title ORDER BY last_updated DESC LIMIT ? OFFSET ?"
     params.extend([page_size, offset])
     
-    count_query = "SELECT COUNT(*) FROM tg_resources"
+    count_query = "SELECT COUNT(DISTINCT base_title) FROM tg_resources"
     count_params = []
     if search:
         count_query += " WHERE title LIKE ? OR raw_text LIKE ?"
         count_params.extend([f"%{search}%", f"%{search}%"])
         
     async with get_db_conn() as db:
+        db.row_factory = dict_factory
         cursor = await db.execute(count_query, count_params)
         total_row = await cursor.fetchone()
-        total = total_row[0] if total_row else 0
+        total = total_row['COUNT(DISTINCT base_title)'] if total_row else 0
         
-        db.row_factory = dict_factory
-        cursor = await db.execute(query, params)
-        rows = await cursor.fetchall()
+        cursor = await db.execute(base_query, params)
+        groups = await cursor.fetchall()
         
-    return {"status": "success", "data": rows, "total": total, "page": page, "page_size": page_size}
+        # 针对每个 group 拉取对应的所有剧集
+        for group in groups:
+            b_title = group['base_title']
+            cursor = await db.execute("SELECT * FROM tg_resources WHERE base_title = ? ORDER BY msg_date DESC", (b_title,))
+            group['episodes'] = await cursor.fetchall()
+            
+    return {"status": "success", "data": groups, "total": total, "page": page, "page_size": page_size}
 
 def dict_factory(cursor, row):
     d = {}
@@ -129,3 +136,61 @@ async def manual_transfer(res_id: int):
     }
     await event_bus.emit(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
     return {"status": "success"}
+
+@router.post("/transfer_batch")
+async def transfer_batch(base_title: str = Form(...)):
+    from app.events import event_bus, EVENT_MONITOR_NEW_LINK
+    
+    async with get_db_conn() as db:
+        db.row_factory = dict_factory
+        cursor = await db.execute("SELECT * FROM tg_resources WHERE base_title = ? AND status IN ('pending', 'failed')", (base_title,))
+        rows = await cursor.fetchall()
+        
+        if not rows:
+            return {"status": "success", "message": "没有需要转存的剧集"}
+            
+        # 先批量更新状态
+        ids = [r['id'] for r in rows]
+        placeholders = ','.join('?' * len(ids))
+        await db.execute(f"UPDATE tg_resources SET status = 'queued' WHERE id IN ({placeholders})", ids)
+        await db.commit()
+        
+    for row in rows:
+        link_data = {
+            "url": row["link"],
+            "password": row["password"],
+            "type": row["disk_type"],
+            "db_id": row["id"]
+        }
+        await event_bus.emit(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
+        
+    return {"status": "success", "message": f"已将 {len(rows)} 个资源加入转存队列"}
+
+@router.post("/migrate_legacy")
+async def migrate_legacy(background_tasks: BackgroundTasks):
+    async def run_migration():
+        import PTN
+        from app.core.tmdb.client import tmdb_client
+        import asyncio
+        async with get_db_conn() as db:
+            db.row_factory = dict_factory
+            cursor = await db.execute("SELECT id, title FROM tg_resources WHERE base_title IS NULL")
+            rows = await cursor.fetchall()
+            for row in rows:
+                parsed = PTN.parse(row['title'])
+                b_title = parsed.get("title") or row['title']
+                year = parsed.get("year", "")
+                poster = None
+                try:
+                    res = await tmdb_client.search_movie(b_title, year)
+                    if not res:
+                        res = await tmdb_client.search_tv(b_title, year)
+                    if res and res[0].get('poster_path'):
+                        poster = f"https://image.tmdb.org/t/p/w342{res[0]['poster_path']}"
+                except:
+                    pass
+                await db.execute("UPDATE tg_resources SET base_title=?, poster_url=? WHERE id=?", (b_title, poster, row['id']))
+                await asyncio.sleep(0.5)
+            await db.commit()
+    background_tasks.add_task(run_migration)
+    return {"status": "success", "message": "后台清洗升级任务已启动"}
