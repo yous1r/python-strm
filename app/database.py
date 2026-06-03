@@ -114,11 +114,16 @@ async def init_db():
         # 兼容老表升级：尝试新增字段
         try:
             await db.execute("ALTER TABLE tg_resources ADD COLUMN base_title TEXT")
+        except Exception: pass
+        try:
             await db.execute("ALTER TABLE tg_resources ADD COLUMN poster_url TEXT")
+        except Exception: pass
+        try:
             await db.execute("ALTER TABLE tg_resources ADD COLUMN overview TEXT")
+        except Exception: pass
+        try:
             await db.execute("ALTER TABLE tg_resources ADD COLUMN cast_text TEXT")
-        except Exception:
-            pass # 字段已存在则忽略
+        except Exception: pass
         
         await db.commit()
         logger.info("Database initialized successfully")
