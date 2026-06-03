@@ -63,73 +63,79 @@ async def upload_tg_json(background_tasks: BackgroundTasks, file: UploadFile = F
     channel_id = str(data.get('id', ''))
     
     async def process_json_background(msgs, ch_name, ch_id):
-        from app.core.monitor.parser import extract_title_from_text
-        import asyncio
-        async with get_db_conn() as db:
-            for msg in msgs:
-                if msg.get('type') != 'message':
-                    continue
-                # 解析消息文本
-                raw_text = ""
-                entities = msg.get('text_entities')
-                if not entities:
-                    entities = msg.get('text', [])
-                    if isinstance(entities, str):
-                        entities = [{"type": "plain", "text": entities}]
+        from loguru import logger
+        logger.info(f"Started process_json_background for {len(msgs)} msgs")
+        try:
+            from app.core.monitor.parser import extract_title_from_text
+            import asyncio
+            async with get_db_conn() as db:
+                for msg in msgs:
+                    if msg.get('type') != 'message':
+                        continue
+                    # 解析消息文本
+                    raw_text = ""
+                    entities = msg.get('text_entities')
+                    if not entities:
+                        entities = msg.get('text', [])
+                        if isinstance(entities, str):
+                            entities = [{"type": "plain", "text": entities}]
                 
-                if isinstance(entities, list):
-                    for part in entities:
-                        if isinstance(part, str):
-                            raw_text += part
-                        elif isinstance(part, dict):
-                            raw_text += part.get('text', '')
-                            # 把隐藏的超链接暴露在纯文本里，让后续的 extract_links 能正则捕获到
-                            if part.get('href'):
-                                raw_text += f" {part['href']} "
+                    if isinstance(entities, list):
+                        for part in entities:
+                            if isinstance(part, str):
+                                raw_text += part
+                            elif isinstance(part, dict):
+                                raw_text += part.get('text', '')
+                                # 把隐藏的超链接暴露在纯文本里，让后续的 extract_links 能正则捕获到
+                                if part.get('href'):
+                                    raw_text += f" {part['href']} "
                     
-                links = telegram_monitor.extract_links(raw_text)
-                if not links:
-                    continue
+                    links = telegram_monitor.extract_links(raw_text)
+                    if not links:
+                        continue
                     
-                title = extract_title_from_text(raw_text)
-                msg_date = msg.get('date')
-                msg_id = msg.get('id')
+                    title = extract_title_from_text(raw_text)
+                    msg_date = msg.get('date')
+                    msg_id = msg.get('id')
                 
-                from guessit import guessit
-                from app.core.tmdb.client import tmdb_client
+                    from guessit import guessit
+                    from app.core.tmdb.client import tmdb_client
                 
-                guessed = guessit(title)
-                base_title = guessed.get("title") or title
-                year = str(guessed.get("year", ""))
-                poster_url = None
+                    guessed = guessit(title)
+                    base_title = guessed.get("title") or title
+                    year = str(guessed.get("year", ""))
+                    poster_url = None
                 
-                try:
-                    res = await tmdb_client.search_movie(base_title, year)
-                    if not res:
-                        res = await tmdb_client.search_tv(base_title, year)
-                    if res and res[0].get('poster_path'):
-                        poster_url = f"https://image.tmdb.org/t/p/w342{res[0]['poster_path']}"
-                except:
-                    pass
+                    try:
+                        res = await tmdb_client.search_movie(base_title, year)
+                        if not res:
+                            res = await tmdb_client.search_tv(base_title, year)
+                        if res and res[0].get('poster_path'):
+                            poster_url = f"https://image.tmdb.org/t/p/w342{res[0]['poster_path']}"
+                    except:
+                        pass
                 
-                for link_data in links:
-                    resource = {
-                        "message_id": msg_id,
-                        "channel_id": ch_id,
-                        "title": title,
-                        "raw_text": raw_text,
-                        "link": link_data["url"],
-                        "password": link_data["password"],
-                        "disk_type": link_data["type"],
-                        "msg_date": msg_date,
-                        "status": "pending",
-                        "base_title": base_title,
-                        "poster_url": poster_url
-                    }
-                    await insert_tg_resource(db, resource)
-                # 每处理100条缓一下，防止锁死DB
-                await asyncio.sleep(0)
+                    for link_data in links:
+                        resource = {
+                            "message_id": msg_id,
+                            "channel_id": ch_id,
+                            "title": title,
+                            "raw_text": raw_text,
+                            "link": link_data["url"],
+                            "password": link_data["password"],
+                            "disk_type": link_data["type"],
+                            "msg_date": msg_date,
+                            "status": "pending",
+                            "base_title": base_title,
+                            "poster_url": poster_url
+                        }
+                        await insert_tg_resource(db, resource)
+                    # 每处理100条缓一下，防止锁死DB
+                    await asyncio.sleep(0)
             await db.commit()
+            logger.info("Finished process_json_background successfully")
+        except Exception as e:
+            logger.exception(f"Error in process_json_background: {e}")
             
     background_tasks.add_task(process_json_background, messages, channel_name, channel_id)
     return {"status": "success", "message": f"成功接收到 {len(messages)} 条历史消息，正在后台清洗解析并入库。"}
