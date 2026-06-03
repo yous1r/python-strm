@@ -95,12 +95,12 @@ async def upload_tg_json(background_tasks: BackgroundTasks, file: UploadFile = F
                 msg_date = msg.get('date')
                 msg_id = msg.get('id')
                 
-                import PTN
+                from guessit import guessit
                 from app.core.tmdb.client import tmdb_client
                 
-                parsed = PTN.parse(title)
-                base_title = parsed.get("title") or title
-                year = parsed.get("year", "")
+                guessed = guessit(title)
+                base_title = guessed.get("title") or title
+                year = str(guessed.get("year", ""))
                 poster_url = None
                 
                 try:
@@ -188,7 +188,7 @@ async def transfer_batch(base_title: str = Form(...)):
 @router.post("/migrate_legacy")
 async def migrate_legacy(background_tasks: BackgroundTasks):
     async def run_migration():
-        import PTN
+        from guessit import guessit
         from app.core.tmdb.client import tmdb_client
         import asyncio
         async with get_db_conn() as db:
@@ -196,9 +196,9 @@ async def migrate_legacy(background_tasks: BackgroundTasks):
             cursor = await db.execute("SELECT id, title FROM tg_resources WHERE base_title IS NULL")
             rows = await cursor.fetchall()
             for row in rows:
-                parsed = PTN.parse(row['title'])
-                b_title = parsed.get("title") or row['title']
-                year = parsed.get("year", "")
+                guessed = guessit(row['title'])
+                b_title = guessed.get("title") or row['title']
+                year = str(guessed.get("year", ""))
                 poster = None
                 try:
                     res = await tmdb_client.search_movie(b_title, year)

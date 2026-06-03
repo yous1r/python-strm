@@ -171,13 +171,13 @@ class TelegramMonitor:
             
         title = extract_title_from_text(text)
         
-        import PTN
+        from guessit import guessit
         from app.core.tmdb.client import tmdb_client
         import asyncio
         
-        parsed = PTN.parse(title)
-        base_title = parsed.get("title") or title
-        year = parsed.get("year", "")
+        guessed = guessit(title)
+        base_title = guessed.get("title") or title
+        year = str(guessed.get("year", ""))
         poster_url = None
         
         try:
