@@ -121,6 +121,7 @@ class Cloud115Client:
         """创建文件夹"""
         if not self.client:
             return {"error": "Client not initialized"}
+            
         async with self.semaphore:
             try:
                 from app.config import get_config
@@ -128,13 +129,23 @@ class Cloud115Client:
                     res = await self.client.fs_mkdir(name, parent_id, async_=True)
                 else:
                     res = await self.client.fs_mkdir_app(name, parent_id, async_=True)
-                if res.get("state"):
-                    # 115可能返回file_id
-                    return {"id": res.get("file_id"), "name": name}
-                return {"error": res.get("error", "Unknown error")}
             except Exception as e:
                 logger.error(f"Failed to create folder {name}: {e}")
                 return {"error": str(e)}
+
+        if res.get("state"):
+            return {"id": res.get("file_id") or res.get("cid"), "name": name}
+            
+        error_msg = res.get("error", "Unknown error")
+        if "已存在" in error_msg or "exist" in error_msg.lower():
+            # 目录已存在，尝试获取其ID，由于list_dirs也有锁，必须在锁外部调用
+            list_res = await self.list_dirs(parent_id)
+            if not list_res.get("error"):
+                for d in list_res.get("dirs", []):
+                    if d.get("n") == name:
+                        return {"id": d.get("cid"), "name": name}
+        
+        return {"error": error_msg}
 
     async def rename_file(self, file_id: str, new_name: str) -> bool:
         """重命名文件/文件夹"""
