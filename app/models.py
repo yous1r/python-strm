@@ -65,4 +65,6 @@ class TgResource(BaseModel):
     disk_type: str
     msg_date: Optional[datetime] = None
     status: str = 'pending'
+    base_title: Optional[str] = None
+    poster_url: Optional[str] = None
     created_at: Optional[datetime] = None

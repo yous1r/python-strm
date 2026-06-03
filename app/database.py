@@ -105,9 +105,18 @@ async def init_db():
                 disk_type TEXT NOT NULL,
                 msg_date DATETIME,
                 status TEXT DEFAULT 'pending',
+                base_title TEXT,
+                poster_url TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        
+        # 兼容老表升级：尝试新增字段
+        try:
+            await db.execute("ALTER TABLE tg_resources ADD COLUMN base_title TEXT")
+            await db.execute("ALTER TABLE tg_resources ADD COLUMN poster_url TEXT")
+        except Exception:
+            pass # 字段已存在则忽略
         
         await db.commit()
         logger.info("Database initialized successfully")
@@ -127,8 +136,8 @@ async def insert_tg_resource(db, resource: dict) -> bool:
     """插入资源，如果链接已存在则忽略。返回 True 表示新插入，False 表示已存在/忽略"""
     cursor = await db.execute('''
         INSERT OR IGNORE INTO tg_resources 
-        (message_id, channel_id, title, raw_text, link, password, disk_type, msg_date, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (message_id, channel_id, title, raw_text, link, password, disk_type, msg_date, status, base_title, poster_url)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         resource.get('message_id'),
         resource.get('channel_id'),
@@ -138,6 +147,8 @@ async def insert_tg_resource(db, resource: dict) -> bool:
         resource.get('password'),
         resource.get('disk_type'),
         resource.get('msg_date'),
-        resource.get('status', 'pending')
+        resource.get('status', 'pending'),
+        resource.get('base_title'),
+        resource.get('poster_url')
     ))
     return cursor.rowcount > 0
