@@ -71,7 +71,7 @@ templates = Jinja2Templates(directory="app/web/templates")
 
 @app.get("/library", response_class=HTMLResponse)
 async def library_page(request: Request):
-    return templates.TemplateResponse(request, "library.html")
+    return templates.TemplateResponse(request, "library.html", {"title": "资源图鉴"})
 
 # 注册各类路由
 app.include_router(cloud115.router)
