@@ -68,8 +68,9 @@ async def upload_tg_json(background_tasks: BackgroundTasks, file: UploadFile = F
         try:
             from app.core.monitor.parser import extract_title_from_text
             import asyncio
+            from guessit import guessit
             async with get_db_conn() as db:
-                for msg in msgs:
+                for i, msg in enumerate(msgs):
                     if msg.get('type') != 'message':
                         continue
                     # 解析消息文本
@@ -98,7 +99,6 @@ async def upload_tg_json(background_tasks: BackgroundTasks, file: UploadFile = F
                     msg_date = msg.get('date')
                     msg_id = msg.get('id')
                 
-                    from guessit import guessit
                     guessed = guessit(title)
                     base_title = guessed.get("title") or title
                     poster_url = None
@@ -118,9 +118,12 @@ async def upload_tg_json(background_tasks: BackgroundTasks, file: UploadFile = F
                             "poster_url": poster_url
                         }
                         await insert_tg_resource(db, resource)
-                    # 每处理100条缓一下，防止锁死DB
-                    await asyncio.sleep(0)
-            await db.commit()
+                    
+                    # 避免长事务锁表
+                    if i > 0 and i % 200 == 0:
+                        await db.commit()
+                        await asyncio.sleep(0.1)
+                await db.commit()
             logger.info("Finished process_json_background successfully")
         except Exception as e:
             logger.exception(f"Error in process_json_background: {e}")

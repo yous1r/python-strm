@@ -125,7 +125,9 @@ async def init_db():
 async def get_db_conn():
     """获取数据库连接上下文管理器"""
     config = get_config()
-    conn = await aiosqlite.connect(config.database.path)
+    conn = await aiosqlite.connect(config.database.path, timeout=15.0)
+    await conn.execute("PRAGMA journal_mode=WAL")
+    await conn.execute("PRAGMA synchronous=NORMAL")
     conn.row_factory = aiosqlite.Row
     try:
         yield conn
