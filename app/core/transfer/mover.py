@@ -4,11 +4,12 @@ from loguru import logger
 from app.events import event_bus, EVENT_TRANSFER_RECEIVED, EVENT_TRANSFER_MOVED
 from app.core.cloud115.client import client_115
 from app.core.transfer.scope import validate, expand_allowed_dirs
+from app.database import get_db_conn
 
 
-async def handle_transfer_received(share_url: str, inbox_dir_id: str, temp_dir_id: str, files: list = None, **kwargs):
+async def handle_transfer_received(share_url: str, inbox_dir_id: str, temp_dir_id: str, files: list = None, batch_task_id: str = None, **kwargs):
     """处理转存接收完成事件，将文件从收件箱移动到临时目录"""
-    task_id = str(uuid.uuid4())
+    task_id = batch_task_id or str(uuid.uuid4())
 
     if not files:
         logger.warning(f"[Mover] 无文件，跳过: {share_url}")
@@ -39,12 +40,22 @@ async def handle_transfer_received(share_url: str, inbox_dir_id: str, temp_dir_i
 
     logger.info(f"[Mover] 移动完成: {len(moved_files)}/{len(files)}, task_id={task_id}")
 
+    # 如果是批次号，更新 file_count（递增）
+    if batch_task_id:
+        async with get_db_conn() as db:
+            await db.execute(
+                "UPDATE transfer_tasks SET file_count = file_count + ?, status = 'running' WHERE task_id = ?",
+                (len(moved_files), task_id)
+            )
+            await db.commit()
+
     await event_bus.emit(
         EVENT_TRANSFER_MOVED,
         task_id=task_id,
         temp_dir_id=temp_dir_id,
         files=moved_files,
-        share_url=share_url
+        share_url=share_url,
+        batch_task_id=batch_task_id
     )
 
 

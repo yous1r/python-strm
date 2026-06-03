@@ -28,14 +28,23 @@ async def handle_transfer_moved(task_id: str, temp_dir_id: str, files: list, sha
 
     await event_bus.emit(EVENT_ORGANIZE_START, task_id=task_id, file_count=len(files))
 
-    # 创建任务记录
+    # 创建/更新任务记录
     async with get_db_conn() as db:
-        await db.execute(
-            """INSERT OR REPLACE INTO transfer_tasks
-               (task_id, status, source_dir_id, archive_dir_id, file_count)
-               VALUES (?, 'running', ?, ?, ?)""",
-            (task_id, temp_dir_id, archive_dir_id, len(files))
-        )
+        # 如果任务不存在则创建，否则仅更新状态
+        cursor = await db.execute("SELECT id FROM transfer_tasks WHERE task_id = ?", (task_id,))
+        existing = await cursor.fetchone()
+        if existing:
+            await db.execute(
+                "UPDATE transfer_tasks SET status = 'running', archive_dir_id = ? WHERE task_id = ?",
+                (archive_dir_id, task_id)
+            )
+        else:
+            await db.execute(
+                """INSERT INTO transfer_tasks
+                   (task_id, status, source_dir_id, archive_dir_id, file_count)
+                   VALUES (?, 'running', ?, ?, ?)""",
+                (task_id, temp_dir_id, archive_dir_id, len(files))
+            )
         await db.commit()
 
     success_count = 0
@@ -93,11 +102,11 @@ async def handle_transfer_moved(task_id: str, temp_dir_id: str, files: list, sha
             file_name=file_name
         )
 
-    # 更新任务状态
+    # 更新任务状态（增量递增 success_count，支持批次任务多次组织）
     async with get_db_conn() as db:
         await db.execute(
             """UPDATE transfer_tasks
-               SET status='done', success_count=?, completed_at=CURRENT_TIMESTAMP
+               SET status='done', success_count = success_count + ?, completed_at=CURRENT_TIMESTAMP
                WHERE task_id=?""",
             (success_count, task_id)
         )

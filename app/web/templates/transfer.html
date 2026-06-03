@@ -170,6 +170,12 @@ let currentStatusFilter = null;
 
 document.addEventListener('DOMContentLoaded', () => {
     loadTasks();
+    // 如果 URL 带了 task 参数，自动展开对应任务
+    const urlParams = new URLSearchParams(window.location.search);
+    const taskParam = urlParams.get('task');
+    if (taskParam) {
+        setTimeout(() => toggleTaskDetail(taskParam), 800);
+    }
     // 每 5 秒自动刷新（只在有待处理/运行中任务时）
     setInterval(autoRefresh, 5000);
 });

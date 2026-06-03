@@ -1,4 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Form
+from pydantic import BaseModel
+from typing import List
 from app.database import get_db_conn, insert_tg_resource
 from app.core.monitor.telegram import telegram_monitor
 import json
@@ -183,6 +185,71 @@ async def transfer_batch(base_title: str = Form(...)):
         await event_bus.emit(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
         
     return {"status": "success", "message": f"已将 {len(rows)} 个资源加入转存队列"}
+
+class TransferSelectedRequest(BaseModel):
+    ids: List[int]
+    base_title: str = ""
+
+@router.post("/transfer_selected")
+async def transfer_selected(req: TransferSelectedRequest):
+    """批量转存选中的剧集，创建统一 task_id 追踪"""
+    import uuid
+    from app.events import event_bus, EVENT_MONITOR_NEW_LINK
+    
+    if not req.ids:
+        return {"status": "error", "message": "未选择任何资源"}
+    
+    task_id = str(uuid.uuid4())
+    
+    async with get_db_conn() as db:
+        db.row_factory = dict_factory
+        
+        placeholders = ','.join('?' * len(req.ids))
+        cursor = await db.execute(
+            f"SELECT * FROM tg_resources WHERE id IN ({placeholders}) AND status IN ('pending', 'failed')",
+            req.ids
+        )
+        rows = await cursor.fetchall()
+        
+        if not rows:
+            return {"status": "success", "message": "所选资源均已转存，无需重复操作"}
+        
+        # 更新状态
+        actual_ids = [r['id'] for r in rows]
+        id_placeholders = ','.join('?' * len(actual_ids))
+        await db.execute(
+            f"UPDATE tg_resources SET status = 'queued' WHERE id IN ({id_placeholders})",
+            actual_ids
+        )
+        await db.commit()
+    
+    # 创建批次任务记录
+    async with get_db_conn() as db:
+        await db.execute(
+            """INSERT OR REPLACE INTO transfer_tasks
+               (task_id, status, source_dir_id, archive_dir_id, file_count)
+               VALUES (?, 'pending', 'library_batch', 'library_batch', ?)""",
+            (task_id, len(rows))
+        )
+        await db.commit()
+    
+    # 逐个 emit 转存事件（带批次 task_id）
+    for row in rows:
+        link_data = {
+            "url": row["link"],
+            "password": row["password"],
+            "type": row["disk_type"],
+            "db_id": row["id"],
+            "ignore_filters": True,
+            "batch_task_id": task_id
+        }
+        await event_bus.emit(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
+    
+    return {
+        "status": "success",
+        "task_id": task_id,
+        "message": f"已将 {len(rows)} 集 ({req.base_title}) 加入转存队列"
+    }
 
 @router.post("/migrate_legacy")
 async def migrate_legacy(background_tasks: BackgroundTasks):

@@ -67,18 +67,18 @@ async def handle_new_link(link_data: dict, source: str, **kwargs):
         # 2. 如果启用了 transfer 管道，通过事件总线处理
         transfer_cfg = get_config().transfer
         if transfer_cfg.enabled and transfer_cfg.temp_dir_id:
-            # 获取收件箱文件列表
             inbox_files = await _list_inbox_files(transfer_cfg.inbox_dir_id)
+            batch_task_id = link_data.get("batch_task_id") or link_data.get("task_id")
             
-            # emit 事件，触发 mover → organizer 链
             await event_bus.emit(
                 EVENT_TRANSFER_RECEIVED,
                 share_url=share_url,
                 inbox_dir_id=transfer_cfg.inbox_dir_id,
                 temp_dir_id=transfer_cfg.temp_dir_id,
-                files=inbox_files
+                files=inbox_files,
+                batch_task_id=batch_task_id
             )
-            logger.info(f"[Monitor] 已提交 {len(inbox_files)} 个文件到转存管道")
+            logger.info(f"[Monitor] 已提交 {len(inbox_files)} 个文件到转存管道 (batch={batch_task_id})")
         
         # 3. 兼容旧逻辑：如果 transfer 未启用但有 archive_dir，走旧路径
         elif monitor_cfg.auto_organize and archive_dir_id and archive_dir_id != "0":
