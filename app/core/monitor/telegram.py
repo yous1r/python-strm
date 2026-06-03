@@ -121,21 +121,35 @@ class TelegramMonitor:
 
     def extract_links(self, text: str) -> list:
         links = []
-        # Find all 115 links
-        link_matches_115 = re.findall(r'https?://115\.com/s/\w+', text)
+        # Find all 115 links (including 115cdn.com)
+        # We need to capture the full URL to extract the password from query string if present
+        link_matches_115 = re.findall(r'https?://115(?:cdn)?\.com/s/\w+(?:\?[^\s\"\'<]+)?', text)
         if link_matches_115:
             pwd_match = re.search(r'(?:码|密码|提取码|访问码)[:：\s]*([a-zA-Z0-9]{4})(?:\b|$)', text)
-            password = pwd_match.group(1) if pwd_match else ""
+            fallback_password = pwd_match.group(1) if pwd_match else ""
             for url in link_matches_115:
-                links.append({"url": url, "password": password, "type": "115"})
+                password = fallback_password
+                pwd_url_match = re.search(r'password=([a-zA-Z0-9]+)', url)
+                if pwd_url_match:
+                    password = pwd_url_match.group(1)
+                
+                # Clean URL (remove query params for canonical url if desired, or keep them)
+                clean_url = url.split('?')[0] if '?' in url else url
+                links.append({"url": clean_url, "password": password, "type": "115"})
                 
         # Also preserve 123pan
-        pan123_matches = re.findall(r'https?://(?:www\.)?123pan\.com/s/\w+-\w+\.html', text)
+        pan123_matches = re.findall(r'https?://(?:www\.)?123pan\.com/s/\w+-\w+\.html(?:\?[^\s\"\'<]+)?', text)
         if pan123_matches:
             pwd_match = re.search(r'(?:码|密码|提取码|访问码)[:：\s]*([a-zA-Z0-9]{4})(?:\b|$)', text)
-            password = pwd_match.group(1) if pwd_match else ""
+            fallback_password = pwd_match.group(1) if pwd_match else ""
             for url in pan123_matches:
-                links.append({"url": url, "password": password, "type": "123"})
+                password = fallback_password
+                pwd_url_match = re.search(r'Pwd=([a-zA-Z0-9]+)', url, re.IGNORECASE)
+                if pwd_url_match:
+                    password = pwd_url_match.group(1)
+                
+                clean_url = url.split('?')[0] if '?' in url else url
+                links.append({"url": clean_url, "password": password, "type": "123"})
             
         # Deduplicate
         unique_links = []

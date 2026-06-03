@@ -14,7 +14,7 @@ async def get_tg_resources(page: int = 1, page_size: int = 20, search: str = "")
         query += " WHERE title LIKE ? OR raw_text LIKE ?"
         params.extend([f"%{search}%", f"%{search}%"])
         
-    query += " ORDER BY id DESC LIMIT ? OFFSET ?"
+    query += " ORDER BY msg_date DESC LIMIT ? OFFSET ?"
     params.extend([page_size, offset])
     
     count_query = "SELECT COUNT(*) FROM tg_resources"
