@@ -9,6 +9,14 @@
         <div style="display: flex; gap: 1rem; align-items: center;">
             <input type="text" id="searchInput" class="form-control" placeholder="搜索影视名称..." style="width: 250px;" onkeyup="if(event.key === 'Enter') loadLibrary(1)">
             <button class="btn btn-primary" onclick="loadLibrary(1)"><i class="fa-solid fa-magnifying-glass"></i></button>
+            <select id="pageSize" class="form-control" onchange="loadLibrary(1)" style="width: auto;">
+                <option value="12">12 / 页</option>
+                <option value="24" selected>24 / 页</option>
+                <option value="48">48 / 页</option>
+            </select>
+            <button class="btn btn-secondary" onclick="migrateLegacy()" title="补全老数据海报">
+                <i class="fa-solid fa-wand-magic-sparkles"></i>
+            </button>
             <button class="btn btn-secondary" onclick="document.getElementById('jsonUpload').click()">
                 <i class="fa-solid fa-file-import"></i> 导入 TG 历史 JSON
             </button>
@@ -16,21 +24,8 @@
         </div>
     </div>
     
-    <div style="overflow-x: auto;">
-        <table style="width: 100%; text-align: left; border-collapse: collapse;">
-            <thead>
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
-                    <th style="padding: 1rem;">资源名称</th>
-                    <th style="padding: 1rem;">提取码</th>
-                    <th style="padding: 1rem;">日期</th>
-                    <th style="padding: 1rem;">状态</th>
-                    <th style="padding: 1rem;">操作</th>
-                </tr>
-            </thead>
-            <tbody id="libraryBody">
-                <!-- 动态渲染 -->
-            </tbody>
-        </table>
+    <div id="libraryContainer" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 1.5rem;">
+        <!-- 动态渲染 -->
     </div>
     
     <div style="display: flex; justify-content: space-between; margin-top: 1.5rem; align-items: center;">
@@ -46,50 +41,66 @@
 {% block scripts %}
 <script>
 let currentPage = 1;
-const pageSize = 20;
 
 async function loadLibrary(page = 1) {
     currentPage = page;
     const search = document.getElementById('searchInput').value;
-    const tbody = document.getElementById('libraryBody');
-    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:2rem;">加载中...</td></tr>';
+    const pageSize = document.getElementById('pageSize').value;
+    const container = document.getElementById('libraryContainer');
+    container.innerHTML = '<div style="grid-column: 1 / -1; text-align:center; padding:2rem;">加载中...</div>';
     
     try {
         const res = await fetch(`/api/v1/library/tg_resources?page=${page}&page_size=${pageSize}&search=${encodeURIComponent(search)}`);
         const data = await res.json();
         
         if (data.data.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:2rem;">暂无数据</td></tr>';
+            container.innerHTML = '<div style="grid-column: 1 / -1; text-align:center; padding:2rem;">暂无数据</div>';
         } else {
-            tbody.innerHTML = data.data.map(row => {
-                let statusHtml = '';
-                if (row.status === 'pending') statusHtml = '<span class="badge" style="background:var(--secondary-bg);">待转存</span>';
-                else if (row.status === 'queued') statusHtml = '<span class="badge" style="background:var(--accent);">排队中</span>';
-                else if (row.status === 'success') statusHtml = '<span class="badge" style="background:#10b981;">已转存</span>';
-                else if (row.status === 'failed') statusHtml = '<span class="badge" style="background:#ef4444;">失败</span>';
+            container.innerHTML = data.data.map(group => {
+                const poster = group.poster_url || '/static/images/placeholder.png';
+                const epsHtml = group.episodes.map(row => {
+                    let statusColor = row.status === 'success' ? '#10b981' : (row.status === 'queued' ? 'var(--accent)' : (row.status === 'failed' ? '#ef4444' : 'var(--text-secondary)'));
+                    let statusText = row.status === 'success' ? '已存' : (row.status === 'queued' ? '排队' : (row.status === 'failed' ? '失败' : '待转'));
+                    return `
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 0.85rem;">
+                        <div style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 0.5rem;" title="${row.title}">${row.title}</div>
+                        <div style="display: flex; align-items: center; gap: 0.5rem;">
+                            <span style="color: ${statusColor}; font-size: 0.75rem;">${statusText}</span>
+                            <button class="btn btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" onclick="transferResource(${row.id}, this)" ${row.status === 'queued' || row.status === 'success' ? 'disabled' : ''} title="转存单集">
+                                <i class="fa-solid fa-cloud-arrow-up"></i>
+                            </button>
+                        </div>
+                    </div>`;
+                }).join('');
                 
                 return `
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
-                    <td style="padding: 1rem;" title="${row.raw_text}">${row.title}</td>
-                    <td style="padding: 1rem;">${row.password || '-'}</td>
-                    <td style="padding: 1rem;">${row.msg_date ? new Date(row.msg_date).toLocaleString() : '-'}</td>
-                    <td style="padding: 1rem;">${statusHtml}</td>
-                    <td style="padding: 1rem;">
-                        <button class="btn btn-primary" style="padding: 0.3rem 0.8rem; font-size: 0.85rem;" onclick="transferResource(${row.id}, this)" ${row.status === 'queued' || row.status === 'success' ? 'disabled' : ''}>
-                            <i class="fa-solid fa-cloud-arrow-up"></i> 一键转存
-                        </button>
-                    </td>
-                </tr>
+                <div class="glass-panel" style="padding: 0; overflow: hidden; display: flex; flex-direction: column; max-height: 500px;">
+                    <div style="display: flex; padding: 1rem; border-bottom: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.2);">
+                        <img src="${poster}" onerror="this.src='/static/images/placeholder.png'" style="width: 80px; height: 120px; object-fit: cover; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.5);">
+                        <div style="margin-left: 1rem; flex: 1; display: flex; flex-direction: column; justify-content: space-between;">
+                            <div>
+                                <h3 style="margin: 0 0 0.5rem 0; font-size: 1.1rem; line-height: 1.3;">${group.base_title || '未知剧集'}</h3>
+                                <span class="badge" style="background: rgba(255,255,255,0.1);">共 ${group.ep_count} 项</span>
+                            </div>
+                            <button class="btn btn-primary" style="width: 100%; padding: 0.4rem; font-size: 0.85rem;" onclick="transferBatch('${group.base_title}', this)">
+                                <i class="fa-solid fa-layer-group"></i> 一键整剧转存
+                            </button>
+                        </div>
+                    </div>
+                    <div style="flex: 1; overflow-y: auto; padding: 0.5rem;">
+                        ${epsHtml}
+                    </div>
+                </div>
                 `;
             }).join('');
         }
         
-        document.getElementById('pageInfo').innerText = `共 ${data.total} 条 | 第 ${page} 页`;
+        document.getElementById('pageInfo').innerText = `共 ${data.total} 部剧 | 第 ${page} 页`;
         document.getElementById('prevBtn').disabled = page === 1;
         document.getElementById('nextBtn').disabled = data.data.length < pageSize;
         
     } catch(e) {
-        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:2rem; color:#ef4444;">加载失败</td></tr>';
+        container.innerHTML = '<div style="grid-column: 1 / -1; text-align:center; padding:2rem; color:#ef4444;">加载失败</div>';
     }
 }
 
@@ -147,5 +158,36 @@ async function handleFileUpload(e) {
 
 // 初始加载
 document.addEventListener('DOMContentLoaded', () => loadLibrary(1));
+
+async function transferBatch(base_title, btn) {
+    const orig = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 投递中...';
+    try {
+        const fd = new FormData();
+        fd.append("base_title", base_title);
+        const res = await fetch(`/api/v1/library/transfer_batch`, { method: 'POST', body: fd });
+        const data = await res.json();
+        if (data.status === 'success') {
+            alert(data.message);
+            loadLibrary(currentPage);
+        }
+    } catch(e) {
+        alert('网络错误');
+        btn.disabled = false;
+        btn.innerHTML = orig;
+    }
+}
+
+async function migrateLegacy() {
+    if(!confirm('是否启动后台清洗？（会自动为没有海报的旧数据刮削海报）')) return;
+    try {
+        const res = await fetch(`/api/v1/library/migrate_legacy`, { method: 'POST' });
+        const data = await res.json();
+        alert(data.message);
+    } catch(e) {
+        alert('请求失败');
+    }
+}
 </script>
 {% endblock %}
