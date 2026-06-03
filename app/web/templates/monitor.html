@@ -392,7 +392,13 @@ async function scrapeTgMonitor(btn) {
         return;
     }
     
-    const confirmScrape = await window.customConfirm(`是否立即触发历史消息检索？\n\n- 将对您填写的频道进行全量历史消息/匹配关键字检索。\n- 提取到的分享链接将加入后台队列，间隔 3 秒慢慢转存。\n- 请不要频繁点击此按钮，以免被 115 封控。`);
+    let confirmMsg = `是否立即触发历史消息检索？\n\n- 将对您填写的频道进行全量历史消息/匹配关键字检索。\n- 提取到的分享链接将加入后台队列，间隔 3 秒慢慢转存。\n- 请不要频繁点击此按钮，以免被 115 封控。`;
+    
+    if (tgKeywords.length === 0) {
+        confirmMsg = `⚠️ 高危操作警告：未配置过滤关键字！\n\n您没有填写任何关键字，这将导致系统对整个频道【从头到尾的所有历史消息】进行无差别全量抓取。\n如果该频道历史悠久，这将会耗费极长时间，并产生海量的转存排队任务。\n\n您确定要继续进行【无差别全量抓取】吗？`;
+    }
+    
+    const confirmScrape = await window.customConfirm(confirmMsg);
     if (!confirmScrape) return;
     
     btn.disabled = true;
