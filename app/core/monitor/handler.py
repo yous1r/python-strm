@@ -39,11 +39,12 @@ async def handle_new_link(link_data: dict, source: str, **kwargs):
             logger.info(f"Processing new 115 link: {share_url} with pwd: {receive_code}")
             
             # 1. 尝试转存
+            filter_rules = None if link_data.get("ignore_filters") else config.filter_rules
             transfer_res = await client_115.share_receive(
                 share_url, 
                 receive_code, 
                 target_dir_id, 
-                filter_rules=config.filter_rules
+                filter_rules=filter_rules
             )
             
             # 转存后等待3秒，严格限制请求频率

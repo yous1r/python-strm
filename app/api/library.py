@@ -148,7 +148,8 @@ async def manual_transfer(res_id: int):
         "url": row["link"],
         "password": row["password"],
         "type": row["disk_type"],
-        "db_id": res_id  # 传入 db_id 以便转存成功后更新状态
+        "db_id": res_id,  # 传入 db_id 以便转存成功后更新状态
+        "ignore_filters": True
     }
     await event_bus.emit(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
     return {"status": "success"}
@@ -176,7 +177,8 @@ async def transfer_batch(base_title: str = Form(...)):
             "url": row["link"],
             "password": row["password"],
             "type": row["disk_type"],
-            "db_id": row["id"]
+            "db_id": row["id"],
+            "ignore_filters": True
         }
         await event_bus.emit(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
         
