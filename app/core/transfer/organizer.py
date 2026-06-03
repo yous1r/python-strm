@@ -15,8 +15,8 @@ async def handle_transfer_moved(task_id: str, temp_dir_id: str, files: list, sha
     config = get_config()
     archive_dir_id = config.transfer.archive_dir_id
 
-    if not archive_dir_id:
-        logger.warning("[Organizer] 未配置归档目录")
+    if not archive_dir_id or archive_dir_id == "0":
+        logger.error("[Organizer] 归档目录未正确配置（为空或为根目录0），拒绝操作以免污染根目录")
         return
 
     if not validate(temp_dir_id, archive_dir_id):

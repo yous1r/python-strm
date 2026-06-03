@@ -1,6 +1,6 @@
 import asyncio
 from loguru import logger
-from app.events import event_bus, EVENT_MONITOR_NEW_LINK, EVENT_TRANSFER_RECEIVED
+from app.events import event_bus, EVENT_MONITOR_NEW_LINK
 from app.config import get_config
 from app.core.cloud115.client import client_115
 from app.core.notify.manager import notify_manager
@@ -64,29 +64,13 @@ async def handle_new_link(link_data: dict, source: str, **kwargs):
 
         logger.info(f"Successfully transferred {share_url}")
 
-        # 2. 如果启用了 transfer 管道，通过事件总线处理
-        transfer_cfg = get_config().transfer
-        if transfer_cfg.enabled and transfer_cfg.temp_dir_id:
-            inbox_files = await _list_inbox_files(transfer_cfg.inbox_dir_id)
-            batch_task_id = link_data.get("batch_task_id") or link_data.get("task_id")
-            
-            await event_bus.emit(
-                EVENT_TRANSFER_RECEIVED,
-                share_url=share_url,
-                inbox_dir_id=transfer_cfg.inbox_dir_id,
-                temp_dir_id=transfer_cfg.temp_dir_id,
-                files=inbox_files,
-                batch_task_id=batch_task_id
-            )
-            logger.info(f"[Monitor] 已提交 {len(inbox_files)} 个文件到转存管道 (batch={batch_task_id})")
-        
-        # 3. 兼容旧逻辑：如果 transfer 未启用但有 archive_dir，走旧路径
-        elif monitor_cfg.auto_organize and archive_dir_id and archive_dir_id != "0":
+        # 2. 兼容旧逻辑：如果配置了 auto_organize + archive_dir，走旧路径（已验证稳定）
+        if monitor_cfg.auto_organize and archive_dir_id and archive_dir_id != "0":
             logger.info("Starting auto-organize for newly transferred files (legacy)...")
             await _auto_organize(client_115, target_dir_id, archive_dir_id)
 
-        # 4. 自动生成STRM
-        if monitor_cfg.auto_strm or (transfer_cfg.enabled and transfer_cfg.auto_strm):
+        # 3. 自动生成STRM
+        if monitor_cfg.auto_strm:
             logger.info("Starting auto-strm generation...")
             asyncio.create_task(sync_engine.run_sync_task())
 
