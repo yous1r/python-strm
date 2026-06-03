@@ -345,8 +345,8 @@ class Cloud115Client:
                 # 尝试从所有可能的字段中提取错误信息
                 error_msg = result.get("error_msg") or result.get("error") or result.get("msg") or "Transfer failed"
                 
-                # 如果是“已包含”或“已存在”，当作转存成功处理，避免前端抛错
-                if "已存在" in error_msg or "包含" in error_msg or "接收过" in error_msg:
+                # 如果是“已包含”、“已存在”或“已接收”，当作转存成功处理，避免前端抛错
+                if any(k in error_msg for k in ["已存在", "包含", "接收过", "已接收"]):
                     logger.info(f"资源已存在/已接收，标记为成功: {error_msg}")
                     return {"state": True, "msg": "该资源已存在"}
                     
