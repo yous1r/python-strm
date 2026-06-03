@@ -1,51 +1,80 @@
 {% extends "base.html" %}
 
-{% block subtitle %}转存管理：转存→整理→归档全链路追踪，支持一键还原{% endblock %}
+{% block subtitle %}转存管理：全链路追踪+配置+一键还原{% endblock %}
 
 {% block content %}
 <style>
-/* Status badges */
 .badge { padding: 4px 10px; border-radius: 12px; font-size: 0.78rem; font-weight: 600; white-space: nowrap; }
 .badge-pending { background: rgba(255,255,255,0.08); color: var(--text-secondary); }
 .badge-running { background: rgba(59,130,246,0.2); color: #60a5fa; }
 .badge-done { background: rgba(34,197,94,0.2); color: #4ade80; }
 .badge-failed { background: rgba(239,68,68,0.2); color: #f87171; }
 .badge-rolled { background: rgba(168,85,247,0.2); color: #c084fc; }
-
-/* Task row */
 .task-row { cursor: pointer; transition: background 0.2s; }
 .task-row:hover { background: rgba(255,255,255,0.03); }
 .task-row.expanded { background: rgba(99,102,241,0.08); border-left: 3px solid var(--accent-primary); }
-
-/* Operation log table */
 .ops-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 1rem; }
 .ops-table th { text-align: left; padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--border); color: var(--text-secondary); font-weight: 500; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
 .ops-table td { padding: 0.6rem 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.05); color: var(--text-primary); }
 .ops-table .arrow { color: var(--accent-primary); font-weight: 600; }
 .ops-table .name-change { color: var(--warning); font-size: 0.8rem; }
-
-/* Transfer form card */
 .transfer-card { max-width: 800px; margin-bottom: 2rem; }
 .transfer-card .form-row { display: flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap; }
-
-/* Rollback preview modal */
 .preview-list { max-height: 300px; overflow-y: auto; }
 .preview-item { padding: 0.5rem 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; align-items: center; gap: 0.75rem; }
 .preview-item i.fa-rotate-left { color: var(--warning); }
 </style>
 
-<!-- 日常转存请前往“资源图鉴”页面操作，此处仅追踪任务进度 -->
-<div class="glass-panel transfer-card animate-fade-in delay-1" style="text-align: center; padding: 1.5rem;">
-    <p style="color: var(--text-secondary); margin: 0;">
-        <i class="fa-solid fa-circle-info" style="margin-right: 0.5rem; color: var(--accent-primary);"></i>
-        日常转存请前往 <a href="/library" style="color: var(--accent-primary); font-weight: 600;">资源图鉴</a> 页面操作，此处仅追踪整理任务进度与还原。
-    </p>
+<!-- Transfer Config Panel -->
+<div class="glass-panel transfer-card animate-fade-in delay-1">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h2 style="margin: 0;"><i class="fa-solid fa-gear" style="color: var(--accent-primary); margin-right: 0.75rem;"></i>转存管道配置</h2>
+        <label style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; cursor: pointer;">
+            <input type="checkbox" id="cfg_enabled" onchange="toggleConfig()"> 启用管道
+        </label>
+    </div>
+    <div id="configFields" style="display: none;">
+        <div class="form-row" style="margin-bottom: 0.75rem;">
+            <div style="flex: 1; min-width: 200px;">
+                <label class="form-label">临时目录 (temp_dir_id)</label>
+                <div style="display: flex; gap: 0.5rem;">
+                    <input type="text" class="form-control" id="cfg_temp_dir" placeholder="转存后暂存目录" readonly>
+                    <button type="button" class="btn btn-secondary" onclick="openDirPickerFor('cfg_temp_dir')" style="white-space: nowrap;">选择</button>
+                </div>
+            </div>
+            <div style="flex: 1; min-width: 200px;">
+                <label class="form-label">归档目录 (archive_dir_id)</label>
+                <div style="display: flex; gap: 0.5rem;">
+                    <input type="text" class="form-control" id="cfg_archive_dir" placeholder="整理后落点" readonly>
+                    <button type="button" class="btn btn-secondary" onclick="openDirPickerFor('cfg_archive_dir')" style="white-space: nowrap;">选择</button>
+                </div>
+            </div>
+        </div>
+        <div class="form-row" style="margin-bottom: 0.75rem;">
+            <div style="flex: 1; min-width: 150px;">
+                <label class="form-label">收件箱 CID (inbox_dir_id)</label>
+                <input type="text" class="form-control" id="cfg_inbox_dir" placeholder="默认 0(最近接收)">
+            </div>
+        </div>
+        <div style="display: flex; gap: 1.5rem; margin-bottom: 1rem;">
+            <label style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.9rem; cursor: pointer;">
+                <input type="checkbox" id="cfg_auto_organize" checked> 转存后自动整理
+            </label>
+            <label style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.9rem; cursor: pointer;">
+                <input type="checkbox" id="cfg_auto_strm" checked> 整理后生成 STRM
+            </label>
+        </div>
+        <button class="btn btn-primary" onclick="saveTransferConfig()">
+            <i class="fa-solid fa-floppy-disk"></i> 保存配置并热加载
+        </button>
+        <span style="color: var(--text-secondary); font-size: 0.8rem; margin-left: 1rem;">日常转存操作请前往 <a href="/library" style="color: var(--accent-primary);">资源图鉴</a></span>
+    </div>
 </div>
 
 <!-- Tasks List -->
 <div class="glass-panel animate-fade-in delay-2">
     <h2 style="margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between;">
-        <span><i class="fa-solid fa-list-check" style="color: var(--accent-primary); margin-right: 0.75rem;"></i> 整理任务列表</span>
+        <span><i class="fa-solid fa-list-check" style="color: var(--accent-primary); margin-right: 0.75rem;"></i>整理任务列表</span>
         <div style="display: flex; gap: 0.5rem;">
             <button class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="loadTasks()">全部</button>
             <button class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="loadTasks('done')">已完成</button>
@@ -66,40 +95,23 @@
                 </tr>
             </thead>
             <tbody id="tasksBody">
-                <tr><td colspan="5" style="text-align: center; padding: 3rem; color: var(--text-secondary);">
-                    <i class="fa-solid fa-spinner fa-spin"></i> 加载中...
-                </td></tr>
+                <tr><td colspan="5" style="text-align: center; padding: 3rem; color: var(--text-secondary);">加载中...</td></tr>
             </tbody>
         </table>
     </div>
 
-    <!-- Expanded Detail Section -->
+    <!-- Task Detail -->
     <div id="taskDetail" style="display: none; border-top: 1px solid var(--border); margin-top: 0; padding: 1.5rem; background: rgba(0,0,0,0.15);">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-            <h3 style="margin: 0;"><i class="fa-solid fa-magnifying-glass-chart"></i> 操作明细</h3>
+            <h3 style="margin: 0;">操作明细</h3>
             <div>
-                <button class="btn btn-secondary" style="padding: 0.4rem 0.75rem; font-size: 0.85rem;" id="previewRollbackBtn" onclick="previewRollback()">
-                    <i class="fa-solid fa-eye"></i> 预览还原
-                </button>
-                <button class="btn btn-primary" style="padding: 0.4rem 0.75rem; font-size: 0.85rem; background: var(--warning);" id="rollbackBtn" onclick="executeRollback()">
-                    <i class="fa-solid fa-rotate-left"></i> 一键还原
-                </button>
+                <button class="btn btn-secondary" style="padding: 0.4rem 0.75rem; font-size: 0.85rem;" onclick="previewRollback()">预览还原</button>
+                <button class="btn btn-primary" style="padding: 0.4rem 0.75rem; font-size: 0.85rem; background: var(--warning);" onclick="executeRollback()">一键还原</button>
             </div>
         </div>
         <div style="overflow-x: auto;">
             <table class="ops-table">
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>操作</th>
-                        <th>文件</th>
-                        <th>更名</th>
-                        <th>来源</th>
-                        <th></th>
-                        <th>目标</th>
-                        <th>状态</th>
-                    </tr>
-                </thead>
+                <thead><tr><th>#</th><th>操作</th><th>文件</th><th>更名</th><th>来源</th><th></th><th>目标</th><th>状态</th></tr></thead>
                 <tbody id="opsBody"></tbody>
             </table>
         </div>
@@ -111,23 +123,17 @@
     <div class="custom-modal-dialog">
         <div class="glass-panel" style="padding: 0; width: 100%; max-width: 600px; border: 1px solid var(--border); overflow: hidden;">
             <div style="padding: 1.5rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2);">
-                <h3 style="margin: 0;"><i class="fa-solid fa-rotate-left" style="margin-right: 0.5rem; color: var(--warning);"></i> 还原预览</h3>
+                <h3 style="margin: 0;">还原预览</h3>
                 <button type="button" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 1.2rem;" onclick="closePreview()"><i class="fa-solid fa-times"></i></button>
             </div>
             <div style="padding: 1.5rem;">
-                <p style="color: var(--text-secondary); margin-bottom: 1rem;">
-                    以下 <strong id="previewCount">0</strong> 个操作将被逆序还原（文件移回源位置）：
-                </p>
+                <p style="color: var(--text-secondary); margin-bottom: 1rem;">以下 <strong id="previewCount">0</strong> 个操作将被逆序还原：</p>
                 <div class="preview-list" id="previewList"></div>
-                <p style="color: var(--warning); font-size: 0.85rem; margin-top: 1rem;">
-                    <i class="fa-solid fa-triangle-exclamation"></i> 还原后文件将回到原始目录和文件名，此操作可通过 115 回收站恢复。
-                </p>
+                <p style="color: var(--warning); font-size: 0.85rem; margin-top: 1rem;">还原后文件回到原始目录和文件名</p>
             </div>
             <div style="padding: 1.5rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 1rem; background: rgba(0,0,0,0.2);">
                 <button class="btn btn-secondary" onclick="closePreview()">取消</button>
-                <button class="btn btn-primary" style="background: var(--warning);" id="confirmRollbackBtn" onclick="confirmRollback()">
-                    <i class="fa-solid fa-rotate-left"></i> 确认还原
-                </button>
+                <button class="btn btn-primary" style="background: var(--warning);" id="confirmRollbackBtn" onclick="confirmRollback()">确认还原</button>
             </div>
         </div>
     </div>
@@ -142,16 +148,68 @@ let currentStatusFilter = null;
 
 document.addEventListener('DOMContentLoaded', () => {
     loadTasks();
-    // 如果 URL 带了 task 参数，自动展开对应任务
+    loadTransferConfig();
     const urlParams = new URLSearchParams(window.location.search);
     const taskParam = urlParams.get('task');
-    if (taskParam) {
-        setTimeout(() => toggleTaskDetail(taskParam), 800);
-    }
-    // 每 5 秒自动刷新（只在有待处理/运行中任务时）
+    if (taskParam) setTimeout(() => toggleTaskDetail(taskParam), 800);
     setInterval(autoRefresh, 5000);
 });
 
+// --- Config ---
+async function loadTransferConfig() {
+    try {
+        const res = await fetch('/api/v1/system/config');
+        if (!res.ok) return;
+        const cfg = await res.json();
+        if (!cfg.transfer) return;
+        const t = cfg.transfer;
+        document.getElementById('cfg_enabled').checked = t.enabled;
+        document.getElementById('cfg_temp_dir').value = t.temp_dir_id || '';
+        document.getElementById('cfg_archive_dir').value = t.archive_dir_id || '';
+        document.getElementById('cfg_inbox_dir').value = t.inbox_dir_id || '0';
+        document.getElementById('cfg_auto_organize').checked = t.auto_organize !== false;
+        document.getElementById('cfg_auto_strm').checked = t.auto_strm !== false;
+        document.getElementById('configFields').style.display = t.enabled ? 'block' : 'none';
+    } catch(e) {}
+}
+
+function toggleConfig() {
+    document.getElementById('configFields').style.display = document.getElementById('cfg_enabled').checked ? 'block' : 'none';
+}
+
+function openDirPickerFor(fieldId) {
+    window.openDirectoryPicker((id) => { document.getElementById(fieldId).value = id; }, '115');
+}
+
+async function saveTransferConfig() {
+    const payload = {
+        transfer: {
+            enabled: document.getElementById('cfg_enabled').checked,
+            temp_dir_id: document.getElementById('cfg_temp_dir').value,
+            archive_dir_id: document.getElementById('cfg_archive_dir').value,
+            inbox_dir_id: document.getElementById('cfg_inbox_dir').value || '0',
+            auto_organize: document.getElementById('cfg_auto_organize').checked,
+            auto_strm: document.getElementById('cfg_auto_strm').checked
+        }
+    };
+    try {
+        const res = await fetch('/api/v1/system/config', {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+            showToast('配置已保存并热加载', 'success');
+        } else {
+            const err = await res.json();
+            showToast('保存失败: ' + (err.detail || '未知错误'), 'error');
+        }
+    } catch(e) {
+        showToast('网络错误: ' + e.message, 'error');
+    }
+}
+
+// --- Tasks ---
 async function autoRefresh() {
     const hasRunning = currentTasks.some(t => t.status === 'running' || t.status === 'pending');
     if (hasRunning) loadTasks(currentStatusFilter, true);
@@ -159,10 +217,7 @@ async function autoRefresh() {
 
 async function loadTasks(status = null, silent = false) {
     currentStatusFilter = status;
-    if (!silent) {
-        document.getElementById('tasksBody').innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 3rem; color: var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> 加载中...</td></tr>';
-    }
-
+    if (!silent) document.getElementById('tasksBody').innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 3rem;">加载中...</td></tr>';
     try {
         let url = '/api/v1/transfer/tasks?limit=100';
         if (status) url += `&status=${status}`;
@@ -171,7 +226,7 @@ async function loadTasks(status = null, silent = false) {
         currentTasks = data.tasks || [];
         renderTaskTable();
     } catch (e) {
-        document.getElementById('tasksBody').innerHTML = `<tr><td colspan="5" style="text-align: center; padding: 3rem; color: var(--error);"><i class="fa-solid fa-triangle-exclamation"></i> 加载失败: ${e.message}</td></tr>`;
+        document.getElementById('tasksBody').innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 3rem; color: var(--error);">加载失败</td></tr>';
     }
 }
 
@@ -184,18 +239,17 @@ function statusBadge(s) {
 function renderTaskTable() {
     const tbody = document.getElementById('tasksBody');
     if (currentTasks.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 3rem; color: var(--text-secondary);"><i class="fa-solid fa-inbox"></i> 暂无整理任务</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 3rem;">暂无整理任务</td></tr>';
         return;
     }
-
     tbody.innerHTML = currentTasks.map(t => `
-        <tr class="task-row ${currentTaskId === t.task_id ? 'expanded' : ''}" data-task-id="${t.task_id}" onclick="toggleTaskDetail('${t.task_id}')">
-            <td style="padding: 0.75rem; font-family: monospace; font-size: 0.8rem; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${t.task_id}">${t.task_id.substring(0, 8)}...</td>
+        <tr class="task-row ${currentTaskId === t.task_id ? 'expanded' : ''}" onclick="toggleTaskDetail('${t.task_id}')">
+            <td style="padding: 0.75rem; font-family: monospace; font-size: 0.8rem;" title="${t.task_id}">${(t.task_id||'').substring(0,8)}...</td>
             <td style="padding: 0.75rem;">${statusBadge(t.status)}</td>
-            <td style="padding: 0.75rem; text-align: center;">${t.success_count || 0}/${t.file_count || 0}</td>
-            <td style="padding: 0.75rem; color: var(--text-secondary); font-size: 0.85rem;">${t.created_at || '-'}</td>
+            <td style="padding: 0.75rem; text-align: center;">${t.success_count||0}/${t.file_count||0}</td>
+            <td style="padding: 0.75rem; color: var(--text-secondary); font-size: 0.85rem;">${t.created_at||'-'}</td>
             <td style="padding: 0.75rem; text-align: center;">
-                ${t.status === 'done' ? `<button class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.78rem; background: var(--warning);" onclick="event.stopPropagation(); executeRollback('${t.task_id}')"><i class="fa-solid fa-rotate-left"></i> 还原</button>` : ''}
+                ${t.status==='done'?`<button class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.78rem; background: var(--warning);" onclick="event.stopPropagation(); executeRollback('${t.task_id}')">还原</button>`:''}
             </td>
         </tr>
     `).join('');
@@ -208,162 +262,67 @@ async function toggleTaskDetail(taskId) {
         document.querySelectorAll('.task-row').forEach(r => r.classList.remove('expanded'));
         return;
     }
-
     currentTaskId = taskId;
     document.querySelectorAll('.task-row').forEach(r => r.classList.remove('expanded'));
     const row = document.querySelector(`[data-task-id="${taskId}"]`);
     if (row) row.classList.add('expanded');
-
     try {
         const res = await fetch(`/api/v1/transfer/tasks/${taskId}`);
         const data = await res.json();
         renderOperations(data.operations || []);
         document.getElementById('taskDetail').style.display = 'block';
-
-        // 滚动到详情区
         document.getElementById('taskDetail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    } catch (e) {
-        showToast('加载详情失败: ' + e.message, 'error');
-    }
+    } catch (e) { showToast('加载详情失败', 'error'); }
 }
 
 function renderOperations(ops) {
     const tbody = document.getElementById('opsBody');
-    if (!ops || ops.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 2rem; color: var(--text-secondary);">无操作记录</td></tr>';
-        return;
-    }
-
-    // Build a reverse lookup for display
+    if (!ops || !ops.length) { tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 2rem;">无操作记录</td></tr>'; return; }
     const opLabels = { move: '移动', rename: '更名', create_dir: '建目录' };
-
-    tbody.innerHTML = ops.map((op, i) => {
-        const isRolledBack = op.status === 'rolled_back';
-        const rowStyle = isRolledBack ? 'opacity: 0.5;' : '';
-        return `
-            <tr style="${rowStyle}">
-                <td>${op.seq}</td>
-                <td><span class="badge badge-running" style="font-size: 0.75rem;">${opLabels[op.op_type] || op.op_type}</span></td>
-                <td style="max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${op.file_name}">${op.file_name}</td>
-                <td>${op.new_name && op.new_name !== op.file_name ? `<span class="name-change">→ ${op.new_name}</span>` : '-'}</td>
-                <td style="color: var(--text-secondary); font-size: 0.8rem;">${op.source_cid}</td>
-                <td class="arrow">→</td>
-                <td style="color: var(--text-secondary); font-size: 0.8rem;">${op.target_cid}</td>
-                <td>${isRolledBack ? '<span class="badge badge-rolled" style="font-size: 0.75rem;">已还原</span>' : '<span class="badge badge-done" style="font-size: 0.75rem;">已执行</span>'}</td>
-            </tr>
-        `;
+    tbody.innerHTML = ops.map(op => {
+        const rb = op.status === 'rolled_back';
+        return `<tr style="${rb?'opacity:0.5':''}">
+            <td>${op.seq}</td><td><span class="badge badge-running" style="font-size:0.75rem;">${opLabels[op.op_type]||op.op_type}</span></td>
+            <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${op.file_name}">${op.file_name}</td>
+            <td>${op.new_name&&op.new_name!==op.file_name?`<span class="name-change">->${op.new_name}</span>`:'-'}</td>
+            <td style="color:var(--text-secondary);font-size:0.8rem;">${op.source_cid}</td><td class="arrow">-></td>
+            <td style="color:var(--text-secondary);font-size:0.8rem;">${op.target_cid}</td>
+            <td>${rb?'<span class="badge badge-rolled" style="font-size:0.75rem;">已还原</span>':'<span class="badge badge-done" style="font-size:0.75rem;">已执行</span>'}</td>
+        </tr>`;
     }).join('');
 }
 
-async function submitReceive() {
-    const url = document.getElementById('shareUrl').value.trim();
-    const code = document.getElementById('receiveCode').value.trim();
-    const dirId = document.getElementById('targetDirId').value.trim();
-
-    if (!url) return showToast('请输入 115 分享链接', 'warning');
-
-    const btn = document.getElementById('receiveBtn');
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 提交中...';
-
-    try {
-        const res = await fetch('/api/v1/transfer/receive', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                share_url: url,
-                receive_code: code,
-                target_dir_id: dirId || ''
-            })
-        });
-        const data = await res.json();
-        if (res.ok) {
-            showToast(data.msg || '转存已提交', 'success');
-            document.getElementById('shareUrl').value = '';
-            document.getElementById('receiveCode').value = '';
-            setTimeout(() => loadTasks(), 2000);
-        } else {
-            showToast('失败: ' + (data.detail || '未知错误'), 'error');
-        }
-    } catch (e) {
-        showToast('网络错误: ' + e.message, 'error');
-    } finally {
-        btn.disabled = false;
-        btn.innerHTML = '<i class="fa-solid fa-download"></i> 开始接收';
-    }
-}
-
-function openDirPicker() {
-    window.openDirectoryPicker((id, name) => {
-        document.getElementById('targetDirId').value = id;
-    }, '115');
-}
-
 async function previewRollback() {
-    const taskId = currentTaskId;
-    if (!taskId) return;
-
+    if (!currentTaskId) return;
     try {
-        const res = await fetch(`/api/v1/transfer/rollback/${taskId}/preview`);
+        const res = await fetch(`/api/v1/transfer/rollback/${currentTaskId}/preview`);
         const data = await res.json();
-
         document.getElementById('previewCount').textContent = data.total_ops || 0;
         const list = document.getElementById('previewList');
-        if (!data.operations || data.operations.length === 0) {
-            list.innerHTML = '<p style="color: var(--text-secondary);">没有可还原的操作</p>';
+        if (!data.operations || !data.operations.length) {
+            list.innerHTML = '<p style="color:var(--text-secondary);">没有可还原的操作</p>';
         } else {
-            const opLabels = { move: '移动', rename: '更名', create_dir: '建目录' };
-            list.innerHTML = data.operations.map(op => `
-                <div class="preview-item">
-                    <i class="fa-solid fa-rotate-left"></i>
-                    <span style="flex: 1;">${op.file_name}</span>
-                    <span class="badge badge-running" style="font-size: 0.75rem;">${opLabels[op.op_type] || op.op_type}</span>
-                </div>
-            `).join('');
+            list.innerHTML = data.operations.map(op => `<div class="preview-item"><i class="fa-solid fa-rotate-left"></i><span style="flex:1;">${op.file_name}</span></div>`).join('');
         }
-
         document.getElementById('rollbackPreviewModal').classList.add('show');
-        window._pendingRollbackTaskId = taskId;
-    } catch (e) {
-        showToast('预览失败: ' + e.message, 'error');
-    }
+        window._pendingRollbackTaskId = currentTaskId;
+    } catch(e) { showToast('预览失败', 'error'); }
 }
 
-function closePreview() {
-    document.getElementById('rollbackPreviewModal').classList.remove('show');
-}
+function closePreview() { document.getElementById('rollbackPreviewModal').classList.remove('show'); }
 
 async function executeRollback(taskId) {
     const tid = taskId || currentTaskId;
     if (!tid) return;
-
-    if (!taskId) {
-        // 从列表按钮点击，先弹出预览
-        currentTaskId = tid;
-        await toggleTaskDetail(tid);
-        await previewRollback();
-        return;
-    }
-
-    // 直接还原
+    if (!taskId) { currentTaskId = tid; await toggleTaskDetail(tid); await previewRollback(); return; }
     try {
         const res = await fetch(`/api/v1/transfer/rollback/${tid}`, { method: 'POST' });
         const data = await res.json();
-        if (res.ok) {
-            showToast(data.msg || '还原完成', 'success');
-            loadTasks();
-        } else {
-            showToast('还原失败: ' + (data.detail || '未知错误'), 'error');
-        }
-    } catch (e) {
-        showToast('网络错误: ' + e.message, 'error');
-    }
+        if (res.ok) { showToast(data.msg||'还原完成','success'); loadTasks(); }
+        else showToast('失败: '+(data.detail||'未知'), 'error');
+    } catch(e) { showToast('网络错误', 'error'); }
 }
 
-async function confirmRollback() {
-    closePreview();
-    const tid = window._pendingRollbackTaskId;
-    if (tid) await executeRollback(tid);
-}
+async function confirmRollback() { closePreview(); if (window._pendingRollbackTaskId) await executeRollback(window._pendingRollbackTaskId); }
 </script>
 {% endblock %}

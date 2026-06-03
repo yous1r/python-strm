@@ -69,6 +69,36 @@ monitor:
     auto_organize: false
     auto_strm: false
   poll_interval: 60
+transfer:
+  enabled: false
+  inbox_dir_id: '0'
+  temp_dir_id: ''
+  archive_dir_id: ''
+  auto_organize: true
+  auto_strm: true
+  categories:
+  - name: 电影
+    subcategories:
+    - 国产电影
+    - 欧美电影
+    - 日韩电影
+    - 其他
+  - name: 剧集
+    subcategories:
+    - 国产剧集
+    - 欧美剧集
+    - 日韩剧集
+    - 其他
+  - name: 动漫
+    subcategories:
+    - 国产动漫
+    - 日韩动漫
+    - 欧美动漫
+    - 其他
+  - name: 纪录片
+    subcategories: []
+  - name: 综艺
+    subcategories: []
 notify:
   wecom:
     enabled: false
