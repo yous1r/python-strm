@@ -170,6 +170,25 @@ class TelegramMonitor:
             return []
             
         title = extract_title_from_text(text)
+        
+        import PTN
+        from app.core.tmdb.client import tmdb_client
+        import asyncio
+        
+        parsed = PTN.parse(title)
+        base_title = parsed.get("title") or title
+        year = parsed.get("year", "")
+        poster_url = None
+        
+        try:
+            results = await tmdb_client.search_movie(base_title, year)
+            if not results:
+                results = await tmdb_client.search_tv(base_title, year)
+            if results and results[0].get('poster_path'):
+                poster_url = f"https://image.tmdb.org/t/p/w342{results[0]['poster_path']}"
+        except Exception:
+            pass
+
         new_links = []
         
         async with get_db_conn() as db:
@@ -183,7 +202,9 @@ class TelegramMonitor:
                     "password": link_data["password"],
                     "disk_type": link_data["type"],
                     "msg_date": msg_date,
-                    "status": "pending"
+                    "status": "pending",
+                    "base_title": base_title,
+                    "poster_url": poster_url
                 }
                 is_new = await insert_tg_resource(db, resource)
                 if is_new:
