@@ -4,6 +4,29 @@ import yaml
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 
+class CategoryConfig(BaseModel):
+    name: str = ""
+    subcategories: List[str] = []
+
+class TransferConfig(BaseModel):
+    enabled: bool = False
+    inbox_dir_id: str = "0"
+    temp_dir_id: str = ""
+    archive_dir_id: str = ""
+    auto_organize: bool = True
+    auto_strm: bool = True
+    categories: List[CategoryConfig] = []
+
+    @staticmethod
+    def default_categories() -> List[CategoryConfig]:
+        return [
+            CategoryConfig(name="电影", subcategories=["国产电影", "欧美电影", "日韩电影", "其他"]),
+            CategoryConfig(name="剧集", subcategories=["国产剧集", "欧美剧集", "日韩剧集", "其他"]),
+            CategoryConfig(name="动漫", subcategories=["国产动漫", "日韩动漫", "欧美动漫", "其他"]),
+            CategoryConfig(name="纪录片", subcategories=[]),
+            CategoryConfig(name="综艺", subcategories=[]),
+        ]
+
 class ServerConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8095
@@ -134,6 +157,7 @@ class AppConfig(BaseSettings):
     strm: StrmConfig = StrmConfig()
     organize: OrganizeConfig = OrganizeConfig()
     monitor: MonitorConfig = MonitorConfig()
+    transfer: TransferConfig = TransferConfig()
     notify: NotifyConfig = NotifyConfig()
     proxy: ProxyConfig = ProxyConfig()
     log: LogConfig = LogConfig()

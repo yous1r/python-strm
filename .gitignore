@@ -3,6 +3,9 @@ node_modules
 .agents
 .claude
 .antigravitycli
+.cursor/skills
+.specstory
+.vscode
 
 strm_output
 data

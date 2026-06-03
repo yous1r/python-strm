@@ -55,16 +55,37 @@ async def init_db():
             )
         ''')
         
-        # 整理历史表
+        # 转存整理任务表
         await db.execute('''
-            CREATE TABLE IF NOT EXISTS organize_history (
+            CREATE TABLE IF NOT EXISTS transfer_tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL DEFAULT 'pending',
+                source_dir_id TEXT NOT NULL,
+                archive_dir_id TEXT NOT NULL,
+                file_count INTEGER DEFAULT 0,
+                success_count INTEGER DEFAULT 0,
+                error_detail TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                completed_at DATETIME
+            )
+        ''')
+        
+        # 操作日志表（可追溯、可还原）
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS operation_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 task_id TEXT NOT NULL,
-                cloud_type TEXT NOT NULL,
-                source_id TEXT NOT NULL,
-                status TEXT NOT NULL,
-                details TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                seq INTEGER NOT NULL,
+                file_cid TEXT NOT NULL,
+                file_name TEXT NOT NULL,
+                new_name TEXT,
+                source_cid TEXT NOT NULL,
+                target_cid TEXT NOT NULL,
+                op_type TEXT NOT NULL,
+                status TEXT DEFAULT 'done',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (task_id) REFERENCES transfer_tasks(task_id)
             )
         ''')
         

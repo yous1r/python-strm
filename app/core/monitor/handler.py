@@ -1,10 +1,9 @@
 import asyncio
 from loguru import logger
-from app.events import event_bus, EVENT_MONITOR_NEW_LINK
+from app.events import event_bus, EVENT_MONITOR_NEW_LINK, EVENT_TRANSFER_RECEIVED
 from app.config import get_config
 from app.core.cloud115.client import client_115
 from app.core.notify.manager import notify_manager
-from app.core.media.organizer import organizer
 from app.core.sync.engine import sync_engine
 
 # 限制并发转存数量为1，避免短时间内大量触发115接口导致封控
@@ -19,9 +18,9 @@ async def handle_new_link(link_data: dict, source: str, **kwargs):
         logger.debug(f"Ignoring non-115 link: {link_data}")
         return
 
-    config = get_config().monitor.telegram
-    target_dir_id = config.target_dir_id
-    archive_dir_id = config.archive_dir_id
+    monitor_cfg = get_config().monitor.telegram
+    target_dir_id = monitor_cfg.target_dir_id
+    archive_dir_id = monitor_cfg.archive_dir_id
     
     # 回退机制：如果监控配置中没有设置转存目录，则尝试使用 115 全局转存目录
     if not target_dir_id or target_dir_id == "0":
@@ -42,16 +41,16 @@ async def handle_new_link(link_data: dict, source: str, **kwargs):
         async with transfer_semaphore:
             logger.info(f"Processing new 115 link: {share_url} with pwd: {receive_code}")
             
-            # 1. 尝试转存
-            filter_rules = None if link_data.get("ignore_filters") else config.filter_rules
+            # 1. 转存（115 接口忽略 cid，文件始终落入最近接收/收件箱）
+            filter_rules = None if link_data.get("ignore_filters") else monitor_cfg.filter_rules
             transfer_res = await client_115.share_receive(
                 share_url, 
                 receive_code, 
-                target_dir_id, 
+                "0",  # 115 忽略此参数
                 filter_rules=filter_rules
             )
             
-            # 转存后等待3秒，严格限制请求频率
+            # 转存后等待3秒
             await asyncio.sleep(3)
             
         if not transfer_res.get("state"):
@@ -60,50 +59,77 @@ async def handle_new_link(link_data: dict, source: str, **kwargs):
                 title="[STRM] 自动转存失败",
                 content=f"链接: {share_url}\n报错: {transfer_res.get('error')}"
             )
-            db_id = link_data.get('db_id')
-            if db_id:
-                from app.database import get_db_conn
-                async with get_db_conn() as db:
-                    await db.execute("UPDATE tg_resources SET status = 'failed' WHERE id = ?", (db_id,))
-                    await db.commit()
+            await _update_tg_status(link_data.get('db_id'), 'failed')
             return
 
-        logger.info(f"Successfully transferred {share_url} to dir {target_dir_id}")
+        logger.info(f"Successfully transferred {share_url}")
+
+        # 2. 如果启用了 transfer 管道，通过事件总线处理
+        transfer_cfg = get_config().transfer
+        if transfer_cfg.enabled and transfer_cfg.temp_dir_id:
+            # 获取收件箱文件列表
+            inbox_files = await _list_inbox_files(transfer_cfg.inbox_dir_id)
+            
+            # emit 事件，触发 mover → organizer 链
+            await event_bus.emit(
+                EVENT_TRANSFER_RECEIVED,
+                share_url=share_url,
+                inbox_dir_id=transfer_cfg.inbox_dir_id,
+                temp_dir_id=transfer_cfg.temp_dir_id,
+                files=inbox_files
+            )
+            logger.info(f"[Monitor] 已提交 {len(inbox_files)} 个文件到转存管道")
         
-        # 2. 自动整理 (如果开启)
-        if config.auto_organize and archive_dir_id and archive_dir_id != "0":
-            logger.info("Starting auto-organize for newly transferred files...")
+        # 3. 兼容旧逻辑：如果 transfer 未启用但有 archive_dir，走旧路径
+        elif monitor_cfg.auto_organize and archive_dir_id and archive_dir_id != "0":
+            logger.info("Starting auto-organize for newly transferred files (legacy)...")
             await _auto_organize(client_115, target_dir_id, archive_dir_id)
 
-        # 3. 自动生成STRM (如果开启)
-        if config.auto_strm:
+        # 4. 自动生成STRM
+        if monitor_cfg.auto_strm or (transfer_cfg.enabled and transfer_cfg.auto_strm):
             logger.info("Starting auto-strm generation...")
-            # 简单粗暴，直接触发全局同步
-            # 如果要做到精准，需要传具体的 dir_id 给 sync_engine，但全局同步可以确保完整性
             asyncio.create_task(sync_engine.run_sync_task())
 
-        # 4. 推送成功通知
+        # 5. 推送成功通知
         await notify_manager.notify(
             title="[STRM] 自动转存成功",
             content=f"链接: {share_url}\n密码: {receive_code}\n已成功转存并加入处理队列！"
         )
 
-        # 如果传入了 db_id，更新数据库状态为 success
-        db_id = link_data.get('db_id')
-        if db_id:
-            from app.database import get_db_conn
-            async with get_db_conn() as db:
-                await db.execute("UPDATE tg_resources SET status = 'success' WHERE id = ?", (db_id,))
-                await db.commit()
+        await _update_tg_status(link_data.get('db_id'), 'success')
                 
     except Exception as e:
         logger.error(f"Exception during transfer: {e}")
-        db_id = link_data.get('db_id')
-        if db_id:
-            from app.database import get_db_conn
-            async with get_db_conn() as db:
-                await db.execute("UPDATE tg_resources SET status = 'failed' WHERE id = ?", (db_id,))
-                await db.commit()
+        await _update_tg_status(link_data.get('db_id'), 'failed')
+
+
+async def _update_tg_status(db_id, status: str):
+    """更新 Telegram 资源库状态"""
+    if not db_id:
+        return
+    from app.database import get_db_conn
+    async with get_db_conn() as db:
+        await db.execute("UPDATE tg_resources SET status = ? WHERE id = ?", (status, db_id))
+        await db.commit()
+
+
+async def _list_inbox_files(inbox_dir_id: str) -> list:
+    """列出收件箱中的文件，标准化为统一格式"""
+    files_res = await client_115.list_files(inbox_dir_id, limit=50)
+    if files_res.get("error"):
+        return []
+    
+    files = []
+    for item in files_res.get("items", []):
+        cid = item.get("cid") or item.get("fid") or ""
+        name = item.get("n", "")
+        if cid and name:
+            files.append({
+                "cid": cid,
+                "name": name,
+                "parent_cid": inbox_dir_id
+            })
+    return files
 
 async def _auto_organize(client_115, source_dir_id: str, archive_dir_id: str):
     """
@@ -120,17 +146,17 @@ async def _auto_organize(client_115, source_dir_id: str, archive_dir_id: str):
         
         # 为了防风控，调用带 api_type 判断的方法
         files_res = await client_115.list_files(source_dir_id, limit=100)
-        if not files_res.get("state"):
+        if files_res.get("error"):
             logger.error("Failed to list files for auto-organize.")
             return
             
-        items = files_res.get("data", [])
+        items = files_res.get("items", [])
         
         for item in items:
             if item.get("is_dir"):
                 # 如果是文件夹，深入一层
                 sub_res = await client_115.list_files(item["cid"], limit=100)
-                sub_items = sub_res.get("data", []) if sub_res.get("state") else []
+                sub_items = sub_res.get("items", []) if not sub_res.get("error") else []
                 for sub_item in sub_items:
                     if not sub_item.get("is_dir"):
                         await _process_single_file(client_115, sub_item, archive_dir_id)
@@ -141,6 +167,7 @@ async def _auto_organize(client_115, source_dir_id: str, archive_dir_id: str):
         logger.error(f"Error during auto_organize: {e}")
 
 async def _process_single_file(client_115, file_item: dict, base_archive_id: str):
+    from app.core.media.organizer import organizer
     file_name = file_item.get("n", "")
     file_id = file_item.get("fid", "")
     
@@ -158,16 +185,13 @@ async def _process_single_file(client_115, file_item: dict, base_archive_id: str
     
     for part in path_parts:
         if not part: continue
-        # 尝试创建文件夹
         mkdir_res = await client_115.create_folder(current_pid, part)
-        if mkdir_res.get("state") and "cid" in mkdir_res.get("data", {}):
-            current_pid = mkdir_res["data"]["cid"]
+        if "id" in mkdir_res:
+            current_pid = mkdir_res["id"]
         else:
-            # 可能是文件夹已存在
-            # 查找该目录下同名文件夹的 cid
             dirs_res = await client_115.list_dirs(current_pid)
             found = False
-            for d in dirs_res.get("data", []):
+            for d in dirs_res.get("dirs", []):
                 if d.get("n") == part:
                     current_pid = d.get("cid")
                     found = True
@@ -178,8 +202,8 @@ async def _process_single_file(client_115, file_item: dict, base_archive_id: str
 
     # 将文件重命名并移动到 current_pid
     # 1. 移动
-    move_res = await client_115.move_files([file_id], current_pid)
-    if not move_res:
+    move_ok = await client_115.move_files([file_id], current_pid)
+    if not move_ok:
         logger.error(f"Failed to move file {file_name} to {current_pid}")
         return
         

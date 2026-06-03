@@ -19,6 +19,7 @@ from app.core.sync.engine import sync_engine
 import asyncio
 
 from app.core.emby.standalone_proxy import restart_standalone_proxy, stop_standalone_proxy
+from app.core.transfer import init_transfer_pipeline
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -28,6 +29,7 @@ async def lifespan(app: FastAPI):
     start_scheduler()
     
     init_handlers()
+    init_transfer_pipeline()
 
     config = get_config()
     
@@ -59,7 +61,7 @@ app = FastAPI(
 
 # 挂载静态文件
 os.makedirs("app/web/static", exist_ok=True)
-from app.api import cloud115, cloud123, strm, organize, search, web, system
+from app.api import cloud115, cloud123, strm, organize, search, web, system, transfer
 
 app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
 
@@ -82,6 +84,7 @@ app.include_router(search.router, prefix="/api/v1")
 app.include_router(system.router, prefix="/api/v1")
 from app.api.library import router as library_router
 app.include_router(library_router, prefix="/api/v1")
+app.include_router(transfer.router)
 app.include_router(web.router)
 
 if __name__ == "__main__":
