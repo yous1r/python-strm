@@ -53,3 +53,16 @@ class SyncHistory(BaseModel):
     processed_count: Optional[int] = 0
     error_details: Optional[str] = None
     created_at: Optional[datetime] = None
+
+class TgResource(BaseModel):
+    id: Optional[int] = None
+    message_id: Optional[int] = None
+    channel_id: Optional[str] = None
+    title: str
+    raw_text: Optional[str] = None
+    link: str
+    password: Optional[str] = None
+    disk_type: str
+    msg_date: Optional[datetime] = None
+    status: str = 'pending'
+    created_at: Optional[datetime] = None

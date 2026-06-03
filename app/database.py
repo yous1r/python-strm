@@ -92,6 +92,23 @@ async def init_db():
             )
         ''')
         
+        # Telegram资源库表
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS tg_resources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id INTEGER,
+                channel_id TEXT,
+                title TEXT NOT NULL,
+                raw_text TEXT,
+                link TEXT NOT NULL UNIQUE,
+                password TEXT,
+                disk_type TEXT NOT NULL,
+                msg_date DATETIME,
+                status TEXT DEFAULT 'pending',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
         await db.commit()
         logger.info("Database initialized successfully")
 
@@ -105,3 +122,22 @@ async def get_db_conn():
         yield conn
     finally:
         await conn.close()
+
+async def insert_tg_resource(db, resource: dict) -> bool:
+    """插入资源，如果链接已存在则忽略。返回 True 表示新插入，False 表示已存在/忽略"""
+    cursor = await db.execute('''
+        INSERT OR IGNORE INTO tg_resources 
+        (message_id, channel_id, title, raw_text, link, password, disk_type, msg_date, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        resource.get('message_id'),
+        resource.get('channel_id'),
+        resource.get('title'),
+        resource.get('raw_text'),
+        resource.get('link'),
+        resource.get('password'),
+        resource.get('disk_type'),
+        resource.get('msg_date'),
+        resource.get('status', 'pending')
+    ))
+    return cursor.rowcount > 0
