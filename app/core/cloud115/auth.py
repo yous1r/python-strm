@@ -26,9 +26,9 @@ class Cloud115Auth:
                         k, v = part.split("=", 1)
                         cookie_dict[k] = v
                         
-                # 尝试加载，必须保持 app="alipaymini" 以防令牌平台不一致触发封控
-                self.client = P115Client(cookie_dict, app="alipaymini", check_for_relogin=True)
-                logger.info("115 Client initialized with existing cookie.")
+                # 使用 ipad 端凭证，有效期长，减少 token 刷新频率
+                self.client = P115Client(cookie_dict, app="115ipad", check_for_relogin=False)
+                logger.info("115 Client initialized with existing cookie (ipad).")
             except Exception as e:
                 logger.error(f"Failed to initialize 115 Client: {e}")
                 self.client = None
@@ -50,8 +50,8 @@ class Cloud115Auth:
                     k, v = part.split("=", 1)
                     cookie_dict[k] = v
                     
-            # 必须保持 app="alipaymini" 防止风控作废 cookie
-            self.client = P115Client(cookie_dict, app="alipaymini", check_for_relogin=True)
+            # 使用 ipad 端凭证保持一致性
+            self.client = P115Client(cookie_dict, app="115ipad", check_for_relogin=False)
             # 保存回配置
             from app.config import update_config
             update_config({"cloud115": {"cookie": cookie_str}})
@@ -97,8 +97,8 @@ class Cloud115Auth:
         """获取二维码信息"""
         try:
             import asyncio
-            # 直接调用静态方法获取token，使用 alipaymini 避免 web 端容易触发的 IP 异常
-            res = await asyncio.to_thread(P115Client.login_qrcode_token, app="alipaymini", async_=False)
+            # 直接调用静态方法获取token，使用 ipad 端避免 web 端 IP 异常
+            res = await asyncio.to_thread(P115Client.login_qrcode_token, app="115ipad", async_=False)
             if res.get("state"):
                 return res.get("data", {})
             logger.error(f"Get QR token failed: {res}")
@@ -127,8 +127,8 @@ class Cloud115Auth:
                 # 登录成功，获取结果(cookie)
                 uid = payload.get("uid")
                 temp_client = P115Client("")
-                # 使用 alipaymini 获取 cookie
-                login_res = await asyncio.to_thread(temp_client.login_qrcode_scan_result, uid, app="alipaymini", async_=False)
+                # 使用 ipad 端获取 cookie，保证与客户端一致
+                login_res = await asyncio.to_thread(temp_client.login_qrcode_scan_result, uid, app="115ipad", async_=False)
                 if login_res.get("state"):
                     # 获取返回的 cookie
                     cookie_str = temp_client.cookies_str
