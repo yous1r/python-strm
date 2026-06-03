@@ -341,7 +341,16 @@ class Cloud115Client:
                     result = await asyncio.to_thread(self.client.share_receive_app, receive_payload)
                 if result.get("state"):
                     return {"state": True, "msg": "转存成功"}
-                return {"state": False, "error": result.get("error_msg", "Transfer failed"), "raw": result}
+                    
+                # 尝试从所有可能的字段中提取错误信息
+                error_msg = result.get("error_msg") or result.get("error") or result.get("msg") or "Transfer failed"
+                
+                # 如果是“已包含”或“已存在”，当作转存成功处理，避免前端抛错
+                if "已存在" in error_msg or "包含" in error_msg or "接收过" in error_msg:
+                    logger.info(f"资源已存在/已接收，标记为成功: {error_msg}")
+                    return {"state": True, "msg": "该资源已存在"}
+                    
+                return {"state": False, "error": error_msg, "raw": result}
             except Exception as e:
                 logger.error(f"Failed to receive share: {e}")
                 return {"state": False, "error": str(e)}
