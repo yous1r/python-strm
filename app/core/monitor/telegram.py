@@ -88,10 +88,17 @@ class TelegramMonitor:
                     if not matched:
                         return
 
-            links = self.extract_links(text)
-            if links:
-                logger.info(f"Found new links in telegram: {links}")
-                for link_data in links:
+            channel_str = str(event.chat_id) if hasattr(event, 'chat_id') else None
+            new_links = await self.ingest_message(
+                text, 
+                message_id=event.message.id,
+                channel_id=channel_str,
+                msg_date=str(event.message.date)
+            )
+            if new_links:
+                logger.info(f"Found and ingested new links: {new_links}")
+                for link_data in new_links:
+                    # 只针对实时消息，立刻推送转存队列，并在 handler 中将数据库状态更新为 queued
                     await event_bus.emit(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
 
         await self.client.connect()
@@ -138,5 +145,37 @@ class TelegramMonitor:
                 seen.add(link["url"])
                 unique_links.append(link)
         return unique_links
+
+    async def ingest_message(self, text: str, message_id: int = None, channel_id: str = None, msg_date: str = None) -> list:
+        """从文本提取链接，提纯标题并入库。返回成功入库的新链接信息。"""
+        from app.core.monitor.parser import extract_title_from_text
+        from app.database import get_db_conn, insert_tg_resource
+        
+        links = self.extract_links(text)
+        if not links:
+            return []
+            
+        title = extract_title_from_text(text)
+        new_links = []
+        
+        async with get_db_conn() as db:
+            for link_data in links:
+                resource = {
+                    "message_id": message_id,
+                    "channel_id": channel_id,
+                    "title": title,
+                    "raw_text": text,
+                    "link": link_data["url"],
+                    "password": link_data["password"],
+                    "disk_type": link_data["type"],
+                    "msg_date": msg_date,
+                    "status": "pending"
+                }
+                is_new = await insert_tg_resource(db, resource)
+                if is_new:
+                    new_links.append(link_data)
+            await db.commit()
+            
+        return new_links
 
 telegram_monitor = TelegramMonitor()

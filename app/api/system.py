@@ -273,8 +273,13 @@ async def scrape_telegram_monitor(req: TelegramScrapeRequest, background_tasks: 
                                     await asyncio.sleep(2)  # 每处理100条消息强制休眠2秒，避免触发 Telegram FloodWait
                                     
                                 text = msg.message or ""
-                                links = telegram_monitor.extract_links(text)
-                                for link_data in links:
+                                new_links = await telegram_monitor.ingest_message(
+                                    text,
+                                    message_id=msg.id,
+                                    channel_id=str(ch),
+                                    msg_date=str(msg.date)
+                                )
+                                for link_data in new_links:
                                     total_links_found += 1
                                     await event_bus.emit(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
                     else:
@@ -284,8 +289,13 @@ async def scrape_telegram_monitor(req: TelegramScrapeRequest, background_tasks: 
                                 await asyncio.sleep(2)  # 每处理100条消息强制休眠2秒，避免触发 Telegram FloodWait
                                 
                             text = msg.message or ""
-                            links = telegram_monitor.extract_links(text)
-                            for link_data in links:
+                            new_links = await telegram_monitor.ingest_message(
+                                text,
+                                message_id=msg.id,
+                                channel_id=str(ch),
+                                msg_date=str(msg.date)
+                            )
+                            for link_data in new_links:
                                 total_links_found += 1
                                 await event_bus.emit(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
                 except Exception as inner_e:
