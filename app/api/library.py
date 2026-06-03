@@ -206,7 +206,7 @@ async def migrate_legacy(background_tasks: BackgroundTasks):
                 except:
                     pass
                 await db.execute("UPDATE tg_resources SET base_title=?, poster_url=? WHERE id=?", (b_title, poster, row['id']))
+                await db.commit()
                 await asyncio.sleep(0.5)
-            await db.commit()
     background_tasks.add_task(run_migration)
     return {"status": "success", "message": "后台清洗升级任务已启动"}
