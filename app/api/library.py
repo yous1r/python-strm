@@ -95,6 +95,23 @@ async def upload_tg_json(background_tasks: BackgroundTasks, file: UploadFile = F
                 msg_date = msg.get('date')
                 msg_id = msg.get('id')
                 
+                import PTN
+                from app.core.tmdb.client import tmdb_client
+                
+                parsed = PTN.parse(title)
+                base_title = parsed.get("title") or title
+                year = parsed.get("year", "")
+                poster_url = None
+                
+                try:
+                    res = await tmdb_client.search_movie(base_title, year)
+                    if not res:
+                        res = await tmdb_client.search_tv(base_title, year)
+                    if res and res[0].get('poster_path'):
+                        poster_url = f"https://image.tmdb.org/t/p/w342{res[0]['poster_path']}"
+                except:
+                    pass
+                
                 for link_data in links:
                     resource = {
                         "message_id": msg_id,
@@ -105,7 +122,9 @@ async def upload_tg_json(background_tasks: BackgroundTasks, file: UploadFile = F
                         "password": link_data["password"],
                         "disk_type": link_data["type"],
                         "msg_date": msg_date,
-                        "status": "pending"
+                        "status": "pending",
+                        "base_title": base_title,
+                        "poster_url": poster_url
                     }
                     await insert_tg_resource(db, resource)
                 # 每处理100条缓一下，防止锁死DB
