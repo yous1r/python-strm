@@ -68,6 +68,12 @@ async def page_advanced(request: Request):
         "title": "全局高阶配置"
     })
 
+@router.get("/transfer")
+async def page_transfer(request: Request):
+    return templates.TemplateResponse(request, "transfer.html", {
+        "title": "转存整理"
+    })
+
 @router.get("/search")
 async def page_search(request: Request):
     config = get_config()

@@ -341,16 +341,29 @@
         btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 投递中...';
         
         try {
-            const res = await fetch('/api/v1/search/transfer', {
+            // 115 分享链接使用新的转存整理管道
+            let endpoint = '/api/v1/search/transfer';
+            let payload = {
+                url: url,
+                target_dir_id: dirId,
+                receive_code: receiveCode,
+                cloud_type: currentTransferCloudType,
+                link_type: currentTransferLinkType
+            };
+            
+            if (currentTransferCloudType === '115' && (currentTransferLinkType === '115' || url.includes('115.com/s/'))) {
+                endpoint = '/api/v1/transfer/receive';
+                payload = {
+                    share_url: url,
+                    receive_code: receiveCode,
+                    target_dir_id: dirId || ''
+                };
+            }
+            
+            const res = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    url: url,
-                    target_dir_id: dirId,
-                    receive_code: receiveCode,
-                    cloud_type: currentTransferCloudType,
-                    link_type: currentTransferLinkType
-                })
+                body: JSON.stringify(payload)
             });
             
             const data = await res.json();
