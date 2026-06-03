@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse
 from contextlib import asynccontextmanager
 import os
 
@@ -65,6 +66,12 @@ app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok"}
+
+templates = Jinja2Templates(directory="app/web/templates")
+
+@app.get("/library", response_class=HTMLResponse)
+async def library_page(request: Request):
+    return templates.TemplateResponse("library.html", {"request": request})
 
 # 注册各类路由
 app.include_router(cloud115.router)

@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+
+{% block subtitle %}统一资源图鉴库{% endblock %}
+
+{% block content %}
+<div class="glass-panel animate-fade-in delay-1" style="margin-bottom: 2rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+        <h2 style="margin: 0;"><i class="fa-solid fa-photo-film"></i> Telegram 私有资源库</h2>
+        <div style="display: flex; gap: 1rem; align-items: center;">
+            <input type="text" id="searchInput" class="form-control" placeholder="搜索影视名称..." style="width: 250px;" onkeyup="if(event.key === 'Enter') loadLibrary(1)">
+            <button class="btn btn-primary" onclick="loadLibrary(1)"><i class="fa-solid fa-magnifying-glass"></i></button>
+            <button class="btn btn-secondary" onclick="document.getElementById('jsonUpload').click()">
+                <i class="fa-solid fa-file-import"></i> 导入 TG 历史 JSON
+            </button>
+            <input type="file" id="jsonUpload" accept=".json" style="display: none;" onchange="handleFileUpload(event)">
+        </div>
+    </div>
+    
+    <div style="overflow-x: auto;">
+        <table style="width: 100%; text-align: left; border-collapse: collapse;">
+            <thead>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+                    <th style="padding: 1rem;">资源名称</th>
+                    <th style="padding: 1rem;">提取码</th>
+                    <th style="padding: 1rem;">日期</th>
+                    <th style="padding: 1rem;">状态</th>
+                    <th style="padding: 1rem;">操作</th>
+                </tr>
+            </thead>
+            <tbody id="libraryBody">
+                <!-- 动态渲染 -->
+            </tbody>
+        </table>
+    </div>
+    
+    <div style="display: flex; justify-content: space-between; margin-top: 1.5rem; align-items: center;">
+        <span id="pageInfo"></span>
+        <div style="display: flex; gap: 0.5rem;">
+            <button class="btn btn-secondary" id="prevBtn" onclick="changePage(-1)">上一页</button>
+            <button class="btn btn-secondary" id="nextBtn" onclick="changePage(1)">下一页</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentPage = 1;
+const pageSize = 20;
+
+async function loadLibrary(page = 1) {
+    currentPage = page;
+    const search = document.getElementById('searchInput').value;
+    const tbody = document.getElementById('libraryBody');
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:2rem;">加载中...</td></tr>';
+    
+    try {
+        const res = await fetch(`/api/v1/library/tg_resources?page=${page}&page_size=${pageSize}&search=${encodeURIComponent(search)}`);
+        const data = await res.json();
+        
+        if (data.data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:2rem;">暂无数据</td></tr>';
+        } else {
+            tbody.innerHTML = data.data.map(row => {
+                let statusHtml = '';
+                if (row.status === 'pending') statusHtml = '<span class="badge" style="background:var(--secondary-bg);">待转存</span>';
+                else if (row.status === 'queued') statusHtml = '<span class="badge" style="background:var(--accent);">排队中</span>';
+                else if (row.status === 'success') statusHtml = '<span class="badge" style="background:#10b981;">已转存</span>';
+                else if (row.status === 'failed') statusHtml = '<span class="badge" style="background:#ef4444;">失败</span>';
+                
+                return `
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                    <td style="padding: 1rem;" title="${row.raw_text}">${row.title}</td>
+                    <td style="padding: 1rem;">${row.password || '-'}</td>
+                    <td style="padding: 1rem;">${row.msg_date ? new Date(row.msg_date).toLocaleString() : '-'}</td>
+                    <td style="padding: 1rem;">${statusHtml}</td>
+                    <td style="padding: 1rem;">
+                        <button class="btn btn-primary" style="padding: 0.3rem 0.8rem; font-size: 0.85rem;" onclick="transferResource(${row.id}, this)" ${row.status === 'queued' || row.status === 'success' ? 'disabled' : ''}>
+                            <i class="fa-solid fa-cloud-arrow-up"></i> 一键转存
+                        </button>
+                    </td>
+                </tr>
+                `;
+            }).join('');
+        }
+        
+        document.getElementById('pageInfo').innerText = `共 ${data.total} 条 | 第 ${page} 页`;
+        document.getElementById('prevBtn').disabled = page === 1;
+        document.getElementById('nextBtn').disabled = data.data.length < pageSize;
+        
+    } catch(e) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:2rem; color:#ef4444;">加载失败</td></tr>';
+    }
+}
+
+function changePage(delta) {
+    loadLibrary(currentPage + delta);
+}
+
+async function transferResource(id, btn) {
+    const orig = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 投递中';
+    try {
+        const res = await fetch(`/api/v1/library/transfer/${id}`, { method: 'POST' });
+        const data = await res.json();
+        if (data.status === 'success') {
+            loadLibrary(currentPage);
+        } else {
+            alert('转存失败: ' + data.message);
+            btn.disabled = false;
+            btn.innerHTML = orig;
+        }
+    } catch(e) {
+        alert('网络错误');
+        btn.disabled = false;
+        btn.innerHTML = orig;
+    }
+}
+
+async function handleFileUpload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    if(!confirm(`即将上传解析 ${file.name}，这可能需要一点时间，确定继续吗？`)) return;
+    
+    try {
+        const res = await fetch('/api/v1/library/upload_json', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await res.json();
+        if(data.status === 'success') {
+            await window.customConfirm(`✅ 导入已启动\n\n${data.message}`);
+            setTimeout(() => loadLibrary(1), 2000);
+        } else {
+            alert('导入失败: ' + data.message);
+        }
+    } catch (err) {
+        alert('上传请求失败');
+    }
+    e.target.value = '';
+}
+
+// 初始加载
+document.addEventListener('DOMContentLoaded', () => loadLibrary(1));
+</script>
+{% endblock %}
