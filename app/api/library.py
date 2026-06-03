@@ -11,7 +11,7 @@ async def get_tg_resources(page: int = 1, page_size: int = 20, search: str = "")
     params = []
     
     # 获取唯一的 base_title 列表（带分页）
-    base_query = "SELECT base_title, MAX(poster_url) as poster_url, COUNT(*) as ep_count, MAX(msg_date) as last_updated FROM tg_resources"
+    base_query = "SELECT base_title, MAX(poster_url) as poster_url, MAX(overview) as overview, MAX(cast_text) as cast_text, COUNT(*) as ep_count, MAX(msg_date) as last_updated FROM tg_resources"
     if search:
         base_query += " WHERE title LIKE ? OR raw_text LIKE ?"
         params.extend([f"%{search}%", f"%{search}%"])
@@ -190,23 +190,50 @@ async def migrate_legacy(background_tasks: BackgroundTasks):
         import asyncio
         async with get_db_conn() as db:
             db.row_factory = dict_factory
-            cursor = await db.execute("SELECT id, title FROM tg_resources WHERE poster_url IS NULL")
+            cursor = await db.execute("SELECT id, title FROM tg_resources WHERE poster_url IS NULL ORDER BY msg_date DESC")
             rows = await cursor.fetchall()
-            for row in rows:
-                guessed = guessit(row['title'])
-                b_title = guessed.get("title") or row['title']
-                year = str(guessed.get("year", ""))
-                poster = None
-                try:
-                    res = await tmdb_client.search_movie(b_title, year)
-                    if not res:
-                        res = await tmdb_client.search_tv(b_title, year)
-                    if res and res[0].get('poster_path'):
-                        poster = f"https://image.tmdb.org/t/p/w342{res[0]['poster_path']}"
-                except:
-                    pass
-                await db.execute("UPDATE tg_resources SET base_title=?, poster_url=? WHERE id=?", (b_title, poster, row['id']))
-                await db.commit()
-                await asyncio.sleep(0.5)
+            cache = {}
+            import httpx
+            async with httpx.AsyncClient() as client:
+                for row in rows:
+                    guessed = guessit(row['title'])
+                    b_title = guessed.get("title") or row['title']
+                    year = str(guessed.get("year", ""))
+                    
+                    poster, overview, cast_text = None, None, None
+                    cache_key = f"{b_title}_{year}"
+                    
+                    if cache_key in cache:
+                        poster, overview, cast_text = cache[cache_key]
+                    else:
+                        try:
+                            res = await tmdb_client.search_movie(b_title, year)
+                            item_type = 'movie'
+                            if not res:
+                                res = await tmdb_client.search_tv(b_title, year)
+                                item_type = 'tv'
+                                
+                            if res:
+                                item = res[0]
+                                if item.get('poster_path'):
+                                    poster = f"https://image.tmdb.org/t/p/w342{item['poster_path']}"
+                                overview = item.get('overview', '')
+                                tmdb_id = item.get('id')
+                                
+                                # fetch credits
+                                if tmdb_id:
+                                    credits_url = f"https://api.themoviedb.org/3/{item_type}/{tmdb_id}/credits?api_key={tmdb_client.config.api_key}&language={tmdb_client.config.language}"
+                                    c_res = await client.get(credits_url, proxies={"http://": tmdb_client.config.proxy, "https://": tmdb_client.config.proxy} if tmdb_client.config.proxy else None)
+                                    if c_res.status_code == 200:
+                                        cast_data = c_res.json().get('cast', [])[:5]
+                                        cast_text = ", ".join([c['name'] for c in cast_data])
+                        except Exception as e:
+                            print(e)
+                        cache[cache_key] = (poster, overview, cast_text)
+                        await asyncio.sleep(0.5)
+                        
+                    await db.execute("UPDATE tg_resources SET base_title=?, poster_url=?, overview=?, cast_text=? WHERE id=?", 
+                                     (b_title, poster, overview, cast_text, row['id']))
+                    await db.commit()
     background_tasks.add_task(run_migration)
     return {"status": "success", "message": "后台清洗升级任务已启动"}
