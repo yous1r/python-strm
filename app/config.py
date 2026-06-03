@@ -139,7 +139,7 @@ class AppConfig(BaseSettings):
 
 _config_instance = None
 
-def load_config(config_path: str = "config.yaml") -> AppConfig:
+def load_config(config_path: str = "data/config.yaml") -> AppConfig:
     """加载配置文件并合并默认值"""
     global _config_instance
     
@@ -168,7 +168,7 @@ def deep_update(d, u):
             d[k] = v
     return d
 
-def update_config(partial_dict: dict, config_path: str = "config.yaml") -> AppConfig:
+def update_config(partial_dict: dict, config_path: str = "data/config.yaml") -> AppConfig:
     """使用增量数据更新配置并持久化，触发热加载"""
     global _config_instance
     current_dict = _config_instance.model_dump() if _config_instance else {}
