@@ -34,47 +34,71 @@ async def handle_new_link(link_data: dict, source: str, **kwargs):
         logger.warning("115 client not initialized. Skipping auto-transfer.")
         return
 
-    async with transfer_semaphore:
-        logger.info(f"Processing new 115 link: {share_url} with pwd: {receive_code}")
+    try:
+        async with transfer_semaphore:
+            logger.info(f"Processing new 115 link: {share_url} with pwd: {receive_code}")
+            
+            # 1. 尝试转存
+            transfer_res = await client_115.share_receive(
+                share_url, 
+                receive_code, 
+                target_dir_id, 
+                filter_rules=config.filter_rules
+            )
+            
+            # 转存后等待3秒，严格限制请求频率
+            await asyncio.sleep(3)
+            
+        if not transfer_res.get("state"):
+            logger.error(f"Failed to auto-transfer link {share_url}: {transfer_res.get('error')}")
+            await notify_manager.notify(
+                title="[STRM] 自动转存失败",
+                content=f"链接: {share_url}\n报错: {transfer_res.get('error')}"
+            )
+            db_id = link_data.get('db_id')
+            if db_id:
+                from app.database import get_db_conn
+                async with get_db_conn() as db:
+                    await db.execute("UPDATE tg_resources SET status = 'failed' WHERE id = ?", (db_id,))
+                    await db.commit()
+            return
+
+        logger.info(f"Successfully transferred {share_url} to dir {target_dir_id}")
         
-        # 1. 尝试转存
-        transfer_res = await client_115.share_receive(
-            share_url, 
-            receive_code, 
-            target_dir_id, 
-            filter_rules=config.filter_rules
-        )
-        
-        # 转存后等待3秒，严格限制请求频率
-        await asyncio.sleep(3)
-        
-    if not transfer_res.get("state"):
-        logger.error(f"Failed to auto-transfer link {share_url}: {transfer_res.get('error')}")
+        # 2. 自动整理 (如果开启)
+        if config.auto_organize and archive_dir_id and archive_dir_id != "0":
+            logger.info("Starting auto-organize for newly transferred files...")
+            await _auto_organize(client_115, target_dir_id, archive_dir_id)
+
+        # 3. 自动生成STRM (如果开启)
+        if config.auto_strm:
+            logger.info("Starting auto-strm generation...")
+            # 简单粗暴，直接触发全局同步
+            # 如果要做到精准，需要传具体的 dir_id 给 sync_engine，但全局同步可以确保完整性
+            asyncio.create_task(sync_engine.run_sync_task())
+
+        # 4. 推送成功通知
         await notify_manager.notify(
-            title="[STRM] 自动转存失败",
-            content=f"链接: {share_url}\n报错: {transfer_res.get('error')}"
+            title="[STRM] 自动转存成功",
+            content=f"链接: {share_url}\n密码: {receive_code}\n已成功转存并加入处理队列！"
         )
-        return
 
-    logger.info(f"Successfully transferred {share_url} to dir {target_dir_id}")
-    
-    # 2. 自动整理 (如果开启)
-    if config.auto_organize and archive_dir_id and archive_dir_id != "0":
-        logger.info("Starting auto-organize for newly transferred files...")
-        await _auto_organize(client_115, target_dir_id, archive_dir_id)
-
-    # 3. 自动生成STRM (如果开启)
-    if config.auto_strm:
-        logger.info("Starting auto-strm generation...")
-        # 简单粗暴，直接触发全局同步
-        # 如果要做到精准，需要传具体的 dir_id 给 sync_engine，但全局同步可以确保完整性
-        asyncio.create_task(sync_engine.run_sync_task())
-
-    # 4. 推送成功通知
-    await notify_manager.notify(
-        title="[STRM] 自动转存成功",
-        content=f"链接: {share_url}\n密码: {receive_code}\n已成功转存并加入处理队列！"
-    )
+        # 如果传入了 db_id，更新数据库状态为 success
+        db_id = link_data.get('db_id')
+        if db_id:
+            from app.database import get_db_conn
+            async with get_db_conn() as db:
+                await db.execute("UPDATE tg_resources SET status = 'success' WHERE id = ?", (db_id,))
+                await db.commit()
+                
+    except Exception as e:
+        logger.error(f"Exception during transfer: {e}")
+        db_id = link_data.get('db_id')
+        if db_id:
+            from app.database import get_db_conn
+            async with get_db_conn() as db:
+                await db.execute("UPDATE tg_resources SET status = 'failed' WHERE id = ?", (db_id,))
+                await db.commit()
 
 async def _auto_organize(client_115, source_dir_id: str, archive_dir_id: str):
     """

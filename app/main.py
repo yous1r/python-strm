@@ -73,6 +73,8 @@ app.include_router(strm.router)
 app.include_router(organize.router, prefix="/api/v1")
 app.include_router(search.router, prefix="/api/v1")
 app.include_router(system.router, prefix="/api/v1")
+from app.api.library import router as library_router
+app.include_router(library_router, prefix="/api/v1")
 app.include_router(web.router)
 
 if __name__ == "__main__":
