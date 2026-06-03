@@ -44,7 +44,9 @@ class TelegramMonitor:
             except Exception as e:
                 logger.error(f"Failed to parse monitor proxy: {e}")
 
-        self.client = TelegramClient('session_strm', self.config.api_id, self.config.api_hash, **client_kwargs)
+        import os
+        os.makedirs('data', exist_ok=True)
+        self.client = TelegramClient('data/session_strm', self.config.api_id, self.config.api_hash, **client_kwargs)
         
         parsed_channels = []
         for ch in (self.config.channels or []):

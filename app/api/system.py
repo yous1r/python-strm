@@ -149,7 +149,9 @@ async def test_telegram_monitor(req: TelegramTestRequest):
                     "port": parsed.port
                 }
 
-            client_to_use = TelegramClient('session_strm', req.api_id, req.api_hash, **client_kwargs)
+            import os
+            os.makedirs('data', exist_ok=True)
+            client_to_use = TelegramClient('data/session_strm', req.api_id, req.api_hash, **client_kwargs)
             await client_to_use.connect()
             disconnect_after = True
             
@@ -235,7 +237,9 @@ async def scrape_telegram_monitor(req: TelegramScrapeRequest, background_tasks: 
                 elif proxy_type in ["socks5", "socks5h"]: proxy_type = "socks5"
                 client_kwargs["proxy"] = {"proxy_type": proxy_type, "addr": parsed.hostname, "port": parsed.port}
             
-            client_to_use = TelegramClient('session_strm', req.api_id, req.api_hash, **client_kwargs)
+            import os
+            os.makedirs('data', exist_ok=True)
+            client_to_use = TelegramClient('data/session_strm', req.api_id, req.api_hash, **client_kwargs)
             await client_to_use.connect()
             disconnect_after = True
             

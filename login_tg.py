@@ -29,7 +29,9 @@ async def main():
         print(f"🌍 使用代理: {proxy_type}://{parsed.hostname}:{parsed.port}")
 
     print("🚀 正在连接 Telegram 服务器...")
-    client = TelegramClient('session_strm', config.api_id, config.api_hash, **client_kwargs)
+    import os
+    os.makedirs('data', exist_ok=True)
+    client = TelegramClient('data/session_strm', config.api_id, config.api_hash, **client_kwargs)
     
     # client.start() 会在未登录时在控制台要求输入手机号和验证码
     await client.start()
