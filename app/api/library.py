@@ -63,16 +63,22 @@ async def upload_tg_json(background_tasks: BackgroundTasks, file: UploadFile = F
                 if msg.get('type') != 'message':
                     continue
                 # 解析消息文本
-                text_parts = msg.get('text', [])
-                if isinstance(text_parts, list):
-                    raw_text = ""
-                    for part in text_parts:
+                raw_text = ""
+                entities = msg.get('text_entities')
+                if not entities:
+                    entities = msg.get('text', [])
+                    if isinstance(entities, str):
+                        entities = [{"type": "plain", "text": entities}]
+                
+                if isinstance(entities, list):
+                    for part in entities:
                         if isinstance(part, str):
                             raw_text += part
-                        elif isinstance(part, dict) and 'text' in part:
-                            raw_text += part['text']
-                else:
-                    raw_text = str(text_parts)
+                        elif isinstance(part, dict):
+                            raw_text += part.get('text', '')
+                            # 把隐藏的超链接暴露在纯文本里，让后续的 extract_links 能正则捕获到
+                            if part.get('href'):
+                                raw_text += f" {part['href']} "
                     
                 links = telegram_monitor.extract_links(raw_text)
                 if not links:
