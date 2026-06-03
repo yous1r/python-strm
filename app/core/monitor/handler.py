@@ -50,7 +50,7 @@ async def handle_new_link(link_data: dict, source: str, **kwargs):
                 filter_rules=filter_rules
             )
             
-            # 转存后等待3秒
+            # 转存后等待3秒，严格限制请求频率
             await asyncio.sleep(3)
             
         if not transfer_res.get("state"):

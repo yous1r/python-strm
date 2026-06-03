@@ -1,4 +1,5 @@
 """订阅 EVENT_TRANSFER_MOVED，执行刮削+分类+移动+重命名"""
+import asyncio
 from loguru import logger
 from app.events import event_bus, EVENT_TRANSFER_MOVED, EVENT_ORGANIZE_START, EVENT_ORGANIZE_FILE_DONE, EVENT_ORGANIZE_COMPLETE
 from app.core.cloud115.client import client_115
@@ -50,8 +51,12 @@ async def handle_transfer_moved(task_id: str, temp_dir_id: str, files: list, sha
     success_count = 0
     seq = 0
 
-    for f in files:
+    for i, f in enumerate(files):
         seq += 1
+        # 流控：文件间延迟 1.5s 防止 115 WAF 405
+        if i > 0:
+            await asyncio.sleep(1.5)
+
         file_cid = f.get("cid") or f.get("fid") or f.get("f")
         file_name = f.get("name") or f.get("n", "unknown")
 

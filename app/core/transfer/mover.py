@@ -1,5 +1,6 @@
 """订阅 EVENT_TRANSFER_RECEIVED，将文件从收件箱移动到临时目录"""
 import uuid
+import asyncio
 from loguru import logger
 from app.events import event_bus, EVENT_TRANSFER_RECEIVED, EVENT_TRANSFER_MOVED
 from app.core.cloud115.client import client_115
@@ -24,12 +25,16 @@ async def handle_transfer_received(share_url: str, inbox_dir_id: str, temp_dir_i
     logger.info(f"[Mover] 开始移动 {len(files)} 个文件: inbox={inbox_dir_id} -> temp={temp_dir_id}")
 
     moved_files = []
-    for f in files:
+    for i, f in enumerate(files):
         file_cid = f.get("cid") or f.get("fid") or f.get("f")
         file_name = f.get("name") or f.get("n", "unknown")
 
         if not file_cid:
             continue
+
+        # 流控：每个文件间延迟 1.5s，防止 115 WAF 405
+        if i > 0:
+            await asyncio.sleep(1.5)
 
         success = await client_115.move_files([file_cid], temp_dir_id)
         if success:
@@ -40,7 +45,6 @@ async def handle_transfer_received(share_url: str, inbox_dir_id: str, temp_dir_i
 
     logger.info(f"[Mover] 移动完成: {len(moved_files)}/{len(files)}, task_id={task_id}")
 
-    # 如果是批次号，更新 file_count（递增）
     if batch_task_id:
         async with get_db_conn() as db:
             await db.execute(
