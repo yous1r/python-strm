@@ -22,6 +22,7 @@ class Cloud115Config(BaseModel):
     strm_type: str = "pickcode"
     play_ua: str = ""
     api_type: str = "app"  # 'app' or 'web'
+    target_dir_id: str = "0"
     sync_dirs: List[SyncDirConfig] = []
 
 class Cloud123Config(BaseModel):

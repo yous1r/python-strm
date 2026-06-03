@@ -23,11 +23,15 @@ async def handle_new_link(link_data: dict, source: str, **kwargs):
     target_dir_id = config.target_dir_id
     archive_dir_id = config.archive_dir_id
     
+    # 回退机制：如果监控配置中没有设置转存目录，则尝试使用 115 全局转存目录
+    if not target_dir_id or target_dir_id == "0":
+        target_dir_id = get_config().cloud115.target_dir_id
+    
     share_url = link_data.get("url")
     receive_code = link_data.get("password", "")
     
     if not target_dir_id or target_dir_id == "0":
-        logger.warning("No target_dir_id configured for 115 auto-transfer. Skipping.")
+        logger.warning("No target_dir_id configured (neither in monitor nor 115 settings). Skipping.")
         return
 
     if not client_115.client:
