@@ -7,6 +7,18 @@ from app.config import get_config
 from .models import ClassifyResult
 
 
+def _sanitize(name: str) -> str:
+    """移除文件名中的非法字符，取纯作品名"""
+    # 去掉扩展名、去掉常见分隔符后面的季集信息
+    import os
+    base = os.path.splitext(name)[0]
+    # 去掉 " - S01E03" 这类季集标记
+    base = re.sub(r'\s*[-–]\s*S\d+E\d+.*$', '', base, flags=re.IGNORECASE)
+    # 去掉末尾的季集信息
+    base = re.sub(r'\s*[-–]\s*第?[0-9]+[集话].*$', '', base)
+    return base.strip()
+
+
 async def classify(file_name: str) -> Optional[ClassifyResult]:
     """
     根据文件名进行 TMDB 刮削，返回分类结果。
@@ -25,6 +37,19 @@ async def classify(file_name: str) -> Optional[ClassifyResult]:
         tmdb_id = ""
         if tmdb_data:
             tmdb_id = str(tmdb_data.get("id", ""))
+
+        # 从 TMDB 数据中提取标题和年份（不解析 target_name，因为可能包含剧集信息）
+        title = ""
+        year = ""
+        if tmdb_data:
+            title = tmdb_data.get("title") or tmdb_data.get("name") or ""
+            year = (tmdb_data.get("release_date") or tmdb_data.get("first_air_date") or "")[:4]
+        if not title:
+            title = _sanitize(target_name or file_name)
+        if not year:
+            year_match = re.search(r'\((\d{4})\)', (target_folder or "") + (target_name or ""))
+            if year_match:
+                year = year_match.group(1)
 
         # 查找匹配的分类配置
         cat_config = None
@@ -45,17 +70,8 @@ async def classify(file_name: str) -> Optional[ClassifyResult]:
 
         # 确定季号
         season = 1
-        if tmdb_data and tmdb_data.get("season"):
-            season = tmdb_data.get("season", 1)
-
-        # 提取年份
-        year = ""
-        year_match = re.search(r'\((\d{4})\)', target_name)
-        if year_match:
-            year = year_match.group(1)
-
-        # 提取纯作品名
-        title = target_name.split(" (")[0] if " (" in target_name else target_name
+        if tmdb_data and tmdb_data.get("season_number"):
+            season = tmdb_data.get("season_number", 1)
 
         return ClassifyResult(
             category=category,
