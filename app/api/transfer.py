@@ -40,7 +40,7 @@ async def receive_share(req: ReceiveRequest):
     res = await client_115.share_receive(
         req.share_url,
         req.receive_code,
-        target_dir_id="0",  # 115 接口忽略此参数，文件始终落入最近接收
+        target_dir_id=req.target_dir_id or target_dir,
         filter_rules=req.filter_rules
     )
 

@@ -46,7 +46,7 @@ async def handle_new_link(link_data: dict, source: str, **kwargs):
             transfer_res = await client_115.share_receive(
                 share_url, 
                 receive_code, 
-                "0",  # 115 忽略此参数
+                target_dir_id,
                 filter_rules=filter_rules
             )
             
