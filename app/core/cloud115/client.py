@@ -150,6 +150,36 @@ class Cloud115Client:
         
         return {"error": error_msg}
 
+    async def create_path(self, parent_id: str, path: str) -> dict:
+        """递归创建多级目录，使用 fs_makedirs_app 一次调用完成，返回最终目录 cid"""
+        if not self.client:
+            return {"error": "Client not initialized"}
+        async with self.semaphore:
+            try:
+                res = await self.client.fs_makedirs_app(path, pid=parent_id, async_=True)
+                if res.get("state") and "cid" in res:
+                    return {"id": str(res["cid"]), "name": path.split("/")[-1]}
+                err = res.get("error", "Unknown error")
+                if "存在" in err or "exist" in err.lower():
+                    # 路径已存在，尝试通过逐级查找获取最终 cid
+                    parts = [p for p in path.split("/") if p]
+                    cur = parent_id
+                    for p in parts:
+                        dirs_res = await self.list_dirs(cur)
+                        found = False
+                        for d in dirs_res.get("dirs", []):
+                            if d.get("n") == p:
+                                cur = d.get("cid")
+                                found = True
+                                break
+                        if not found:
+                            return {"error": f"路径 {path} 已存在但无法定位"}
+                    return {"id": cur, "name": parts[-1] if parts else ""}
+                return {"error": err}
+            except Exception as e:
+                logger.error(f"Failed to create path {path}: {e}")
+                return {"error": str(e)}
+
     async def rename_file(self, file_id: str, new_name: str) -> bool:
         """重命名文件/文件夹"""
         if not self.client:
