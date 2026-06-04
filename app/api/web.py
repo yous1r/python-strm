@@ -74,6 +74,12 @@ async def page_transfer(request: Request):
         "title": "转存整理"
     })
 
+@router.get("/tasks")
+async def page_tasks(request: Request):
+    return templates.TemplateResponse(request, "tasks.html", {
+        "title": "任务监控"
+    })
+
 @router.get("/search")
 async def page_search(request: Request):
     config = get_config()

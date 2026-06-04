@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+
+{% block subtitle %}后台任务监控：所有 async 协程和 thread 线程任务可观测{% endblock %}
+
+{% block content %}
+<style>
+.summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+.summary-card { background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: 12px; padding: 1rem; text-align: center; }
+.summary-card .num { font-size: 2rem; font-weight: 700; }
+.summary-card .label { font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.25rem; }
+.card-running .num { color: #60a5fa; }
+.card-done .num { color: #4ade80; }
+.card-error .num { color: #f87171; }
+.card-total .num { color: var(--text-primary); }
+
+.task-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.task-table th { text-align: left; padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--border); color: var(--text-secondary); font-weight: 500; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.task-table td { padding: 0.55rem 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.04); }
+.task-row-running { background: rgba(59,130,246,0.06); }
+.task-row-error { background: rgba(239,68,68,0.06); }
+
+.type-badge { padding: 2px 8px; border-radius: 10px; font-size: 0.72rem; font-weight: 600; }
+.type-async { background: rgba(99,102,241,0.2); color: #818cf8; }
+.type-thread { background: rgba(34,197,94,0.2); color: #4ade80; }
+
+.status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.dot-running { background: #60a5fa; animation: pulse 1.5s infinite; }
+.dot-done { background: #4ade80; }
+.dot-error { background: #f87171; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+.error-msg { max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #f87171; font-size: 0.78rem; }
+</style>
+
+<div class="glass-panel animate-fade-in delay-1" style="margin-bottom: 1.5rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h2 style="margin: 0;"><i class="fa-solid fa-microchip" style="color: var(--accent-primary); margin-right: 0.75rem;"></i>后台任务总览</h2>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <span id="lastUpdate" style="font-size: 0.8rem; color: var(--text-secondary);"></span>
+            <button class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="loadTasks()">
+                <i class="fa-solid fa-arrows-rotate"></i> 刷新
+            </button>
+            <label style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.8rem; cursor: pointer;">
+                <input type="checkbox" id="autoRefresh" checked onchange="toggleAutoRefresh()"> 自动
+            </label>
+        </div>
+    </div>
+
+    <div class="summary-cards" style="margin-top: 1rem;">
+        <div class="summary-card card-running">
+            <div class="num" id="countRunning">0</div>
+            <div class="label"><i class="fa-solid fa-spinner fa-spin" style="font-size: 0.7rem;"></i> 运行中</div>
+        </div>
+        <div class="summary-card card-done">
+            <div class="num" id="countDone">0</div>
+            <div class="label"><i class="fa-solid fa-check"></i> 已完成</div>
+        </div>
+        <div class="summary-card card-error">
+            <div class="num" id="countError">0</div>
+            <div class="label"><i class="fa-solid fa-triangle-exclamation"></i> 异常</div>
+        </div>
+        <div class="summary-card card-total">
+            <div class="num" id="countTotal">0</div>
+            <div class="label">总计追踪</div>
+        </div>
+    </div>
+</div>
+
+<div class="glass-panel animate-fade-in delay-2">
+    <div style="overflow-x: auto;">
+        <table class="task-table">
+            <thead>
+                <tr>
+                    <th style="width: 80px;">任务 ID</th>
+                    <th>名称</th>
+                    <th style="width: 70px;">类型</th>
+                    <th style="width: 70px;">状态</th>
+                    <th style="width: 80px;">耗时</th>
+                    <th>错误</th>
+                </tr>
+            </thead>
+            <tbody id="tasksBody">
+                <tr><td colspan="6" style="text-align: center; padding: 3rem; color: var(--text-secondary);">加载中...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let refreshTimer = null;
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadTasks();
+    refreshTimer = setInterval(loadTasks, 2000);
+});
+
+function toggleAutoRefresh() {
+    if (document.getElementById('autoRefresh').checked) {
+        refreshTimer = setInterval(loadTasks, 2000);
+    } else {
+        clearInterval(refreshTimer);
+    }
+}
+
+async function loadTasks() {
+    try {
+        const res = await fetch('/api/v1/system/tasks');
+        const data = await res.json();
+        if (data.status !== 'success') return;
+
+        const summary = data.summary || {};
+        document.getElementById('countRunning').textContent = summary.running || 0;
+        document.getElementById('countDone').textContent = summary.done || 0;
+        document.getElementById('countError').textContent = summary.error || 0;
+        document.getElementById('countTotal').textContent = summary.total_tracked || 0;
+        document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+
+        const tasks = data.tasks || [];
+        const tbody = document.getElementById('tasksBody');
+        if (tasks.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 2rem; color: var(--text-secondary);">暂无任务</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = tasks.map(t => {
+            const rowClass = t.status === 'running' ? 'task-row-running' : (t.status === 'error' ? 'task-row-error' : '');
+            const dotClass = t.status === 'running' ? 'dot-running' : (t.status === 'error' ? 'dot-error' : 'dot-done');
+            const statusLabel = t.status === 'running' ? '运行中' : (t.status === 'error' ? '异常' : '完成');
+            const typeBadge = t.type === 'thread' ? '<span class="type-badge type-thread">thread</span>' : '<span class="type-badge type-async">async</span>';
+            const duration = t.duration != null ? `${t.duration.toFixed(1)}s` : '-';
+            const errorCell = t.error ? `<span class="error-msg" title="${t.error}">${t.error}</span>` : '-';
+
+            return `
+                <tr class="${rowClass}">
+                    <td style="font-family: monospace; font-size: 0.78rem;">${t.task_id}</td>
+                    <td title="${t.name}">${t.name || '-'}</td>
+                    <td>${typeBadge}</td>
+                    <td><span class="status-dot ${dotClass}"></span>${statusLabel}</td>
+                    <td style="color: var(--text-secondary);">${duration}</td>
+                    <td>${errorCell}</td>
+                </tr>`;
+        }).join('');
+    } catch(e) {
+        // silent fail on network error, will retry
+    }
+}
+</script>
+{% endblock %}
