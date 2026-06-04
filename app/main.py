@@ -61,6 +61,7 @@ app = FastAPI(
 # 挂载静态文件
 os.makedirs("app/web/static", exist_ok=True)
 from app.api import cloud115, cloud123, strm, organize, search, web, system, transfer
+from app.api.debug import router as debug_router
 
 app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
 
@@ -84,6 +85,7 @@ app.include_router(system.router, prefix="/api/v1")
 from app.api.library import router as library_router
 app.include_router(library_router, prefix="/api/v1")
 app.include_router(transfer.router)
+app.include_router(debug_router)
 app.include_router(web.router)
 
 if __name__ == "__main__":

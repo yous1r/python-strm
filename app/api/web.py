@@ -80,6 +80,12 @@ async def page_tasks(request: Request):
         "title": "任务监控"
     })
 
+@router.get("/debug")
+async def page_debug(request: Request):
+    return templates.TemplateResponse(request, "debug.html", {
+        "title": "管线调试"
+    })
+
 @router.get("/search")
 async def page_search(request: Request):
     config = get_config()

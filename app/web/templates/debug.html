@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+
+{% block subtitle %}管线调试：逐步测试转存→整理每个环节{% endblock %}
+
+{% block content %}
+<style>
+.debug-step { margin-bottom: 1rem; padding: 1rem; border: 1px solid var(--border); border-radius: 8px; background: rgba(0,0,0,0.15); }
+.debug-step h4 { margin: 0 0 0.5rem 0; font-size: 0.95rem; }
+.debug-step .desc { font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 0.75rem; }
+.debug-step .row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.debug-step input { padding: 0.35rem 0.5rem; font-size: 0.85rem; border-radius: 4px; border: 1px solid var(--border); background: rgba(0,0,0,0.2); color: var(--text-primary); min-width: 200px; }
+.debug-step .result { margin-top: 0.5rem; padding: 0.5rem 0.75rem; border-radius: 4px; font-size: 0.8rem; font-family: monospace; white-space: pre-wrap; max-height: 300px; overflow-y: auto; display: none; }
+.result-ok { background: rgba(34,197,94,0.1); color: #4ade80; display: block !important; }
+.result-err { background: rgba(239,68,68,0.1); color: #f87171; display: block !important; }
+.cfg-info { font-size: 0.82rem; color: var(--accent-primary); margin-bottom: 1rem; padding: 0.5rem; background: rgba(99,102,241,0.08); border-radius: 4px; }
+</style>
+
+<div class="glass-panel animate-fade-in delay-1" style="margin-bottom: 1.5rem;">
+    <h2 style="margin: 0 0 0.5rem 0;"><i class="fa-solid fa-bug" style="color: var(--warning); margin-right: 0.75rem;"></i>管线调试</h2>
+    <p style="color: var(--text-secondary); font-size: 0.85rem;">按顺序逐步执行，每步输出结果。红色表示失败，绿色表示成功。</p>
+    <div class="cfg-info" id="configInfo">加载配置中...</div>
+</div>
+
+<!-- Step 1: share_receive -->
+<div class="debug-step">
+    <h4>1. 接收分享 (share_receive)</h4>
+    <div class="desc">输入 115 分享链接和提取码，仅执行转存接收，不移动文件。</div>
+    <div class="row">
+        <input type="text" id="s1_url" placeholder="https://115.com/s/xxxx?password=xxxx">
+        <input type="text" id="s1_code" placeholder="提取码（可选）" style="min-width: 120px;">
+        <button class="btn btn-primary" onclick="runStep1()" style="padding: 0.35rem 0.75rem; font-size: 0.85rem;">执行</button>
+    </div>
+    <pre class="result" id="r1"></pre>
+</div>
+
+<!-- Step 2: list files -->
+<div class="debug-step">
+    <h4>2. 列出文件 (list_files)</h4>
+    <div class="desc">列出指定目录下的所有文件和子目录，查看文件 cid 和名称。</div>
+    <div class="row">
+        <input type="text" id="s2_dir" value="0" placeholder="目录 cid, 0=根目录">
+        <button class="btn btn-primary" onclick="runStep2()" style="padding: 0.35rem 0.75rem; font-size: 0.85rem;">执行</button>
+    </div>
+    <pre class="result" id="r2"></pre>
+</div>
+
+<!-- Step 3: move -->
+<div class="debug-step">
+    <h4>3. 移动文件 (move_files)</h4>
+    <div class="desc">将单个文件从源目录移动到目标目录（cid 从上一步结果中复制）。</div>
+    <div class="row">
+        <input type="text" id="s3_cid" placeholder="文件 cid">
+        <input type="text" id="s3_name" placeholder="文件名">
+        <input type="text" id="s3_from" placeholder="源目录 cid">
+        <input type="text" id="s3_to" placeholder="目标目录 cid">
+        <button class="btn btn-primary" onclick="runStep3()" style="padding: 0.35rem 0.75rem; font-size: 0.85rem;">执行</button>
+    </div>
+    <pre class="result" id="r3"></pre>
+</div>
+
+<!-- Step 4: classify -->
+<div class="debug-step">
+    <h4>4. 测试分类 (classify)</h4>
+    <div class="desc">输入文件名，测试 TMDB 刮削和归档路径生成。</div>
+    <div class="row">
+        <input type="text" id="s4_name" placeholder="视频文件名, 如 Breaking.Bad.S01E01.mkv">
+        <button class="btn btn-primary" onclick="runStep4()" style="padding: 0.35rem 0.75rem; font-size: 0.85rem;">执行</button>
+    </div>
+    <pre class="result" id="r4"></pre>
+</div>
+
+<!-- Step 5: ensure_path -->
+<div class="debug-step">
+    <h4>5. 创建目录 (ensure_path)</h4>
+    <div class="desc">在指定父目录下逐级创建目录路径（用 / 分隔）。</div>
+    <div class="row">
+        <input type="text" id="s5_base" placeholder="父目录 cid">
+        <input type="text" id="s5_path" placeholder="路径, 如 剧集/国产剧集/庆余年 (2024)">
+        <button class="btn btn-primary" onclick="runStep5()" style="padding: 0.35rem 0.75rem; font-size: 0.85rem;">执行</button>
+    </div>
+    <pre class="result" id="r5"></pre>
+</div>
+
+<!-- Step 6: list dirs -->
+<div class="debug-step">
+    <h4>6. 列出目录 (list_dirs)</h4>
+    <div class="desc">仅列出子目录（不含文件），查看目录结构。</div>
+    <div class="row">
+        <input type="text" id="s6_dir" value="0" placeholder="目录 cid">
+        <button class="btn btn-primary" onclick="runStep6()" style="padding: 0.35rem 0.75rem; font-size: 0.85rem;">执行</button>
+    </div>
+    <pre class="result" id="r6"></pre>
+</div>
+
+<!-- Step 7: mkdir -->
+<div class="debug-step">
+    <h4>7. 创建文件夹 (mkdir)</h4>
+    <div class="desc">在父目录下创建一个子文件夹。</div>
+    <div class="row">
+        <input type="text" id="s7_pid" placeholder="父目录 cid">
+        <input type="text" id="s7_name" placeholder="文件夹名称">
+        <button class="btn btn-primary" onclick="runStep7()" style="padding: 0.35rem 0.75rem; font-size: 0.85rem;">执行</button>
+    </div>
+    <pre class="result" id="r7"></pre>
+</div>
+
+<!-- Step 8: organize one -->
+<div class="debug-step">
+    <h4>8. 完整整理一个文件 (organize_one)</h4>
+    <div class="desc">对一个文件执行完整的 分类→建目录→移动 流程。</div>
+    <div class="row">
+        <input type="text" id="s8_cid" placeholder="文件 cid">
+        <input type="text" id="s8_name" placeholder="文件名">
+        <input type="text" id="s8_temp" placeholder="临时目录 cid (文件当前所在)">
+        <button class="btn btn-primary" onclick="runStep8()" style="padding: 0.35rem 0.75rem; font-size: 0.85rem;">执行</button>
+    </div>
+    <pre class="result" id="r8"></pre>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadConfig() {
+    try {
+        const r = await fetch('/api/v1/system/config');
+        const cfg = await r.json();
+        const t = cfg.transfer || {};
+        document.getElementById('configInfo').innerHTML =
+            `当前配置: archive_dir_id=<b>${t.archive_dir_id||'未设置'}</b>, temp_dir_id=<b>${t.temp_dir_id||'未设置'}</b>, inbox_dir_id=<b>${t.inbox_dir_id||'未设置'}</b>`;
+        // 填充默认值
+        if (t.archive_dir_id) { document.getElementById('s5_base').value = t.archive_dir_id; }
+        if (t.archive_dir_id) { document.getElementById('s8_temp').value = t.temp_dir_id || ''; }
+    } catch(e) {}
+}
+
+async function step(url, method, body, resultId) {
+    const el = document.getElementById(resultId);
+    el.className = 'result';
+    el.textContent = '执行中...';
+    try {
+        let res;
+        if (method === 'GET') {
+            res = await fetch(url);
+        } else {
+            res = await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+        }
+        const data = await res.json();
+        el.textContent = JSON.stringify(data, null, 2);
+        el.className = data.success ? 'result result-ok' : 'result result-err';
+    } catch(e) {
+        el.textContent = '网络错误: ' + e.message;
+        el.className = 'result result-err';
+    }
+}
+
+function runStep1() {
+    const url = document.getElementById('s1_url').value.trim();
+    const code = document.getElementById('s1_code').value.trim();
+    if (!url) return showToast('请输入链接', 'warning');
+    step('/api/v1/debug/step1_share_receive?share_url='+encodeURIComponent(url)+'&receive_code='+encodeURIComponent(code), 'POST', {}, 'r1');
+}
+
+function runStep2() {
+    step('/api/v1/debug/step2_list_files?dir_id='+document.getElementById('s2_dir').value, 'GET', null, 'r2');
+}
+
+function runStep3() {
+    step('/api/v1/debug/step3_move_file', 'POST', {
+        file_cid: document.getElementById('s3_cid').value, file_name: document.getElementById('s3_name').value,
+        source_dir_id: document.getElementById('s3_from').value, target_dir_id: document.getElementById('s3_to').value
+    }, 'r3');
+}
+
+function runStep4() {
+    step('/api/v1/debug/step4_classify?file_name='+encodeURIComponent(document.getElementById('s4_name').value), 'GET', null, 'r4');
+}
+
+function runStep5() {
+    step('/api/v1/debug/step5_ensure_path', 'POST', {
+        base_cid: document.getElementById('s5_base').value, path: document.getElementById('s5_path').value
+    }, 'r5');
+}
+
+function runStep6() {
+    step('/api/v1/debug/step6_list_dirs?dir_id='+document.getElementById('s6_dir').value, 'GET', null, 'r6');
+}
+
+function runStep7() {
+    step('/api/v1/debug/step7_mkdir', 'POST', {
+        parent_id: document.getElementById('s7_pid').value, name: document.getElementById('s7_name').value
+    }, 'r7');
+}
+
+function runStep8() {
+    step('/api/v1/debug/step8_organize_one', 'POST', {
+        file_cid: document.getElementById('s8_cid').value, file_name: document.getElementById('s8_name').value,
+        temp_dir_id: document.getElementById('s8_temp').value
+    }, 'r8');
+}
+
+document.addEventListener('DOMContentLoaded', loadConfig);
+</script>
+{% endblock %}
