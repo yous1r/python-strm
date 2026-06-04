@@ -20,6 +20,7 @@ import asyncio
 
 from app.core.emby.standalone_proxy import restart_standalone_proxy, stop_standalone_proxy
 from app.core.transfer import init_transfer_pipeline
+from app.events import spawn_task
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -38,11 +39,9 @@ async def lifespan(app: FastAPI):
     add_job(sync_engine.run_sync_task, "interval", minutes=interval_mins, id="auto_sync", replace_existing=True)
 
     if config.monitor.telegram.enabled:
-        # 异步后台启动
-        asyncio.create_task(telegram_monitor.start())
+        spawn_task(telegram_monitor.start(), name="telegram_monitor")
         
-    # 启动独立反向代理端口
-    asyncio.create_task(restart_standalone_proxy())
+    spawn_task(restart_standalone_proxy(), name="standalone_proxy")
         
     yield
     # 关闭时执行

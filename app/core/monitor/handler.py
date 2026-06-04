@@ -1,6 +1,6 @@
 import asyncio
 from loguru import logger
-from app.events import event_bus, EVENT_MONITOR_NEW_LINK
+from app.events import event_bus, EVENT_MONITOR_NEW_LINK, spawn_task
 from app.config import get_config
 from app.core.cloud115.client import client_115
 from app.core.notify.manager import notify_manager
@@ -72,7 +72,7 @@ async def handle_new_link(link_data: dict, source: str, **kwargs):
         # 3. 自动生成STRM
         if monitor_cfg.auto_strm:
             logger.info("Starting auto-strm generation...")
-            asyncio.create_task(sync_engine.run_sync_task())
+            spawn_task(sync_engine.run_sync_task(), name="strm_after_transfer")
 
         # 5. 推送成功通知
         await notify_manager.notify(

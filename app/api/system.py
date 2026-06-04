@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
 from app.config import get_config, update_config
+from app.events import spawn_task, task_tracker
 from pydantic import BaseModel
 from typing import List, Optional
 
@@ -45,7 +46,7 @@ async def modify_config(request: Request):
             new_proxy_enabled = new_config.emby.proxy.enabled
             new_instances = {(i.name, i.proxy_port, i.url) for i in new_config.emby.proxy.instances}
             if old_proxy_enabled != new_proxy_enabled or old_instances != new_instances:
-                asyncio.create_task(restart_standalone_proxy())
+                spawn_task(restart_standalone_proxy(), name="proxy_restart")
                 
         # Handle hot reload for Telegram monitor
         if 'monitor' in data and 'telegram' in data['monitor']:
@@ -58,7 +59,7 @@ async def modify_config(request: Request):
                     await asyncio.sleep(1) # wait for db lock release
                     await telegram_monitor.start()
                     
-            asyncio.create_task(restart_telegram_monitor())
+            spawn_task(restart_telegram_monitor(), name="tg_restart")
                 
         return {"status": "success", "config": new_config.model_dump()}
     except Exception as e:
@@ -361,7 +362,7 @@ async def trigger_sync_now(force: bool = False):
     from app.core.sync.engine import sync_engine
     import asyncio
     # 放进后台任务执行，不阻塞当前的 API 请求
-    asyncio.create_task(sync_engine.run_sync_task(force=force))
+    spawn_task(sync_engine.run_sync_task(force=force), name="sync_manual")
     msg = "强制全自动同步任务已在后台触发" if force else "全自动增量同步任务已在后台触发"
     return {"status": "success", "message": msg}
 
@@ -389,3 +390,14 @@ async def fetch_sync_history():
                 return {"status": "success", "data": results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/tasks")
+async def get_background_tasks():
+    """观测所有后台任务（async + thread），返回活跃和最近完成的任务列表"""
+    tasks = await task_tracker.get_active()
+    summary = await task_tracker.get_summary()
+    return {
+        "status": "success",
+        "summary": summary,
+        "tasks": tasks
+    }

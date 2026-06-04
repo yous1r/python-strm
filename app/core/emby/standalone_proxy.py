@@ -1,6 +1,7 @@
 import asyncio
 import httpx
 import re
+from app.events import spawn_task
 import json
 import uuid
 from fastapi import FastAPI, Request, Response, BackgroundTasks
@@ -637,7 +638,7 @@ async def start_standalone_proxy():
         _proxy_servers.append(server)
 
         logger.info(f"[PROXY] Starting for '{instance.name}' on port {instance.proxy_port} -> {instance.url}")
-        asyncio.create_task(_serve_proxy(server, instance.name))
+        spawn_task(_serve_proxy(server, instance.name), name=f"proxy_{instance.name}")
 
     try:
         while True:
@@ -675,4 +676,4 @@ async def restart_standalone_proxy():
     config = get_config()
     if config.emby.proxy.enabled:
         logger.info("[PROXY] Hot reloading Standalone Proxy...")
-        _proxy_task = asyncio.create_task(start_standalone_proxy())
+        _proxy_task = spawn_task(start_standalone_proxy(), name="proxy_master")

@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from loguru import logger
 
-from app.events import event_bus, EVENT_TRANSFER_RECEIVED, EVENT_ROLLBACK_START
+from app.events import event_bus, EVENT_TRANSFER_RECEIVED, EVENT_ROLLBACK_START, spawn_task
 from app.core.cloud115.client import client_115
 from app.core.transfer.models import TransferRequest
 from app.database import get_db_conn
@@ -63,7 +63,7 @@ async def receive_share(req: ReceiveRequest):
     task_id = str(uuid.uuid4())
 
     # emit 事件，触发 mover → organizer 链
-    asyncio.create_task(
+    spawn_task(
         event_bus.emit(
             EVENT_TRANSFER_RECEIVED,
             share_url=req.share_url,
@@ -145,7 +145,7 @@ async def manual_organize(temp_dir_id: str):
 
     task_id = str(uuid.uuid4())
 
-    asyncio.create_task(
+    spawn_task(
         event_bus.emit(
             "transfer_moved",  # EVENT_TRANSFER_MOVED
             task_id=task_id,
@@ -193,7 +193,7 @@ async def rollback_task(task_id: str):
         if task["status"] == "rolled_back":
             raise HTTPException(status_code=400, detail="任务已还原")
 
-    asyncio.create_task(
+    spawn_task(
         event_bus.emit(EVENT_ROLLBACK_START, task_id=task_id)
     )
 
