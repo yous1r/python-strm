@@ -676,4 +676,4 @@ async def restart_standalone_proxy():
     config = get_config()
     if config.emby.proxy.enabled:
         logger.info("[PROXY] Hot reloading Standalone Proxy...")
-        _proxy_task = spawn_task(start_standalone_proxy(), name="proxy_master")
+        _proxy_task = asyncio.create_task(start_standalone_proxy())
