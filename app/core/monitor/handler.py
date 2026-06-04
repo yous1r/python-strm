@@ -19,10 +19,11 @@ async def handle_new_link(link_data: dict, source: str, **kwargs):
         return
 
     monitor_cfg = get_config().monitor.telegram
-    target_dir_id = monitor_cfg.target_dir_id
+    transfer_cfg = get_config().transfer
     archive_dir_id = monitor_cfg.archive_dir_id
     
-    # 回退机制：如果监控配置中没有设置转存目录，则尝试使用 115 全局转存目录
+    # 转存目标目录优先级: transfer.temp_dir_id > monitor.target_dir_id > cloud115.target_dir_id
+    target_dir_id = transfer_cfg.temp_dir_id or monitor_cfg.target_dir_id
     if not target_dir_id or target_dir_id == "0":
         target_dir_id = get_config().cloud115.target_dir_id
     
