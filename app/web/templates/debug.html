@@ -28,6 +28,7 @@
     <div class="row">
         <input type="text" id="s1_url" placeholder="https://115.com/s/xxxx?password=xxxx">
         <input type="text" id="s1_code" placeholder="提取码（可选）" style="min-width: 120px;">
+        <input type="text" id="s1_target" placeholder="目标目录 cid (默认 temp_dir_id)" style="min-width: 200px;">
         <button class="btn btn-primary" onclick="runStep1()" style="padding: 0.35rem 0.75rem; font-size: 0.85rem;">执行</button>
     </div>
     <pre class="result" id="r1"></pre>
@@ -128,8 +129,9 @@ async function loadConfig() {
         document.getElementById('configInfo').innerHTML =
             `当前配置: archive_dir_id=<b>${t.archive_dir_id||'未设置'}</b>, temp_dir_id=<b>${t.temp_dir_id||'未设置'}</b>, inbox_dir_id=<b>${t.inbox_dir_id||'未设置'}</b>`;
         // 填充默认值
+        if (t.temp_dir_id) { document.getElementById('s1_target').value = t.temp_dir_id; }
         if (t.archive_dir_id) { document.getElementById('s5_base').value = t.archive_dir_id; }
-        if (t.archive_dir_id) { document.getElementById('s8_temp').value = t.temp_dir_id || ''; }
+        if (t.temp_dir_id) { document.getElementById('s8_temp').value = t.temp_dir_id; }
     } catch(e) {}
 }
 
@@ -156,8 +158,9 @@ async function step(url, method, body, resultId) {
 function runStep1() {
     const url = document.getElementById('s1_url').value.trim();
     const code = document.getElementById('s1_code').value.trim();
+    const target = document.getElementById('s1_target').value.trim();
     if (!url) return showToast('请输入链接', 'warning');
-    step('/api/v1/debug/step1_share_receive?share_url='+encodeURIComponent(url)+'&receive_code='+encodeURIComponent(code), 'POST', {}, 'r1');
+    step('/api/v1/debug/step1_share_receive?share_url='+encodeURIComponent(url)+'&receive_code='+encodeURIComponent(code)+'&target_dir_id='+encodeURIComponent(target), 'POST', {}, 'r1');
 }
 
 function runStep2() {

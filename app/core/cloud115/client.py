@@ -290,7 +290,7 @@ class Cloud115Client:
                 # 提取文件 ID：这通常需要先获取分享信息
                 from app.config import get_config
                 api_type = get_config().cloud115.api_type
-                payload = {"share_code": share_code, "receive_code": receive_code}
+                payload = {"share_code": share_code, "receive_code": receive_code, "cid": target_dir_id}
                 if api_type == "web":
                     share_info = await asyncio.to_thread(self.client.share_snap, payload)
                 else:

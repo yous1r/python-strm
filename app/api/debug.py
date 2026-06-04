@@ -21,9 +21,9 @@ class DebugResult(BaseModel):
 
 # --- Step 1: 接收分享 ---
 @router.post("/step1_share_receive")
-async def step1_share_receive(share_url: str, receive_code: str = ""):
+async def step1_share_receive(share_url: str, receive_code: str = "", target_dir_id: str = "0"):
     """仅执行 share_receive，返回结果"""
-    res = await client_115.share_receive(share_url, receive_code, "0")
+    res = await client_115.share_receive(share_url, receive_code, target_dir_id)
     return DebugResult(
         step="share_receive",
         success=res.get("state", False),
