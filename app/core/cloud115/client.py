@@ -134,7 +134,10 @@ class Cloud115Client:
                 return {"error": str(e)}
 
         if res.get("state"):
-            return {"id": res.get("file_id") or res.get("cid"), "name": name}
+            # fs_mkdir 返回 data.category_id, fs_mkdir_app 可能返回 data.file_id 或 data.cid
+            data = res.get("data", {})
+            folder_id = data.get("category_id") or data.get("cid") or data.get("fid") or data.get("file_id") or res.get("file_id") or res.get("cid")
+            return {"id": folder_id, "name": name}
             
         error_msg = res.get("error", "Unknown error")
         if "已存在" in error_msg or "exist" in error_msg.lower():
