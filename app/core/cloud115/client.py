@@ -393,7 +393,7 @@ class Cloud115Client:
                 else:
                     result = await asyncio.to_thread(self.client.share_receive_app, receive_payload)
                 if result.get("state"):
-                    return {"state": True, "msg": "转存成功"}
+                    return {"state": True, "msg": "转存成功", "share_files": share_files}
                     
                 # 尝试从所有可能的字段中提取错误信息
                 error_msg = result.get("error_msg") or result.get("error") or result.get("msg") or "Transfer failed"
