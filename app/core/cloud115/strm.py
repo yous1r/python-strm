@@ -29,7 +29,7 @@ class StrmGenerator115:
     def __init__(self):
         self.client = client_115
         # 允许瞬间并发10个请求（按批处理），但限制在2秒内最多10个，防止触发 WAF
-        self.rate_limiter = RateLimiter(max_calls=10, period=2.0)
+        self.rate_limiter = RateLimiter(max_calls=5, period=5.0)
 
     async def generate_strm(self, pickcode: str, file_name: str, current_dir: str, root_dir: str, base_url: str) -> str:
         """生成单个STRM文件，支持智能刮削打平"""
@@ -107,25 +107,33 @@ class StrmGenerator115:
                                 existing_fids = {str(row["file_id"]) for row in rows}
                     except Exception as e:
                         logger.error(f"Failed to fetch existing fids: {e}")
-                
+            # 统计本目录的文件情况：如果所有文件都已处理，跳过子目录递归
+            total_files = sum(1 for item in items if "fid" in item and is_video_file(item.get("n", "")))
+            skipped_files = 0
+            
             for item in items:
                 # 文件夹处理
                 if "fid" not in item:
-                    if recursive:
+                    if recursive and (skipped_files < total_files or force):
+                        # 流控：递归子目录前延迟
+                        await asyncio.sleep(1.5)
                         folder_name = item.get("n", "")
                         folder_id = str(item.get("cid"))
                         sub_dir = os.path.join(output_dir, folder_name)
-                        # 递归遍历子目录，但传入统一的 root_output_dir 以便于打平结构
                         sub_generated = await self.batch_generate(folder_id, sub_dir, base_url, recursive, root_output_dir, force)
                         generated.extend(sub_generated)
+                    elif recursive:
+                        logger.debug(f"Skipping fully processed subdirectory: {item.get('n', '')}")
                 else:
                     # 文件处理
                     file_id = str(item.get("fid", ""))
                     if file_id in existing_fids and not force:
+                        skipped_files += 1
                         logger.debug(f"Skipping already generated file: {item.get('n')}")
                         continue
                         
                     file_name = item.get("n", "")
+                    skipped_files += 0  # not skipped
                     if is_video_file(file_name):
                         pickcode = item.get("pc", "")
                         if pickcode:
