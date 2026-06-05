@@ -38,6 +38,11 @@ async def lifespan(app: FastAPI):
     interval_mins = config.monitor.poll_interval if getattr(config.monitor, 'poll_interval', None) else 60
     add_job(sync_engine.run_sync_task, "interval", minutes=interval_mins, id="auto_sync", replace_existing=True)
 
+    # 注册 115 本地数据库同步任务（每 6 小时）
+    from app.core.cloud115.db_sync import sync_all_configured
+    add_job(sync_all_configured, "interval", hours=6, id="db_sync", replace_existing=True)
+    logger.info("Registered 115 DB sync job (every 6h)")
+
     if config.monitor.telegram.enabled:
         spawn_task(telegram_monitor.start(), name="telegram_monitor")
         
