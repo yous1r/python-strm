@@ -61,6 +61,26 @@ class Cloud115Client:
                 logger.error(f"Failed to list files for dir {dir_id}: {e}")
                 return {"error": str(e)}
 
+    async def list_files_local_first(self, dir_id: str = '0', limit: int = 100, offset: int = 0) -> dict:
+        """列出目录文件，优先使用本地缓存，回退到 115 API"""
+        try:
+            from app.core.cloud115.db_sync import list_local_files
+            local = list_local_files(dir_id)
+            if local and len(local) > 0:
+                # 转换为统一格式
+                items = []
+                for f in local:
+                    if f.get("is_dir"):
+                        items.append({"cid": str(f["id"]), "n": f["name"], "pid": str(f.get("parent_id", "0"))})
+                    else:
+                        items.append({"fid": str(f["id"]), "n": f["name"], "s": f.get("size", 0)})
+                logger.debug(f"[Local] 从缓存返回 {dir_id}: {len(items)} 项")
+                return {"total": len(items), "items": items}
+        except Exception:
+            pass
+        # 回退到 API
+        return await self.list_files(dir_id, limit, offset)
+
     async def list_dirs(self, dir_id: str = '0') -> dict:
         """列出目录，仅包含文件夹，排除文件"""
         if not self.client:

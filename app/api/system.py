@@ -391,6 +391,14 @@ async def fetch_sync_history():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/db_sync")
+async def trigger_db_sync():
+    """手动触发 115 目录树本地缓存同步"""
+    from app.core.cloud115.db_sync import sync_all_configured
+    from app.events import spawn_task
+    spawn_task(sync_all_configured(), name="db_sync_manual")
+    return {"status": "success", "message": "115 目录树同步任务已触发，稍后本地缓存将更新"}
+
 @router.get("/tasks")
 async def get_background_tasks():
     """观测所有后台任务（async + thread），返回活跃和最近完成的任务列表"""
