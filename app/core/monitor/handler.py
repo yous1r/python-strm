@@ -26,8 +26,8 @@ async def handle_new_link(link_data: dict, source: str, **kwargs):
     transfer_cfg = get_config().transfer
     archive_dir_id = monitor_cfg.archive_dir_id
     
-    # 转存目标目录优先级: transfer.temp_dir_id > monitor.target_dir_id > cloud115.target_dir_id
-    target_dir_id = transfer_cfg.temp_dir_id or monitor_cfg.target_dir_id
+    # 转存目标目录优先级: link_data.series_folder_id > transfer.temp_dir_id > monitor.target_dir_id > cloud115.target_dir_id
+    target_dir_id = link_data.get("series_folder_id") or transfer_cfg.temp_dir_id or monitor_cfg.target_dir_id
     if not target_dir_id or target_dir_id == "0":
         target_dir_id = get_config().cloud115.target_dir_id
     
@@ -98,8 +98,9 @@ async def handle_new_link(link_data: dict, source: str, **kwargs):
             logger.info(f"[Batch] {batch_id}: {current}/{total} share_files accumulated")
             if total > 0 and current >= total:
                 sf = _batch_pending.pop(batch_id)["share_files"]
-                logger.info(f"[Batch] {batch_id}: all {len(sf)} files received, triggering STRM generation")
-                spawn_task(generator_115.generate_strm_for_folder(target_dir_id, sf), name=f"strm_batch_{batch_id}")
+                strm_dir = link_data.get("series_path_str", "")
+                logger.info(f"[Batch] {batch_id}: all {len(sf)} files received, generating STRMs to {strm_dir}")
+                spawn_task(generator_115.generate_strm_for_folder(target_dir_id, sf, strm_dir), name=f"strm_batch_{batch_id}")
                 
     except Exception as e:
         logger.error(f"Exception during transfer: {e}")

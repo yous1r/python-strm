@@ -1,10 +1,15 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Form
-from pydantic import BaseModel
+import json
 from typing import List
 import asyncio
+
+from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Form
+from pydantic import BaseModel
+from loguru import logger
+
 from app.database import get_db_conn, insert_tg_resource
 from app.core.monitor.telegram import telegram_monitor
-import json
+
+
 
 router = APIRouter(prefix="/library", tags=["Resource Library"])
 
@@ -242,6 +247,30 @@ async def transfer_selected(req: TransferSelectedRequest):
         )
         await db.commit()
     
+    # TMDB分类 + 创建归档目录结构
+    series_folder_id = ""
+    series_path_str = ""
+    if req.base_title and len(rows) > 0:
+        try:
+            from app.core.transfer.classifier import classify, build_archive_path
+            from app.core.cloud115.client import client_115
+            from app.config import get_config
+            sample_name = rows[0].get("title", req.base_title)
+            cr = await classify(sample_name)
+            if cr:
+                path_parts = build_archive_path(cr)
+                series_path_str = "/".join(path_parts)
+                archive_id = get_config().transfer.archive_dir_id
+                if archive_id and archive_id != "0":
+                    res = await client_115.create_path(archive_id, series_path_str)
+                    if "id" in res and res["id"]:
+                        series_folder_id = res["id"]
+                        logger.info(f"[Batch] 已创建归档路径: {series_path_str} (cid={series_folder_id})")
+                else:
+                    logger.warning("[Batch] archive_dir_id 未配置，跳过目录创建")
+        except Exception as e:
+            logger.error(f"[Batch] 创建归档路径失败: {e}")
+    
     # emit 转存事件（带批次信息和间隔）
     for i, row in enumerate(rows):
         if i > 0:
@@ -253,7 +282,9 @@ async def transfer_selected(req: TransferSelectedRequest):
             "db_id": row["id"],
             "ignore_filters": True,
             "batch_task_id": task_id,
-            "episode_count": len(rows)
+            "episode_count": len(rows),
+            "series_folder_id": series_folder_id,
+            "series_path_str": series_path_str
         }
         await event_bus.emit(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
     
