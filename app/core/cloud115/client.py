@@ -4,6 +4,22 @@ from loguru import logger
 from app.core.cloud115.auth import auth_manager
 import asyncio
 
+# --- 内部工具函数 ---
+def _extract_share_code(url):
+    rs = url.split('s/')
+    if len(rs) > 1: return rs[1].split('?')[0]
+    if 'share_code=' in url:
+        import urllib.parse as up
+        qs = up.parse_qs(up.urlparse(url).query)
+        return qs.get('share_code', [''])[0]
+    return ''
+
+def _normalize_file_id(item):
+    return str(item.get('cid') or item.get('fid') or item.get('f') or '')
+
+def _normalize_file_name(item):
+    return item.get('n') or item.get('fn') or ''
+
 class Cloud115Client:
     def __init__(self):
         self.auth = auth_manager
@@ -320,15 +336,7 @@ class Cloud115Client:
             return {"state": False, "error": "Client not initialized"}
         async with self.semaphore:
             try:
-                from urllib.parse import urlparse, parse_qs
-                share_code = ""
-                if "s/" in share_url:
-                    share_code = share_url.split("s/")[1].split("?")[0]
-                elif "share_code=" in share_url:
-                    parsed_url = urlparse(share_url)
-                    qs = parse_qs(parsed_url.query)
-                    if "share_code" in qs:
-                        share_code = qs["share_code"][0]
+                share_code = _extract_share_code(share_url)
                 if not share_code:
                     return {"state": False, "error": "Invalid share URL format"}
 
@@ -359,22 +367,7 @@ class Cloud115Client:
         async with self.semaphore:
             try:
                 logger.info(f"Receiving share link: {share_url}")
-                # p115client 的 share_receive 可能需要先解析出 share_code 和 receive_code，这里需要自行提取
-                # 但是 p115client 也提供了高级封装 share_receive_app 或直接传入 share_url，取决于版本
-                # 我们暂时使用 p115client.share_skip_login_down 或其他适合的 API，如果 p115client 支持一键转存的话
-                # 为了兼容性，使用底层的转存逻辑
-                from urllib.parse import urlparse, parse_qs
-                
-                # 提取 share_code
-                share_code = ""
-                if "s/" in share_url:
-                    share_code = share_url.split("s/")[1].split("?")[0]
-                elif "share_code=" in share_url:
-                    parsed_url = urlparse(share_url)
-                    qs = parse_qs(parsed_url.query)
-                    if "share_code" in qs:
-                        share_code = qs["share_code"][0]
-                
+                share_code = _extract_share_code(share_url)
                 if not share_code:
                     return {"state": False, "error": "Invalid share URL format"}
                     
