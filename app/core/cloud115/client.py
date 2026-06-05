@@ -401,7 +401,7 @@ class Cloud115Client:
                 # 如果是“已包含”、“已存在”或“已接收”，当作转存成功处理，避免前端抛错
                 if any(k in error_msg for k in ["已存在", "包含", "接收过", "已接收"]):
                     logger.info(f"资源已存在/已接收，标记为成功: {error_msg}")
-                    return {"state": True, "msg": "该资源已存在"}
+                    return {"state": True, "msg": "该资源已存在", "share_files": share_files}
                     
                 return {"state": False, "error": error_msg, "raw": result}
             except Exception as e:

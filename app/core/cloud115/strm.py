@@ -159,4 +159,58 @@ class StrmGenerator115:
             
         return generated
 
+    async def generate_strm_for_folder(self, folder_cid: str, share_files: list, strm_subdir: str = "", root_output_dir: str = "") -> list:
+        """按文件夹批量生成STRM：list_files一次拿到全部pickcode，按SHA1匹配生成"""
+        from app.config import get_config
+        config = get_config()
+        base_url = config.strm.base_url
+        output_dir = root_output_dir or config.strm.output_dir
+        if strm_subdir:
+            output_dir = os.path.join(output_dir, strm_subdir)
+
+        # 建立 SHA1 -> 文件名的映射
+        sha_to_name = {}
+        for sf in share_files:
+            s = sf.get("sha", "").upper()
+            if s:
+                sha_to_name[s] = sf.get("name", "")
+
+        generated = []
+        # list_files 一次拿到全部 pickcode
+        list_res = await self.client.list_files(folder_cid, limit=1000)
+        if list_res.get("error"):
+            logger.error(f"[STRM batch] list_files failed: {list_res['error']}")
+            return generated
+
+        from app.database import get_db_conn
+        for item in list_res.get("items", []):
+            fid = item.get("fid", "")
+            fname = item.get("n", "")
+            pc = item.get("pc", "")
+            sha_val = item.get("sha", item.get("sha1", "")).upper() if hasattr(item, 'get') else ""
+
+            if not pc or not fname:
+                continue
+
+            # 按SHA1匹配，确定文件名
+            matched_name = sha_to_name.get(sha_val, fname)
+            if not is_video_file(matched_name):
+                continue
+
+            strm_path = await self.generate_strm(pc, matched_name, output_dir, output_dir, base_url)
+            if strm_path:
+                generated.append(strm_path)
+                try:
+                    async with get_db_conn() as db:
+                        await db.execute(
+                            "INSERT OR IGNORE INTO strm_records (file_id, cloud_type, strm_path) VALUES (?, ?, ?)",
+                            (str(fid), "115", strm_path)
+                        )
+                        await db.commit()
+                except Exception as e:
+                    logger.error(f"Failed to record STRM: {e}")
+
+        logger.info(f"[STRM batch] Generated {len(generated)} STRMs for folder {folder_cid}")
+        return generated
+
 generator_115 = StrmGenerator115()

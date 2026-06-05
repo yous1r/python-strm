@@ -5,6 +5,10 @@ from app.config import get_config
 from app.core.cloud115.client import client_115
 from app.core.notify.manager import notify_manager
 from app.core.sync.engine import sync_engine
+from app.core.cloud115.strm import generator_115
+
+# 批次转存追踪：累积 share_files 到批次，完成时批量生成 STRM
+_batch_pending: dict = {}  # {batch_task_id: {share_files: [], episode_count: 0, folder_cid: str}}
 
 # 限制并发转存数量为1，避免短时间内大量触发115接口导致封控
 transfer_semaphore = asyncio.Semaphore(1)
@@ -82,6 +86,20 @@ async def handle_new_link(link_data: dict, source: str, **kwargs):
         )
 
         await _update_tg_status(link_data.get('db_id'), 'success')
+        
+        # 批次累积：收集 share_files，到达 episode_count 时批量生成 STRM
+        batch_id = link_data.get("batch_task_id")
+        if batch_id and transfer_res.get("share_files"):
+            if batch_id not in _batch_pending:
+                _batch_pending[batch_id] = {"share_files": [], "episode_count": link_data.get("episode_count", 0)}
+            _batch_pending[batch_id]["share_files"].extend(transfer_res["share_files"])
+            current = len(_batch_pending[batch_id]["share_files"])
+            total = _batch_pending[batch_id]["episode_count"]
+            logger.info(f"[Batch] {batch_id}: {current}/{total} share_files accumulated")
+            if total > 0 and current >= total:
+                sf = _batch_pending.pop(batch_id)["share_files"]
+                logger.info(f"[Batch] {batch_id}: all {len(sf)} files received, triggering STRM generation")
+                spawn_task(generator_115.generate_strm_for_folder(target_dir_id, sf), name=f"strm_batch_{batch_id}")
                 
     except Exception as e:
         logger.error(f"Exception during transfer: {e}")

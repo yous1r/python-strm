@@ -241,15 +241,18 @@ async def transfer_selected(req: TransferSelectedRequest):
         )
         await db.commit()
     
-    # 逐个 emit 转存事件（带批次 task_id）
-    for row in rows:
+    # emit 转存事件（带批次信息和间隔）
+    for i, row in enumerate(rows):
+        if i > 0:
+            await asyncio.sleep(0.1)
         link_data = {
             "url": row["link"],
             "password": row["password"],
             "type": row["disk_type"],
             "db_id": row["id"],
             "ignore_filters": True,
-            "batch_task_id": task_id
+            "batch_task_id": task_id,
+            "episode_count": len(rows)
         }
         await event_bus.emit(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
     
