@@ -256,42 +256,14 @@ async def transfer_selected(req: TransferSelectedRequest):
             from app.core.cloud115.client import client_115
             from app.config import get_config
             
-            # 预解析第一个分享链接，获取真实文件名
-            first_row = rows[0]
-            first_url = first_row["link"]
-            first_code = first_row.get("password", "")
+            # 复用 client_115.get_share_info 预解析（不做转存）
+            si = await client_115.get_share_info(rows[0]["link"], rows[0].get("password", ""))
+            sample_name = rows[0].get("title", req.base_title)
+            if si.get("state") and si.get("files"):
+                real_name = si["files"][0].get("name", "")
+                if real_name:
+                    sample_name = real_name
             
-            # 提取 share_code 并调用 share_snap（仅预解析，不转存）
-            share_code = ""
-            if "s/" in first_url:
-                share_code = first_url.split("s/")[1].split("?")[0]
-            elif "share_code=" in first_url:
-                from urllib.parse import urlparse, parse_qs
-                parsed_url = urlparse(first_url)
-                qs = parse_qs(parsed_url.query)
-                if "share_code" in qs:
-                    share_code = qs["share_code"][0]
-            
-            if share_code:
-                api_type = get_config().cloud115.api_type
-                snap_payload = {"share_code": share_code, "receive_code": first_code}
-                if hasattr(client_115.client, "share_snap_app") and api_type != "web":
-                    import asyncio as _asyncio
-                    snap_info = await _asyncio.to_thread(client_115.client.share_snap_app, snap_payload)
-                else:
-                    import asyncio as _asyncio
-                    snap_info = await _asyncio.to_thread(client_115.client.share_snap, snap_payload)
-                
-                if snap_info.get("state"):
-                    share_list = snap_info.get("data", {}).get("list", [])
-                    if share_list:
-                        real_name = share_list[0].get("fn") or share_list[0].get("n") or ""
-                        if real_name:
-                            sample_name = real_name  # 用真实文件名替代DB标题
-            else:
-                sample_name = rows[0].get("title", req.base_title)
-            
-            # TMDB 分类
             cr = await classify(sample_name)
             if cr:
                 path_parts = build_archive_path(cr)
@@ -306,19 +278,6 @@ async def transfer_selected(req: TransferSelectedRequest):
                     logger.warning("[Batch] archive_dir_id 未配置，跳过目录创建")
         except Exception as e:
             logger.error(f"[Batch] 预解析/创建路径失败: {e}")
-            sample_name = rows[0].get("title", req.base_title)
-            try:
-                cr = await classify(sample_name)
-                if cr:
-                    path_parts = build_archive_path(cr)
-                    series_path_str = "/".join(path_parts)
-                    archive_id = get_config().transfer.archive_dir_id
-                    if archive_id and archive_id != "0":
-                        res = await client_115.create_path(archive_id, series_path_str)
-                        if "id" in res and res["id"]:
-                            series_folder_id = res["id"]
-            except:
-                pass
     
     # emit 转存事件（带批次信息和间隔）
     for i, row in enumerate(rows):

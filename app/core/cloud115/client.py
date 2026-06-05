@@ -314,6 +314,44 @@ class Cloud115Client:
                 logger.error(f"Failed to add offline task: {e}")
                 return {"state": False, "error": str(e)}
 
+    async def get_share_info(self, share_url: str, receive_code: str = "") -> Dict[str, Any]:
+        """仅解析分享链接，获取文件列表（含文件名和SHA），不执行转存"""
+        if not self.client:
+            return {"state": False, "error": "Client not initialized"}
+        async with self.semaphore:
+            try:
+                from urllib.parse import urlparse, parse_qs
+                share_code = ""
+                if "s/" in share_url:
+                    share_code = share_url.split("s/")[1].split("?")[0]
+                elif "share_code=" in share_url:
+                    parsed_url = urlparse(share_url)
+                    qs = parse_qs(parsed_url.query)
+                    if "share_code" in qs:
+                        share_code = qs["share_code"][0]
+                if not share_code:
+                    return {"state": False, "error": "Invalid share URL format"}
+
+                from app.config import get_config
+                api_type = get_config().cloud115.api_type
+                payload = {"share_code": share_code, "receive_code": receive_code}
+                if api_type == "web":
+                    share_info = await asyncio.to_thread(self.client.share_snap, payload)
+                else:
+                    share_info = await asyncio.to_thread(self.client.share_snap_app, payload)
+                if not share_info.get("state"):
+                    return {"state": False, "error": share_info.get("error_msg", "Failed to get share info")}
+
+                files = []
+                for item in share_info.get("data", {}).get("list", []):
+                    fname = item.get("n") or item.get("fn") or ""
+                    sha = item.get("sha") or item.get("sha1") or ""
+                    files.append({"name": fname, "sha": sha})
+                return {"state": True, "files": files}
+            except Exception as e:
+                logger.error(f"Failed to get share info: {e}")
+                return {"state": False, "error": str(e)}
+
     async def share_receive(self, share_url: str, receive_code: str, target_dir_id: str = "0", filter_rules: List[str] = None) -> Dict[str, Any]:
         """转存115分享链接"""
         if not self.client:
