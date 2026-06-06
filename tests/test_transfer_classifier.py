@@ -5,6 +5,7 @@ from pathlib import Path
 from app.core.media.parser import parse_filename
 from app.core.transfer.classifier import _sanitize, classify
 from app.core.cloud115.strm import StrmGenerator115
+from app.core.media.organizer import MediaOrganizer
 
 
 class ParseFilenameTests(unittest.TestCase):
@@ -67,6 +68,42 @@ class StrmBatchPathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[2], "strm_output")
         self.assertEqual(args[3], "strm_output")
         self.assertTrue(kwargs["skip_organize"])
+
+
+class MediaOrganizerRegionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_search_tmdb_strips_display_icon_from_title(self):
+        organizer = MediaOrganizer()
+        media_info = parse_filename("📺 秘恋稽核中 (2026) S01E01 1080P WEB-DL DDP.mkv")
+
+        with patch("app.core.media.organizer.tmdb_client.search_tv", return_value=[{"id": 1, "name": "秘恋稽核中"}]) as mocked_search_tv:
+            tmdb_data = await organizer._search_tmdb(media_info)
+
+        self.assertEqual(tmdb_data["name"], "秘恋稽核中")
+        mocked_search_tv.assert_awaited_once_with("秘恋稽核中", 2026)
+
+    async def test_determine_category_and_region_uses_origin_country_for_cn_tv(self):
+        organizer = MediaOrganizer()
+        media_info = parse_filename("灵魂摆渡·十年.2026.S01E06.mkv")
+
+        category, region = await organizer.determine_category_and_region(
+            media_info,
+            {"origin_country": ["CN"], "original_language": "ja"},
+        )
+
+        self.assertEqual(category, "剧集")
+        self.assertEqual(region, "国产")
+
+    async def test_determine_category_and_region_uses_production_countries_for_us_movie(self):
+        organizer = MediaOrganizer()
+        media_info = parse_filename("Inception.2010.1080p.mkv")
+
+        category, region = await organizer.determine_category_and_region(
+            media_info,
+            {"production_countries": [{"iso_3166_1": "US"}], "original_language": "zh"},
+        )
+
+        self.assertEqual(category, "电影")
+        self.assertEqual(region, "欧美")
 
 
 if __name__ == "__main__":

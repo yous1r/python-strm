@@ -1,5 +1,6 @@
 import aiofiles
 import os
+import re
 from app.core.media.parser import parse_filename, MediaInfo
 from app.core.tmdb.client import tmdb_client
 from app.config import get_config
@@ -14,24 +15,66 @@ class MediaOrganizer:
         # 简单内存缓存：key为 (title, year, media_type)，value为 tmdb_data
         self._tmdb_cache = {}
 
+    def _normalize_tmdb_title(self, title: str) -> str:
+        """清理展示前缀与噪声，避免影响 TMDB 查询。"""
+        if not title:
+            return ""
+
+        cleaned = re.sub(r'^\s*[\U0001F300-\U0001FAFF\u2600-\u27BF]+\s*', '', title)
+        return cleaned.strip()
+
+    def _resolve_region_from_tmdb(self, tmdb_data: dict) -> str:
+        """优先使用国家信息判断地区，语言仅作为兜底。"""
+        country_codes = []
+
+        origin_country = tmdb_data.get("origin_country") or []
+        if isinstance(origin_country, list):
+            country_codes.extend(str(code).upper() for code in origin_country if code)
+
+        production_countries = tmdb_data.get("production_countries") or []
+        if isinstance(production_countries, list):
+            for country in production_countries:
+                if isinstance(country, dict):
+                    code = country.get("iso_3166_1") or country.get("iso3166_1")
+                    if code:
+                        country_codes.append(str(code).upper())
+
+        if any(code in {"CN", "HK", "MO", "TW"} for code in country_codes):
+            return "国产"
+        if any(code in {"JP", "KR"} for code in country_codes):
+            return "日韩"
+        if country_codes:
+            return "欧美"
+
+        lang = str(tmdb_data.get("original_language", "")).lower()
+        if lang in ["zh", "cn"]:
+            return "国产"
+        if lang in ["ja", "ko"]:
+            return "日韩"
+        if lang in ["en", "fr", "de", "es", "it", "pt"]:
+            return "欧美"
+
+        return "其他"
+
     async def _search_tmdb(self, media_info: MediaInfo) -> dict:
         """带缓存的 TMDB 搜索"""
-        cache_key = (media_info.title, media_info.year, media_info.media_type)
+        search_title = self._normalize_tmdb_title(media_info.title)
+        cache_key = (search_title, media_info.year, media_info.media_type)
         if cache_key in self._tmdb_cache:
             return self._tmdb_cache[cache_key]
 
         tmdb_data = {}
         try:
             if media_info.media_type == "movie":
-                results = await tmdb_client.search_movie(media_info.title, media_info.year)
+                results = await tmdb_client.search_movie(search_title, media_info.year)
                 if results:
                     tmdb_data = results[0]
             else:
-                results = await tmdb_client.search_tv(media_info.title, media_info.year)
+                results = await tmdb_client.search_tv(search_title, media_info.year)
                 if results:
                     tmdb_data = results[0]
         except Exception as e:
-            logger.error(f"TMDB search error for {media_info.title}: {e}")
+            logger.error(f"TMDB search error for {search_title or media_info.title}: {e}")
             
         self._tmdb_cache[cache_key] = tmdb_data
         return tmdb_data
@@ -45,13 +88,7 @@ class MediaOrganizer:
             category = "剧集"
             
         if tmdb_data:
-            lang = tmdb_data.get("original_language", "")
-            if lang in ["zh", "cn"]:
-                region = "国产"
-            elif lang in ["en", "fr", "de"]:
-                region = "欧美"
-            elif lang in ["ja", "ko"]:
-                region = "日韩"
+            region = self._resolve_region_from_tmdb(tmdb_data)
         return category, region
 
     def generate_standard_name(self, media_info: MediaInfo, tmdb_data: dict) -> tuple[str, str]:
