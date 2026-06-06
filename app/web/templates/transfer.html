@@ -105,6 +105,7 @@
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
             <h3 style="margin: 0;">操作明细</h3>
             <div>
+                <button class="btn btn-secondary" style="padding: 0.4rem 0.75rem; font-size: 0.85rem;" onclick="overwriteTaskStrm()">覆盖 STRM</button>
                 <button class="btn btn-secondary" style="padding: 0.4rem 0.75rem; font-size: 0.85rem;" onclick="previewRollback()">预览还原</button>
                 <button class="btn btn-primary" style="padding: 0.4rem 0.75rem; font-size: 0.85rem; background: var(--warning);" onclick="executeRollback()">一键还原</button>
             </div>
@@ -145,6 +146,7 @@
 let currentTasks = [];
 let currentTaskId = null;
 let currentStatusFilter = null;
+let currentTaskDetail = null;
 
 document.addEventListener('DOMContentLoaded', () => {
     loadTasks();
@@ -243,13 +245,13 @@ function renderTaskTable() {
         return;
     }
     tbody.innerHTML = currentTasks.map(t => `
-        <tr class="task-row ${currentTaskId === t.task_id ? 'expanded' : ''}" onclick="toggleTaskDetail('${t.task_id}')">
+        <tr class="task-row ${currentTaskId === t.task_id ? 'expanded' : ''}" data-task-id="${t.task_id}" onclick="toggleTaskDetail('${t.task_id}')">
             <td style="padding: 0.75rem; font-family: monospace; font-size: 0.8rem;" title="${t.task_id}">${(t.task_id||'').substring(0,8)}...</td>
             <td style="padding: 0.75rem;">${statusBadge(t.status)}</td>
             <td style="padding: 0.75rem; text-align: center;">${t.success_count||0}/${t.file_count||0}</td>
             <td style="padding: 0.75rem; color: var(--text-secondary); font-size: 0.85rem;">${t.created_at||'-'}</td>
             <td style="padding: 0.75rem; text-align: center;">
-                ${t.status==='done'?`<button class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.78rem; background: var(--warning);" onclick="event.stopPropagation(); executeRollback('${t.task_id}')">还原</button>`:''}
+                ${t.status==='done'?`<div style="display:flex; gap:0.35rem; justify-content:center;"><button class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.78rem;" onclick="event.stopPropagation(); overwriteTaskStrm('${t.task_id}')">覆盖STRM</button><button class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.78rem; background: var(--warning);" onclick="event.stopPropagation(); executeRollback('${t.task_id}')">还原</button></div>`:''}
             </td>
         </tr>
     `).join('');
@@ -269,6 +271,7 @@ async function toggleTaskDetail(taskId) {
     try {
         const res = await fetch(`/api/v1/transfer/tasks/${taskId}`);
         const data = await res.json();
+        currentTaskDetail = data;
         renderOperations(data.operations || []);
         document.getElementById('taskDetail').style.display = 'block';
         document.getElementById('taskDetail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -324,5 +327,21 @@ async function executeRollback(taskId) {
 }
 
 async function confirmRollback() { closePreview(); if (window._pendingRollbackTaskId) await executeRollback(window._pendingRollbackTaskId); }
+
+async function overwriteTaskStrm(taskId) {
+    const tid = taskId || currentTaskId;
+    if (!tid) return;
+    try {
+        const res = await fetch(`/api/v1/transfer/tasks/${tid}/strm/overwrite`, { method: 'POST' });
+        const data = await res.json();
+        if (res.ok) {
+            showToast(data.msg || `已覆盖 ${data.rewritten_count || 0} 个 STRM`, 'success');
+        } else {
+            showToast('覆盖失败: ' + (data.detail || '未知错误'), 'error');
+        }
+    } catch (e) {
+        showToast('网络错误: ' + e.message, 'error');
+    }
+}
 </script>
 {% endblock %}

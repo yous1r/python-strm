@@ -47,11 +47,19 @@ async def init_db():
         await db.execute('''
             CREATE TABLE IF NOT EXISTS strm_records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                file_id TEXT NOT NULL,
                 cloud_type TEXT NOT NULL,
-                strm_path TEXT NOT NULL,
+                file_id TEXT NOT NULL,
+                archive_dir_id TEXT,
+                archive_rel_path TEXT,
+                strm_rel_path TEXT,
+                strm_abs_path TEXT,
+                strm_path TEXT,
+                play_identity TEXT,
+                status TEXT DEFAULT 'generated',
+                task_id TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(file_id, cloud_type)
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(cloud_type, file_id)
             )
         ''')
         
@@ -145,6 +153,25 @@ async def init_db():
         try:
             await db.execute("ALTER TABLE tg_resources ADD COLUMN cast_text TEXT")
         except Exception: pass
+
+        # 兼容旧版 STRM 记录表结构，按缺列逐步补齐
+        async with db.execute("PRAGMA table_info(strm_records)") as cursor:
+            strm_columns = {row[1] for row in await cursor.fetchall()}
+
+        strm_record_columns = {
+            "archive_dir_id": "ALTER TABLE strm_records ADD COLUMN archive_dir_id TEXT",
+            "archive_rel_path": "ALTER TABLE strm_records ADD COLUMN archive_rel_path TEXT",
+            "strm_rel_path": "ALTER TABLE strm_records ADD COLUMN strm_rel_path TEXT",
+            "strm_abs_path": "ALTER TABLE strm_records ADD COLUMN strm_abs_path TEXT",
+            "strm_path": "ALTER TABLE strm_records ADD COLUMN strm_path TEXT",
+            "play_identity": "ALTER TABLE strm_records ADD COLUMN play_identity TEXT",
+            "status": "ALTER TABLE strm_records ADD COLUMN status TEXT DEFAULT 'generated'",
+            "task_id": "ALTER TABLE strm_records ADD COLUMN task_id TEXT",
+            "updated_at": "ALTER TABLE strm_records ADD COLUMN updated_at DATETIME",
+        }
+        for column_name, ddl in strm_record_columns.items():
+            if column_name not in strm_columns:
+                await db.execute(ddl)
         
         await db.commit()
         logger.info("Database initialized successfully")

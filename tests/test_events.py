@@ -198,7 +198,22 @@ class BatchEventConstantTests(unittest.TestCase):
         self.assertEqual(EVENT_TRANSFER_BATCH_ITEM_DONE, "transfer_batch_item_done")
         self.assertEqual(EVENT_TRANSFER_BATCH_ITEM_FAILED, "transfer_batch_item_failed")
         self.assertEqual(EVENT_TRANSFER_BATCH_DONE, "transfer_batch_done")
-        self.assertEqual(EVENT_STRM_BATCH_REQUESTED, "strm_batch_requested")
+        self.assertEqual(EVENT_STRM_BATCH_REQUESTED, "strm.batch.requested")
+
+
+class StrmBatchPayloadTests(unittest.TestCase):
+    def test_strm_batch_requested_payload_contains_archive_placement(self):
+        payload = {
+            "task_id": "task-1",
+            "cloud_type": "115",
+            "archive_dir_id": "cid-9",
+            "archive_rel_path": "剧集/国产剧集/灵魂摆渡·十年 (2026) {tmdb-289271}/Season 1",
+            "strm_rel_dir": "剧集/国产剧集/灵魂摆渡·十年 (2026) {tmdb-289271}/Season 1",
+            "files": [{"file_id": "fid-1", "file_name": "灵魂摆渡·十年.2026.S01E05.mkv"}],
+        }
+
+        self.assertEqual(payload["archive_dir_id"], "cid-9")
+        self.assertEqual(EVENT_STRM_BATCH_REQUESTED, "strm.batch.requested")
 
 
 class EventBusBatchFlowTests(unittest.IsolatedAsyncioTestCase):

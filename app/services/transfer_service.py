@@ -3,6 +3,7 @@ from typing import Iterable, Optional
 
 from app.config import get_config
 from app.core.cloud115.client import client_115
+from app.core.cloud115.strm import generator_115
 from app.events import (
     EVENT_ROLLBACK_START,
     EVENT_TRANSFER_MOVED,
@@ -162,6 +163,40 @@ async def preview_rollback_task(task_id: str) -> dict[str, object]:
         "task_id": task_id,
         "total_ops": len(operations),
         "operations": [dict(row) for row in operations],
+    }
+
+
+async def overwrite_task_strm(task_id: str) -> dict[str, object]:
+    async with get_db_conn() as db:
+        cursor = await db.execute(
+            "SELECT task_id, status FROM transfer_tasks WHERE task_id=?",
+            (task_id,),
+        )
+        task = await cursor.fetchone()
+        if not task:
+            raise TransferServiceError("任务不存在", status_code=404)
+
+        cursor = await db.execute(
+            """
+            SELECT file_id, strm_path, strm_abs_path, strm_rel_path, play_identity
+            FROM strm_records
+            WHERE task_id=? AND cloud_type='115'
+            ORDER BY id ASC
+            """,
+            (task_id,),
+        )
+        records = [dict(row) for row in await cursor.fetchall()]
+
+    if not records:
+        raise TransferServiceError("该任务暂无可覆盖的 STRM 记录", status_code=404)
+
+    rewritten = await generator_115.rewrite_manifest_records(records)
+    return {
+        "status": "success",
+        "task_id": task_id,
+        "rewritten_count": len(rewritten),
+        "files": rewritten[:10],
+        "msg": f"已覆盖 {len(rewritten)} 个 STRM 文件",
     }
 
 

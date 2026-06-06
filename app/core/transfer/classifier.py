@@ -90,6 +90,14 @@ async def classify(file_name: str) -> Optional[ClassifyResult]:
         return None
 
 
+def _build_folder_name(result: ClassifyResult) -> str:
+    """构建作品目录名，不包含季目录。"""
+    folder_name = f"{result.title} ({result.year})"
+    if result.tmdb_id:
+        folder_name += f" {{tmdb-{result.tmdb_id}}}"
+    return folder_name
+
+
 def build_archive_path(result: ClassifyResult) -> list:
     """
     根据分类结果构建归档目录路径片段。
@@ -101,10 +109,7 @@ def build_archive_path(result: ClassifyResult) -> list:
     if result.subcategory:
         parts.append(result.subcategory)
 
-    folder_name = f"{result.title} ({result.year})"
-    if result.tmdb_id:
-        folder_name += f" {{tmdb-{result.tmdb_id}}}"
-    parts.append(folder_name)
+    parts.append(_build_folder_name(result))
 
     if result.media_type == "tv" and result.season > 0:
         parts.append(f"Season {result.season}")

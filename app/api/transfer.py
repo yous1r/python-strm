@@ -9,6 +9,7 @@ from app.services.transfer_service import (
     get_transfer_categories,
     get_transfer_task_detail,
     list_transfer_tasks,
+    overwrite_task_strm,
     preview_rollback_task,
     receive_share_task,
     run_manual_organize_task,
@@ -54,6 +55,15 @@ async def get_task_detail(task_id: str):
     """获取任务详情，含操作日志"""
     try:
         return await get_transfer_task_detail(task_id)
+    except TransferServiceError as exc:
+        _raise_transfer_http_error(exc)
+
+
+@router.post("/tasks/{task_id}/strm/overwrite")
+async def overwrite_task_strm_files(task_id: str):
+    """根据任务 manifest 覆盖已有 STRM 内容"""
+    try:
+        return await overwrite_task_strm(task_id)
     except TransferServiceError as exc:
         _raise_transfer_http_error(exc)
 

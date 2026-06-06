@@ -1,9 +1,17 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from pathlib import Path
+from types import SimpleNamespace
 
 from app.core.media.parser import parse_filename
 from app.core.transfer.classifier import _sanitize, classify
+from app.core.transfer.batch import (
+    _batch_states,
+    _build_batch_sample_name,
+    handle_batch_done,
+    handle_batch_item_done,
+    handle_batch_requested,
+)
 from app.core.cloud115.strm import StrmGenerator115
 from app.core.media.organizer import MediaOrganizer
 
@@ -43,6 +51,137 @@ class ClassifyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(_sanitize("📺 大唐迷雾 (2026)"), "大唐迷雾 (2026)")
 
 
+class BatchPrepareTests(unittest.IsolatedAsyncioTestCase):
+    def tearDown(self):
+        _batch_states.clear()
+
+    def test_build_batch_sample_name_prefers_base_title_and_preserves_episode_hint(self):
+        sample_name = _build_batch_sample_name(
+            "秘恋稽核中",
+            "📺 秘恋稽核中 (2026) S01E01 1080P WEB-DL DDP (2026)",
+        )
+
+        self.assertEqual(sample_name, "秘恋稽核中 (2026) S01E01")
+
+    async def test_handle_batch_requested_precreates_archive_path_from_base_title_sample(self):
+        rows = [{
+            "id": 1,
+            "title": "📺 秘恋稽核中 (2026) S01E01 1080P WEB-DL DDP (2026)",
+            "base_title": "秘恋稽核中",
+            "link": "https://115.com/s/demo",
+            "password": "",
+        }]
+        classify_result = SimpleNamespace(
+            category="剧集",
+            subcategory="日韩剧集",
+            title="秘恋稽核中",
+            year="2026",
+            tmdb_id="297640",
+            season=1,
+            media_type="tv",
+        )
+        mocked_emit = AsyncMock()
+        config = SimpleNamespace(
+            transfer=SimpleNamespace(archive_dir_id="archive-root"),
+        )
+
+        with patch("app.core.transfer.batch.classify", AsyncMock(return_value=classify_result)) as mocked_classify, patch(
+            "app.core.transfer.batch.client_115.create_path",
+            AsyncMock(return_value={"id": "cid-123"}),
+        ) as mocked_create_path, patch(
+            "app.core.transfer.batch.get_config",
+            return_value=config,
+        ), patch(
+            "app.core.transfer.batch.event_bus.emit",
+            mocked_emit,
+        ):
+            await handle_batch_requested("task-1", rows, base_title="秘恋稽核中")
+
+        mocked_classify.assert_awaited_once_with("秘恋稽核中 (2026) S01E01")
+        mocked_create_path.assert_awaited_once_with(
+            "archive-root",
+            "剧集/日韩剧集/秘恋稽核中 (2026) {tmdb-297640}/Season 1",
+        )
+        self.assertEqual(_batch_states["task-1"]["series_path_str"], "剧集/日韩剧集/秘恋稽核中 (2026) {tmdb-297640}/Season 1")
+        mocked_emit.assert_awaited_once()
+
+    async def test_handle_batch_item_done_accumulates_share_files(self):
+        _batch_states["task-2"] = {
+            "task_id": "task-2",
+            "title": "秘恋稽核中",
+            "episode_count": 2,
+            "series_folder_id": "cid-1",
+            "series_path_str": "剧集/日韩剧集/秘恋稽核中 (2026) {tmdb-297640}/Season 1",
+            "share_files": [{"sha": "A1", "name": "E01.mkv"}],
+            "success_count": 0,
+            "failed_links": [],
+            "group": "transfer-batch:秘恋稽核中",
+        }
+
+        with patch("app.core.transfer.batch._update_tg_status", AsyncMock()) as mocked_update, patch(
+            "app.core.transfer.batch._maybe_finish_batch",
+            AsyncMock(),
+        ) as mocked_finish:
+            await handle_batch_item_done(
+                task_id="task-2",
+                db_id=9,
+                share_url="https://115.com/s/ep2",
+                share_files=[{"sha": "A2", "name": "E02.mkv"}],
+                episode_count=2,
+            )
+
+        self.assertEqual(_batch_states["task-2"]["success_count"], 1)
+        self.assertEqual(
+            _batch_states["task-2"]["share_files"],
+            [{"sha": "A1", "name": "E01.mkv"}, {"sha": "A2", "name": "E02.mkv"}],
+        )
+        mocked_update.assert_awaited_once_with(9, "success")
+        mocked_finish.assert_awaited_once_with("task-2", 2)
+
+    async def test_handle_batch_done_emits_single_strm_batch_request_with_accumulated_files(self):
+        batch_state = {
+            "task_id": "task-3",
+            "title": "秘恋稽核中",
+            "episode_count": 2,
+            "series_folder_id": "cid-3",
+            "series_path_str": "剧集/日韩剧集/秘恋稽核中 (2026) {tmdb-297640}/Season 1",
+            "share_files": [
+                {"sha": "A1", "name": "E01.mkv"},
+                {"sha": "A2", "name": "E02.mkv"},
+            ],
+            "success_count": 2,
+            "failed_links": [],
+            "group": "transfer-batch:秘恋稽核中",
+        }
+        _batch_states["task-3"] = dict(batch_state)
+        mocked_emit = AsyncMock()
+
+        with patch("app.core.transfer.batch._finalize_transfer_task", AsyncMock()) as mocked_finalize, patch(
+            "app.core.transfer.batch._notify_batch_summary",
+            AsyncMock(),
+        ) as mocked_notify, patch(
+            "app.core.transfer.batch.event_bus.emit",
+            mocked_emit,
+        ):
+            await handle_batch_done("task-3", batch_state)
+
+        mocked_finalize.assert_awaited_once_with("task-3", batch_state)
+        mocked_notify.assert_awaited_once_with("task-3", batch_state)
+        mocked_emit.assert_awaited_once_with(
+            "strm.batch.requested",
+            task_id="task-3",
+            cloud_type="115",
+            archive_dir_id="cid-3",
+            archive_rel_path="剧集/日韩剧集/秘恋稽核中 (2026) {tmdb-297640}/Season 1",
+            strm_rel_dir="剧集/日韩剧集/秘恋稽核中 (2026) {tmdb-297640}/Season 1",
+            files=[
+                {"sha": "A1", "name": "E01.mkv"},
+                {"sha": "A2", "name": "E02.mkv"},
+            ],
+        )
+        self.assertNotIn("task-3", _batch_states)
+
+
 class StrmBatchPathTests(unittest.IsolatedAsyncioTestCase):
     async def test_generate_strm_for_folder_does_not_duplicate_organized_segments(self):
         generator = StrmGenerator115()
@@ -68,6 +207,72 @@ class StrmBatchPathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[2], "strm_output")
         self.assertEqual(args[3], "strm_output")
         self.assertTrue(kwargs["skip_organize"])
+
+    async def test_generate_strm_for_folder_records_manifest_fields(self):
+        generator = StrmGenerator115()
+        share_files = [{"sha": "ABC", "name": "灵魂摆渡·十年.2026.S01E05.mkv"}]
+        config = SimpleNamespace(strm=SimpleNamespace(base_url="http://example.com", output_dir="strm_output"))
+
+        mocked_db = patch("app.database.get_db_conn").start()
+        self.addCleanup(patch.stopall)
+        mocked_db.return_value.__aenter__.return_value.execute.return_value = None
+        mocked_db.return_value.__aenter__.return_value.commit.return_value = None
+
+        with patch.object(generator.client, "list_files", return_value={
+            "items": [{"fid": "1", "n": "灵魂摆渡·十年.2026.S01E05.mkv", "pc": "pc1", "sha": "ABC"}]
+        }), patch("app.core.cloud115.strm.get_config", return_value=config), patch(
+            "app.core.cloud115.strm.classify"
+        ) as mocked_classify, patch(
+            "app.core.cloud115.strm.build_archive_placement"
+        ) as mocked_build_placement, patch.object(
+            generator, "generate_strm", return_value=str(Path("strm_output/剧集/国产剧集/灵魂摆渡·十年 (2026) {tmdb-289271}/Season 1/灵魂摆渡·十年 - S01E05.strm"))
+        ):
+            mocked_classify.return_value = SimpleNamespace(
+                category="剧集",
+                subcategory="国产剧集",
+                title="灵魂摆渡·十年",
+                year="2026",
+                tmdb_id="289271",
+                season=1,
+                media_type="tv",
+            )
+            mocked_build_placement.return_value = SimpleNamespace(
+                archive_rel_path="剧集/国产剧集/灵魂摆渡·十年 (2026) {tmdb-289271}/Season 1",
+                strm_rel_dir="剧集/国产剧集/灵魂摆渡·十年 (2026) {tmdb-289271}/Season 1",
+                target_file_name="灵魂摆渡·十年 - S01E05.mkv",
+                strm_file_name="灵魂摆渡·十年 - S01E05.strm",
+            )
+
+            await generator.generate_strm_for_folder(
+                "cid-9",
+                share_files,
+                strm_subdir="剧集/国产剧集/灵魂摆渡·十年 (2026) {tmdb-289271}/Season 1",
+                root_output_dir="strm_output",
+            )
+
+        execute_call = mocked_db.return_value.__aenter__.return_value.execute.await_args
+        query = execute_call.args[0]
+        params = execute_call.args[1]
+
+        self.assertIn("archive_dir_id", query)
+        self.assertIn("archive_rel_path", query)
+        self.assertIn("strm_rel_path", query)
+        self.assertIn("strm_abs_path", query)
+        self.assertIn("play_identity", query)
+        self.assertEqual(params[0], "115")
+        self.assertEqual(params[1], "1")
+        self.assertEqual(params[2], "cid-9")
+        self.assertEqual(params[3], "剧集/国产剧集/灵魂摆渡·十年 (2026) {tmdb-289271}/Season 1")
+        self.assertEqual(
+            params[4],
+            "剧集/国产剧集/灵魂摆渡·十年 (2026) {tmdb-289271}/Season 1/灵魂摆渡·十年 - S01E05.strm",
+        )
+        self.assertEqual(
+            params[5],
+            "strm_output/剧集/国产剧集/灵魂摆渡·十年 (2026) {tmdb-289271}/Season 1/灵魂摆渡·十年 - S01E05.strm",
+        )
+        self.assertEqual(params[6], "pc1")
+        self.assertEqual(params[8], "strm_output/剧集/国产剧集/灵魂摆渡·十年 (2026) {tmdb-289271}/Season 1/灵魂摆渡·十年 - S01E05.strm")
 
 
 class MediaOrganizerRegionTests(unittest.IsolatedAsyncioTestCase):

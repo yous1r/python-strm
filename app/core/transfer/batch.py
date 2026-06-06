@@ -1,10 +1,12 @@
 import asyncio
+import re
 
 from loguru import logger
 
 from app.config import get_config
 from app.core.cloud115.client import client_115
 from app.core.cloud115.strm import generator_115
+from app.core.media.parser import parse_filename
 from app.core.notify.manager import notify_manager
 from app.core.transfer.classifier import build_archive_path, classify
 from app.database import get_db_conn
@@ -23,6 +25,31 @@ _batch_states: dict[str, dict] = {}
 _batch_semaphore = asyncio.Semaphore(1)
 
 
+def _clean_batch_title(title: str) -> str:
+    if not title:
+        return ""
+    return re.sub(r'^\s*[\U0001F300-\U0001FAFF\u2600-\u27BF]+\s*', '', title).strip()
+
+
+def _build_batch_sample_name(batch_title: str, row_title: str) -> str:
+    """构造用于批量预分类的样本名，优先使用整剧标题，避免单集展示文案污染分类。"""
+    cleaned_title = _clean_batch_title(batch_title)
+    raw_title = row_title or batch_title or ""
+    media_info = parse_filename(raw_title)
+
+    if cleaned_title:
+        sample_name = cleaned_title
+        if media_info.year:
+            sample_name += f" ({media_info.year})"
+        if media_info.media_type == "episode":
+            season = media_info.season or 1
+            episode = media_info.episode or 1
+            sample_name += f" S{season:02d}E{episode:02d}"
+        return sample_name
+
+    return raw_title
+
+
 async def handle_batch_requested(task_id: str, rows: list, base_title: str = "", **kwargs):
     if not rows:
         logger.warning(f"[Batch] 空批次，忽略 task_id={task_id}")
@@ -33,7 +60,7 @@ async def handle_batch_requested(task_id: str, rows: list, base_title: str = "",
     series_folder_id = ""
     series_path_str = ""
 
-    sample_name = rows[0].get("title") or batch_title
+    sample_name = _build_batch_sample_name(batch_title, rows[0].get("title") or "")
     try:
         classify_result = await classify(sample_name)
         if classify_result:
@@ -174,14 +201,17 @@ async def handle_batch_done(task_id: str, batch_state: dict, **kwargs):
         await _finalize_transfer_task(task_id, batch_state)
 
         share_files = batch_state.get("share_files", [])
-        folder_cid = batch_state.get("series_folder_id", "")
-        if share_files and folder_cid:
+        archive_dir_id = batch_state.get("series_folder_id", "")
+        archive_rel_path = batch_state.get("series_path_str", "")
+        if share_files and archive_dir_id:
             await event_bus.emit(
                 EVENT_STRM_BATCH_REQUESTED,
                 task_id=task_id,
-                folder_cid=folder_cid,
-                share_files=share_files,
-                strm_subdir=batch_state.get("series_path_str", ""),
+                cloud_type="115",
+                archive_dir_id=archive_dir_id,
+                archive_rel_path=archive_rel_path,
+                strm_rel_dir=archive_rel_path,
+                files=share_files,
             )
 
         await _notify_batch_summary(task_id, batch_state)
@@ -189,8 +219,20 @@ async def handle_batch_done(task_id: str, batch_state: dict, **kwargs):
         _batch_states.pop(task_id, None)
 
 
-async def handle_strm_batch_requested(task_id: str, folder_cid: str, share_files: list, strm_subdir: str = "", **kwargs):
-    generated = await generator_115.generate_strm_for_folder(folder_cid, share_files, strm_subdir)
+async def handle_strm_batch_requested(
+    task_id: str,
+    archive_dir_id: str,
+    files: list,
+    strm_rel_dir: str = "",
+    folder_cid: str = "",
+    share_files: list | None = None,
+    strm_subdir: str = "",
+    **kwargs,
+):
+    target_dir_id = archive_dir_id or folder_cid
+    target_files = files or share_files or []
+    target_subdir = strm_rel_dir or strm_subdir
+    generated = await generator_115.generate_strm_for_folder(target_dir_id, target_files, target_subdir)
     logger.info(f"[Batch] {task_id}: 生成 STRM {len(generated)} 个")
 
 
