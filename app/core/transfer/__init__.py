@@ -3,6 +3,7 @@ from loguru import logger
 from app.core.transfer.mover import init_mover
 from app.core.transfer.organizer import init_organizer
 from app.core.transfer.rollback import init_rollback
+from app.core.transfer.batch import init_batch_transfer
 from app.core.transfer.scope import init_scope
 from app.config import get_config
 
@@ -25,6 +26,7 @@ def init_transfer_pipeline():
     init_mover()
     init_organizer()
     init_rollback()
+    init_batch_transfer()
 
     logger.info("[Transfer] 转存整理管道初始化完成")
     logger.info(

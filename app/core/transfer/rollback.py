@@ -9,8 +9,6 @@ async def rollback_task(task_id: str, **kwargs):
     """对指定 task_id 执行还原，按 seq DESC 逆序执行操作日志"""
     logger.info(f"[Rollback] 开始还原任务: {task_id}")
 
-    await event_bus.emit(EVENT_ROLLBACK_START, task_id=task_id)
-
     async with get_db_conn() as db:
         cursor = await db.execute(
             "SELECT * FROM operation_logs WHERE task_id=? AND status='done' ORDER BY seq DESC",

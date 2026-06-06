@@ -128,6 +128,7 @@ class BarkNotifyConfig(BaseModel):
     enabled: bool = False
     server: str = "https://api.day.app"
     device_key: str = ""
+    device_keys: List[str] = []
     encryption_key: str = ""
     encryption_iv: str = ""
     encryption_algorithm: str = "AES-128-CBC"

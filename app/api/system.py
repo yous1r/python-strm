@@ -1,8 +1,20 @@
 from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
 from app.config import get_config, update_config
-from app.events import spawn_task, task_tracker
+from app.events import task_tracker
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List
+
+from app.services.system_service import (
+    apply_runtime_config_changes,
+    trigger_db_sync_task,
+    trigger_sync_task,
+)
+from app.services.telegram_service import (
+    TelegramValidationError,
+    scrape_monitor_history,
+    test_monitor_connection,
+    validate_monitor_request,
+)
 
 class TelegramTestRequest(BaseModel):
     api_id: str
@@ -31,36 +43,10 @@ async def modify_config(request: Request):
     """增量热更新配置"""
     try:
         data = await request.json()
-        
-        # Check if emby proxy config was updated
         old_config = get_config()
-        old_proxy_enabled = old_config.emby.proxy.enabled
-        old_instances = {(i.name, i.proxy_port, i.url) for i in old_config.emby.proxy.instances}
-        
         new_config = update_config(data)
-        
-        # Handle hot reload for proxy (detect any instance config change)
-        if 'emby' in data and 'proxy' in data['emby']:
-            from app.core.emby.standalone_proxy import restart_standalone_proxy
-            import asyncio
-            new_proxy_enabled = new_config.emby.proxy.enabled
-            new_instances = {(i.name, i.proxy_port, i.url) for i in new_config.emby.proxy.instances}
-            if old_proxy_enabled != new_proxy_enabled or old_instances != new_instances:
-                spawn_task(restart_standalone_proxy(), name="proxy_restart")
-                
-        # Handle hot reload for Telegram monitor
-        if 'monitor' in data and 'telegram' in data['monitor']:
-            from app.core.monitor.telegram import telegram_monitor
-            import asyncio
-            
-            async def restart_telegram_monitor():
-                await telegram_monitor.stop()
-                if new_config.monitor.telegram.enabled:
-                    await asyncio.sleep(1) # wait for db lock release
-                    await telegram_monitor.start()
-                    
-            spawn_task(restart_telegram_monitor(), name="tg_restart")
-                
+
+        apply_runtime_config_changes(data, old_config, new_config)
         return {"status": "success", "config": new_config.model_dump()}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"配置更新失败或格式校验不通过: {str(e)}")
@@ -97,219 +83,40 @@ async def test_notify(channel: str):
 async def test_telegram_monitor(req: TelegramTestRequest):
     """测试 Telegram 监控节点登录状态并获取第一条测试消息"""
     try:
-        from app.core.monitor.telegram import telegram_monitor
-        if not req.api_id or not req.api_hash:
-            raise HTTPException(status_code=400, detail="API ID 和 API Hash 不能为空")
-            
-        if not req.channels:
-            raise HTTPException(status_code=400, detail="未配置频道！请在前端添加至少一个监听频道后再试。")
-            
-        import re
-        first_channel = req.channels[0].strip()
-        parsed_channel = first_channel
-        match_c = re.search(r't\.me/c/(\d+)', first_channel)
-        if match_c:
-            parsed_channel = int(f"-100{match_c.group(1)}")
-        else:
-            match_u = re.search(r't\.me/([a-zA-Z0-9_]+)', first_channel)
-            if match_u and match_u.group(1) not in ['c', 'joinchat', 'setlanguage']:
-                parsed_channel = match_u.group(1)
-            elif first_channel.startswith('@'):
-                parsed_channel = first_channel[1:]
-            else:
-                try:
-                    parsed_channel = int(first_channel)
-                except ValueError:
-                    pass
-
-        is_auth = False
-        client_to_use = None
-        disconnect_after = False
-        
-        if telegram_monitor.client and telegram_monitor.client.is_connected():
-            is_auth = await telegram_monitor.client.is_user_authorized()
-            client_to_use = telegram_monitor.client
-        else:
-            from telethon import TelegramClient
-            import urllib.parse
-            
-            client_kwargs = {}
-            if req.proxy:
-                proxy_str = req.proxy
-                if not proxy_str.startswith(("http://", "https://", "socks5://", "socks5h://")):
-                    proxy_str = f"http://{proxy_str}"
-                parsed = urllib.parse.urlparse(proxy_str)
-                proxy_type = parsed.scheme.lower()
-                if proxy_type in ["http", "https"]:
-                    proxy_type = "http"
-                elif proxy_type in ["socks5", "socks5h"]:
-                    proxy_type = "socks5"
-                client_kwargs["proxy"] = {
-                    "proxy_type": proxy_type,
-                    "addr": parsed.hostname,
-                    "port": parsed.port
-                }
-
-            import os
-            os.makedirs('data', exist_ok=True)
-            client_to_use = TelegramClient('data/session_strm', req.api_id, req.api_hash, **client_kwargs)
-            await client_to_use.connect()
-            disconnect_after = True
-            
-            if not await client_to_use.is_user_authorized():
-                if req.bot_token:
-                    try:
-                        await client_to_use.start(bot_token=req.bot_token)
-                        is_auth = True
-                    except Exception as e:
-                        await client_to_use.disconnect()
-                        return {"status": "error", "message": f"Bot Token 登录失败: {str(e)}"}
-                else:
-                    is_auth = False
-            else:
-                is_auth = True
-        
-        if not is_auth:
-            if disconnect_after:
-                await client_to_use.disconnect()
-            return {"status": "error", "message": "连接成功，但尚未登录。请填写 Bot Token 或在后端运行 python login_tg.py 完成扫码登录。"}
-            
-        # 测试读取第一个频道
-        try:
-            messages = await client_to_use.get_messages(parsed_channel, limit=1)
-            msg_text = messages[0].text if messages and messages[0].text else "[图片/非文本消息或空消息]"
-            success_msg = f"连接并鉴权成功！\n成功读取到频道 [{first_channel}] 的最新一条消息：\n\n{msg_text}"
-        except Exception as e:
-            success_msg = f"连接并鉴权成功！但读取频道 [{first_channel}] 失败，可能您还未加入该频道，或者权限不足。\n错误信息: {str(e)}"
-
-        if disconnect_after:
-            await client_to_use.disconnect()
-            
-        return {"status": "success", "message": success_msg}
-            
+        return await test_monitor_connection(
+            req.api_id,
+            req.api_hash,
+            bot_token=req.bot_token,
+            proxy=req.proxy,
+            channels=req.channels,
+        )
+    except TelegramValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as e:
         return {"status": "error", "message": f"测试失败: {str(e)}"}
 
 @router.post("/scrape-monitor/telegram")
 async def scrape_telegram_monitor(req: TelegramScrapeRequest, background_tasks: BackgroundTasks):
     """手动触发：根据关键字抓取频道的历史消息并提取链接排队转存"""
-    if not req.api_id or not req.api_hash:
-        raise HTTPException(status_code=400, detail="API ID 和 API Hash 不能为空")
-    if not req.channels:
-        raise HTTPException(status_code=400, detail="未配置任何监听频道，无法抓取")
-        
-    from app.core.monitor.telegram import telegram_monitor
-    from app.events import event_bus, EVENT_MONITOR_NEW_LINK
-    import re
-    import logging
-    logger = logging.getLogger("strm")
-    
-    def parse_ch(ch):
-        ch = ch.strip()
-        match_c = re.search(r't\.me/c/(\d+)', ch)
-        if match_c: return int(f"-100{match_c.group(1)}")
-        match_u = re.search(r't\.me/([a-zA-Z0-9_]+)', ch)
-        if match_u and match_u.group(1) not in ['c', 'joinchat', 'setlanguage']: return match_u.group(1)
-        if ch.startswith('@'): return ch[1:]
-        try: return int(ch)
-        except ValueError: return ch
+    try:
+        validate_monitor_request(
+            req.api_id,
+            req.api_hash,
+            req.channels,
+            empty_channels_message="未配置任何监听频道，无法抓取",
+        )
+    except TelegramValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
-    parsed_channels = [parse_ch(c) for c in req.channels if c.strip()]
-    
-    async def bg_scrape():
-        is_auth = False
-        client_to_use = None
-        disconnect_after = False
-        
-        if telegram_monitor.client and telegram_monitor.client.is_connected():
-            is_auth = await telegram_monitor.client.is_user_authorized()
-            client_to_use = telegram_monitor.client
-        else:
-            from telethon import TelegramClient
-            import urllib.parse
-            client_kwargs = {}
-            if req.proxy:
-                proxy_str = req.proxy
-                if not proxy_str.startswith(("http://", "https://", "socks5://", "socks5h://")):
-                    proxy_str = f"http://{proxy_str}"
-                parsed = urllib.parse.urlparse(proxy_str)
-                proxy_type = parsed.scheme.lower()
-                if proxy_type in ["http", "https"]: proxy_type = "http"
-                elif proxy_type in ["socks5", "socks5h"]: proxy_type = "socks5"
-                client_kwargs["proxy"] = {"proxy_type": proxy_type, "addr": parsed.hostname, "port": parsed.port}
-            
-            import os
-            os.makedirs('data', exist_ok=True)
-            client_to_use = TelegramClient('data/session_strm', req.api_id, req.api_hash, **client_kwargs)
-            await client_to_use.connect()
-            disconnect_after = True
-            
-            if not await client_to_use.is_user_authorized():
-                if req.bot_token:
-                    try:
-                        await client_to_use.start(bot_token=req.bot_token)
-                        is_auth = True
-                    except:
-                        pass
-            else:
-                is_auth = True
-                
-        if not is_auth:
-            if disconnect_after: await client_to_use.disconnect()
-            logger.error("Scrape History failed: Telegram client not authorized.")
-            return
-            
-        try:
-            total_links_found = 0
-            valid_kws = [kw.strip().lower() for kw in req.keywords if kw.strip()]
-            for ch in parsed_channels:
-                try:
-                    import asyncio
-                    msg_count = 0
-                    if valid_kws:
-                        for kw in valid_kws:
-                            async for msg in client_to_use.iter_messages(ch, search=kw, limit=None):
-                                msg_count += 1
-                                if msg_count % 100 == 0:
-                                    await asyncio.sleep(2)  # 每处理100条消息强制休眠2秒，避免触发 Telegram FloodWait
-                                    
-                                text = msg.message or ""
-                                new_links = await telegram_monitor.ingest_message(
-                                    text,
-                                    message_id=msg.id,
-                                    channel_id=str(ch),
-                                    msg_date=str(msg.date)
-                                )
-                                for link_data in new_links:
-                                    total_links_found += 1
-                                    await event_bus.emit(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
-                    else:
-                        async for msg in client_to_use.iter_messages(ch, limit=None):
-                            msg_count += 1
-                            if msg_count % 100 == 0:
-                                await asyncio.sleep(2)  # 每处理100条消息强制休眠2秒，避免触发 Telegram FloodWait
-                                
-                            text = msg.message or ""
-                            new_links = await telegram_monitor.ingest_message(
-                                text,
-                                message_id=msg.id,
-                                channel_id=str(ch),
-                                msg_date=str(msg.date)
-                            )
-                            for link_data in new_links:
-                                total_links_found += 1
-                                await event_bus.emit(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
-                except Exception as inner_e:
-                    logger.error(f"Failed to scrape channel {ch}: {inner_e}")
-                    
-            logger.info(f"Telegram history scraping finished. Found {total_links_found} links added to queue.")
-        except Exception as e:
-            logger.error(f"Error during Telegram history scraping: {str(e)}")
-        finally:
-            if disconnect_after:
-                await client_to_use.disconnect()
-
-    background_tasks.add_task(bg_scrape)
+    background_tasks.add_task(
+        scrape_monitor_history,
+        req.api_id,
+        req.api_hash,
+        req.bot_token,
+        req.proxy,
+        req.channels,
+        req.keywords,
+    )
     return {"status": "success", "message": "全量历史消息抓取任务已加入后台！\n匹配到的资源链接将自动进入排队系统，并按照防封控频率（间隔 3 秒）依次转存。您可以去主日志查看实时抓取和转存进度。"}
 
 @router.post("/test-emby")
@@ -359,12 +166,7 @@ async def test_tmdb():
 @router.post("/sync/run")
 async def trigger_sync_now(force: bool = False):
     """立即在后台触发一次全量自动化同步任务"""
-    from app.core.sync.engine import sync_engine
-    import asyncio
-    # 放进后台任务执行，不阻塞当前的 API 请求
-    spawn_task(sync_engine.run_sync_task(force=force), name="sync_manual")
-    msg = "强制全自动同步任务已在后台触发" if force else "全自动增量同步任务已在后台触发"
-    return {"status": "success", "message": msg}
+    return trigger_sync_task(force=force)
 
 @router.get("/sync/history")
 async def fetch_sync_history():
@@ -394,10 +196,7 @@ async def fetch_sync_history():
 @router.post("/db_sync")
 async def trigger_db_sync():
     """手动触发 115 目录树本地缓存同步"""
-    from app.core.cloud115.db_sync import sync_all_configured
-    from app.events import spawn_task
-    spawn_task(sync_all_configured(), name="db_sync_manual")
-    return {"status": "success", "message": "115 目录树同步任务已触发，稍后本地缓存将更新"}
+    return trigger_db_sync_task()
 
 @router.get("/tasks")
 async def get_background_tasks():

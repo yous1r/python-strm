@@ -3,6 +3,7 @@ import re
 from loguru import logger
 from telethon import TelegramClient, events
 from app.config import get_config
+from app.core.monitor.telegram_runtime import build_telegram_client, parse_channels
 from app.events import event_bus, EVENT_MONITOR_NEW_LINK
 
 class TelegramMonitor:
@@ -16,6 +17,8 @@ class TelegramMonitor:
 
     async def start(self):
         """启动Telegram监听服务"""
+        self.config = get_config().monitor.telegram
+
         if not self.config.enabled:
             return
 
@@ -23,57 +26,13 @@ class TelegramMonitor:
             logger.error("Telegram API ID or Hash is missing.")
             return
 
-        client_kwargs = {}
-        if self.config.proxy:
-            import urllib.parse
-            try:
-                proxy_str = self.config.proxy
-                if not proxy_str.startswith(("http://", "https://", "socks5://", "socks5h://")):
-                    proxy_str = f"http://{proxy_str}"
-                parsed = urllib.parse.urlparse(proxy_str)
-                proxy_type = parsed.scheme.lower()
-                if proxy_type in ["http", "https"]:
-                    proxy_type = "http"
-                elif proxy_type in ["socks5", "socks5h"]:
-                    proxy_type = "socks5"
-                client_kwargs["proxy"] = {
-                    "proxy_type": proxy_type,
-                    "addr": parsed.hostname,
-                    "port": parsed.port
-                }
-            except Exception as e:
-                logger.error(f"Failed to parse monitor proxy: {e}")
+        try:
+            self.client = build_telegram_client(self.config.api_id, self.config.api_hash, self.config.proxy)
+        except Exception as exc:
+            logger.error(f"Failed to parse monitor proxy: {exc}")
+            self.client = build_telegram_client(self.config.api_id, self.config.api_hash)
 
-        import os
-        os.makedirs('data', exist_ok=True)
-        self.client = TelegramClient('data/session_strm', self.config.api_id, self.config.api_hash, **client_kwargs)
-        
-        parsed_channels = []
-        for ch in (self.config.channels or []):
-            ch = ch.strip()
-            if not ch: continue
-            
-            # https://t.me/c/1234567890/123 -> -1001234567890
-            match_c = re.search(r't\.me/c/(\d+)', ch)
-            if match_c:
-                parsed_channels.append(int(f"-100{match_c.group(1)}"))
-                continue
-                
-            # https://t.me/username or @username
-            match_u = re.search(r't\.me/([a-zA-Z0-9_]+)', ch)
-            if match_u and match_u.group(1) not in ['c', 'joinchat', 'setlanguage']:
-                parsed_channels.append(match_u.group(1))
-                continue
-                
-            if ch.startswith('@'):
-                parsed_channels.append(ch[1:])
-                continue
-                
-            # Try to convert to int (like -100... or just digits)
-            try:
-                parsed_channels.append(int(ch))
-            except ValueError:
-                parsed_channels.append(ch)
+        parsed_channels = parse_channels(self.config.channels or [])
         
         @self.client.on(events.NewMessage(chats=parsed_channels))
         async def handler(event):
@@ -98,8 +57,8 @@ class TelegramMonitor:
             if new_links:
                 logger.info(f"Found and ingested new links: {new_links}")
                 for link_data in new_links:
-                    # 只针对实时消息，立刻推送转存队列，并在 handler 中将数据库状态更新为 queued
-                    await event_bus.emit(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
+                    # 实时监听只负责投递事件，避免转存链路阻塞消息消费循环。
+                    event_bus.emit_background(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
 
         await self.client.connect()
         if not await self.client.is_user_authorized():

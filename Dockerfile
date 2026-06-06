@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 # 设置工作目录
 WORKDIR /app
@@ -7,6 +7,12 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV TZ=Asia/Shanghai
+
+RUN echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ $(. /etc/os-release && echo $VERSION_CODENAME) main contrib non-free" > /etc/apt/sources.list && \
+    echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ $(. /etc/os-release && echo $VERSION_CODENAME)-updates main contrib non-free" >> /etc/apt/sources.list && \
+    echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ $(. /etc/os-release && echo $VERSION_CODENAME)-backports main contrib non-free" >> /etc/apt/sources.list && \
+    echo "deb https://security.debian.org/debian-security $(. /etc/os-release && echo $VERSION_CODENAME)-security main contrib non-free" >> /etc/apt/sources.list 
+
 
 # 安装系统级依赖并配置时区
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -17,8 +23,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # 复制并安装依赖
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple && \
+    pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 # 复制代码到容器
 COPY . .

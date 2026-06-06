@@ -9,6 +9,8 @@ RUN apk add --no-cache git ca-certificates tzdata
 # 设置工作目录
 WORKDIR /app
 
+ENV GOPROXY=https://goproxy.cn,direct
+
 # 复制依赖文件
 COPY go.mod go.sum ./
 

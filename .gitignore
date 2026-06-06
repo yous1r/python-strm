@@ -10,3 +10,9 @@ node_modules
 strm_output
 data
 __pycache__/
+
+cache
+
+config.yaml
+config.yaml.bak
+config.yaml.*.bak

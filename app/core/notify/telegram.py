@@ -6,7 +6,7 @@ class TelegramNotifier:
     def __init__(self):
         self.config = get_config().notify.telegram
 
-    async def send_message(self, content: str, title: str = "系统通知"):
+    async def send_message(self, content: str, title: str = "系统通知", **kwargs):
         if not self.config.enabled:
             return
         if not self.config.bot_token or not self.config.chat_id:

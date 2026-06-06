@@ -9,6 +9,7 @@ services:
       - "8095:8095"
       # 反向代理端口（与 config.yaml 中 emby.proxy.instances[].proxy_port 对应）
       - "8096:8096"
+      - "8097:8097"
     volumes:
       # 持久化数据库与日志
       - ./data:/app/data

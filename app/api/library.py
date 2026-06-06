@@ -159,12 +159,13 @@ async def manual_transfer(res_id: int):
         "db_id": res_id,  # 传入 db_id 以便转存成功后更新状态
         "ignore_filters": True
     }
-    await event_bus.emit(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
+    event_bus.emit_background(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
     return {"status": "success"}
 
 @router.post("/transfer_batch")
 async def transfer_batch(base_title: str = Form(...)):
-    from app.events import event_bus, EVENT_MONITOR_NEW_LINK
+    import uuid
+    from app.events import event_bus, EVENT_TRANSFER_BATCH_REQUESTED
     
     async with get_db_conn() as db:
         db.row_factory = dict_factory
@@ -180,17 +181,26 @@ async def transfer_batch(base_title: str = Form(...)):
         await db.execute(f"UPDATE tg_resources SET status = 'queued' WHERE id IN ({placeholders})", ids)
         await db.commit()
         
-    for row in rows:
-        link_data = {
-            "url": row["link"],
-            "password": row["password"],
-            "type": row["disk_type"],
-            "db_id": row["id"],
-            "ignore_filters": True
-        }
-        await event_bus.emit(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
+    task_id = str(uuid.uuid4())
+
+    async with get_db_conn() as db:
+        await db.execute(
+            """INSERT OR REPLACE INTO transfer_tasks
+               (task_id, status, source_dir_id, archive_dir_id, file_count)
+               VALUES (?, 'pending', 'library_batch', 'library_batch', ?)""",
+            (task_id, len(rows))
+        )
+        await db.commit()
+
+    event_bus.emit_background(
+        EVENT_TRANSFER_BATCH_REQUESTED,
+        task_id=task_id,
+        rows=rows,
+        base_title=base_title,
+        name=f"batch_transfer:{task_id}",
+    )
         
-    return {"status": "success", "message": f"已将 {len(rows)} 个资源加入转存队列"}
+    return {"status": "success", "task_id": task_id, "message": f"已将 {len(rows)} 个资源加入转存队列"}
 
 class TransferSelectedRequest(BaseModel):
     ids: List[int]
@@ -201,7 +211,7 @@ class TransferSelectedRequest(BaseModel):
 async def transfer_selected(req: TransferSelectedRequest):
     """批量转存选中的剧集，创建统一 task_id 追踪"""
     import uuid
-    from app.events import event_bus, EVENT_MONITOR_NEW_LINK
+    from app.events import event_bus, EVENT_TRANSFER_BATCH_REQUESTED
 
     task_id = str(uuid.uuid4())
 
@@ -247,54 +257,13 @@ async def transfer_selected(req: TransferSelectedRequest):
         )
         await db.commit()
     
-    # 预解析第一个分享链接 → TMDB分类 → 创建归档目录结构
-    series_folder_id = ""
-    series_path_str = ""
-    if req.base_title and len(rows) > 0:
-        try:
-            from app.core.transfer.classifier import classify, build_archive_path
-            from app.core.cloud115.client import client_115
-            from app.config import get_config
-            
-            # 复用 client_115.get_share_info 预解析（不做转存）
-            si = await client_115.get_share_info(rows[0]["link"], rows[0].get("password", ""))
-            sample_name = rows[0].get("title", req.base_title)
-            if si.get("state") and si.get("files"):
-                real_name = si["files"][0].get("name", "")
-                if real_name:
-                    sample_name = real_name
-            
-            cr = await classify(sample_name)
-            if cr:
-                path_parts = build_archive_path(cr)
-                series_path_str = "/".join(path_parts)
-                archive_id = get_config().transfer.archive_dir_id
-                if archive_id and archive_id != "0":
-                    res = await client_115.create_path(archive_id, series_path_str)
-                    if "id" in res and res["id"]:
-                        series_folder_id = res["id"]
-                        logger.info(f"[Batch] 预解析+分类完成: {series_path_str} (cid={series_folder_id})")
-                else:
-                    logger.warning("[Batch] archive_dir_id 未配置，跳过目录创建")
-        except Exception as e:
-            logger.error(f"[Batch] 预解析/创建路径失败: {e}")
-    
-    # emit 转存事件（带批次信息和间隔）
-    for i, row in enumerate(rows):
-        if i > 0:
-            await asyncio.sleep(0.1)
-        link_data = {
-            "url": row["link"],
-            "password": row["password"],
-            "type": row["disk_type"],
-            "db_id": row["id"],
-            "ignore_filters": True,
-            "batch_task_id": task_id,
-            "episode_count": len(rows),
-            "series_folder_id": series_folder_id,
-            "series_path_str": series_path_str
-        }
-        await event_bus.emit(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
+    event_bus.emit_background(
+        EVENT_TRANSFER_BATCH_REQUESTED,
+        task_id=task_id,
+        rows=rows,
+        base_title=req.base_title,
+        name=f"batch_transfer:{task_id}",
+    )
     
     return {
         "status": "success",

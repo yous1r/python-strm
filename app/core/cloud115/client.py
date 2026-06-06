@@ -395,19 +395,23 @@ class Cloud115Client:
                                 logger.error(f"Invalid regex rule {r}: {e}")
                                 
                 file_ids = []
+                share_files = []
                 for item in share_info.get("data", {}).get("list", []):
                     fid = item.get("f") or item.get("fid") or item.get("cid")
                     fname = item.get("n") or item.get("fn") or ""
+                    sha_val = item.get("sha") or item.get("sha1") or item.get("pick_code_sha") or ""
                     
                     if fid:
                         if valid_rules:
                             if any(rule.search(fname) for rule in valid_rules):
                                 file_ids.append(str(fid))
+                                share_files.append({"name": fname, "sha": str(sha_val).upper()})
                                 logger.info(f"Matched rule for resource: {fname}")
                             else:
                                 logger.debug(f"Resource {fname} ignored (not matching rules)")
                         else:
                             file_ids.append(str(fid))
+                            share_files.append({"name": fname, "sha": str(sha_val).upper()})
                     
                 if not file_ids:
                     return {"state": False, "error": "No files found in share or none matched filter rules"}

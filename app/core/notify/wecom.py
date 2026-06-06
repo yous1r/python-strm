@@ -25,7 +25,7 @@ class WeComNotifier:
             logger.error(f"WeCom token fetch error: {e}")
         return None
 
-    async def send_message(self, content: str, title: str = "系统通知"):
+    async def send_message(self, content: str, title: str = "系统通知", **kwargs):
         """发送企业微信消息"""
         if not self.config.enabled:
             return

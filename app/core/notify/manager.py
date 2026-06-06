@@ -12,11 +12,11 @@ class NotificationManager:
             bark_notifier
         ]
 
-    async def notify(self, title: str, content: str):
+    async def notify(self, title: str, content: str, **kwargs):
         """并发向所有启用的通知渠道发送消息"""
         tasks = []
         for n in self.notifiers:
-            tasks.append(n.send_message(content, title))
+            tasks.append(n.send_message(content, title, **kwargs))
             
         if not tasks:
             return

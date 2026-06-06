@@ -2,6 +2,7 @@ from guessit import guessit
 from pydantic import BaseModel
 from typing import Optional, List
 from app.utils.helpers import is_video_file
+import re
 
 class MediaInfo(BaseModel):
     title: str
@@ -18,9 +19,6 @@ class MediaInfo(BaseModel):
 
 def parse_filename(filename: str) -> MediaInfo:
     """使用guessit解析媒体文件名"""
-    if not is_video_file(filename):
-        return MediaInfo(title=filename, original_filename=filename)
-        
     guessed = guessit(filename)
     
     # 构建 MediaInfo 对象
@@ -43,6 +41,17 @@ def parse_filename(filename: str) -> MediaInfo:
     if "type" in guessed:
         if guessed["type"] == "episode":
             info.media_type = "episode"
+
+    # 某些批量标题没有视频扩展名，但仍包含 S01E01 这类清晰季集标记。
+    if info.media_type == "movie":
+        season_episode_match = re.search(r"S(\d{1,2})E(\d{1,3})", filename, flags=re.IGNORECASE)
+        if season_episode_match:
+            info.season = int(season_episode_match.group(1))
+            info.episode = int(season_episode_match.group(2))
+            info.media_type = "episode"
+
+    if not is_video_file(filename) and not guessed.get("title"):
+        info.title = filename
             
     info.resolution = guessed.get("screen_size")
     info.source = guessed.get("source")

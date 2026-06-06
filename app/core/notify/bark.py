@@ -1,7 +1,6 @@
 import httpx
 import json
 import base64
-from urllib.parse import quote
 from loguru import logger
 from app.config import get_config
 
@@ -13,6 +12,72 @@ class BarkNotifier:
     def __init__(self):
         # We fetch config at call time to support hot-reload properly
         pass
+
+    def _build_payload(
+        self,
+        *,
+        title: str,
+        content: str,
+        message_type: str = "info",
+        subtitle: str = "",
+        group: str = "",
+        level: str = "",
+        sound: str = "",
+        url: str = "",
+        icon: str = "",
+        badge: int | None = None,
+        call: bool = False,
+        auto_copy: bool = False,
+        copy: str = "",
+        is_archive: bool | None = None,
+        action: str = "",
+    ) -> dict:
+        payload = {
+            "title": title,
+            "body": content,
+        }
+
+        type_defaults = {
+            "success": {"level": "active", "sound": "minuet"},
+            "error": {"level": "timeSensitive", "sound": "alarm"},
+            "critical": {"level": "critical", "sound": "alarm"},
+            "warning": {"level": "active", "sound": "bell"},
+            "progress": {"level": "passive"},
+            "info": {"level": "passive"},
+        }
+        defaults = type_defaults.get(message_type, type_defaults["info"])
+
+        if subtitle:
+            payload["subtitle"] = subtitle
+        if group:
+            payload["group"] = group
+
+        resolved_level = level or defaults.get("level")
+        if resolved_level:
+            payload["level"] = resolved_level
+
+        resolved_sound = sound or defaults.get("sound")
+        if resolved_sound:
+            payload["sound"] = resolved_sound
+
+        if url:
+            payload["url"] = url
+        if icon:
+            payload["icon"] = icon
+        if badge is not None:
+            payload["badge"] = badge
+        if call:
+            payload["call"] = "1"
+        if auto_copy:
+            payload["autoCopy"] = "1"
+        if copy:
+            payload["copy"] = copy
+        if is_archive:
+            payload["isArchive"] = "1"
+        if action:
+            payload["action"] = action
+
+        return payload
 
     def _encrypt_payload(self, payload: dict, key: str, iv: str, algorithm: str) -> dict:
         """对 Bark 的 payload 进行 AES 加密"""
@@ -51,22 +116,51 @@ class BarkNotifier:
             
         return enc_payload
 
-    async def send_message(self, content: str, title: str = "系统通知"):
+    async def send_message(
+        self,
+        content: str,
+        title: str = "系统通知",
+        *,
+        message_type: str = "info",
+        subtitle: str = "",
+        group: str = "",
+        level: str = "",
+        sound: str = "",
+        url: str = "",
+        icon: str = "",
+        badge: int | None = None,
+        call: bool = False,
+        auto_copy: bool = False,
+        copy: str = "",
+        is_archive: bool | None = None,
+        action: str = "",
+    ):
         config = get_config().notify.bark
         if not config.enabled:
             return
-        if not config.server or not config.device_key:
-            logger.error("Bark notify is enabled but server or device_key is missing.")
+        if not config.server or (not config.device_key and not config.device_keys):
+            logger.error("Bark notify is enabled but server or device_key(s) is missing.")
             return
 
         server = config.server.rstrip('/')
-        url = f"{server}/push"
-        
-        # 基础推送数据
-        payload = {
-            "title": title,
-            "body": content
-        }
+        push_url = f"{server}/push"
+        payload = self._build_payload(
+            title=title,
+            content=content,
+            message_type=message_type,
+            subtitle=subtitle,
+            group=group,
+            level=level,
+            sound=sound,
+            url=url,
+            icon=icon,
+            badge=badge,
+            call=call,
+            auto_copy=auto_copy,
+            copy=copy,
+            is_archive=is_archive,
+            action=action,
+        )
         
         try:
             async with httpx.AsyncClient(timeout=10) as client:
@@ -78,13 +172,19 @@ class BarkNotifier:
                         config.encryption_iv, 
                         config.encryption_algorithm
                     )
-                    post_data["device_key"] = config.device_key
+                    if config.device_key:
+                        post_data["device_key"] = config.device_key
+                    if config.device_keys:
+                        post_data["device_keys"] = config.device_keys
                 else:
                     # 明文 POST 推送 (更规范的方式)
                     post_data = payload.copy()
-                    post_data["device_key"] = config.device_key
+                    if config.device_key:
+                        post_data["device_key"] = config.device_key
+                    if config.device_keys:
+                        post_data["device_keys"] = config.device_keys
                     
-                res = await client.post(url, json=post_data)
+                res = await client.post(push_url, json=post_data)
                 data = res.json()
                 if data.get("code") != 200:
                     logger.error(f"Bark notify failed: {data.get('message')}")

@@ -5,10 +5,6 @@ from app.config import get_config
 from app.core.cloud115.client import client_115
 from app.core.notify.manager import notify_manager
 from app.core.sync.engine import sync_engine
-from app.core.cloud115.strm import generator_115
-
-# 批次转存追踪：累积 share_files 到批次，完成时批量生成 STRM
-_batch_pending: dict = {}  # {batch_task_id: {share_files: [], episode_count: 0, folder_cid: str}}
 
 # 限制并发转存数量为1，避免短时间内大量触发115接口导致封控
 transfer_semaphore = asyncio.Semaphore(1)
@@ -60,10 +56,7 @@ async def handle_new_link(link_data: dict, source: str, **kwargs):
             
         if not transfer_res.get("state"):
             logger.error(f"Failed to auto-transfer link {share_url}: {transfer_res.get('error')}")
-            await notify_manager.notify(
-                title="[STRM] 自动转存失败",
-                content=f"链接: {share_url}\n报错: {transfer_res.get('error')}"
-            )
+            await _notify_transfer_failure(link_data, share_url, transfer_res.get("error"))
             await _update_tg_status(link_data.get('db_id'), 'failed')
             return
 
@@ -80,31 +73,31 @@ async def handle_new_link(link_data: dict, source: str, **kwargs):
             spawn_task(sync_engine.run_sync_task(), name="strm_after_transfer")
 
         # 5. 推送成功通知
-        await notify_manager.notify(
-            title="[STRM] 自动转存成功",
-            content=f"链接: {share_url}\n密码: {receive_code}\n已成功转存并加入处理队列！"
-        )
+        await _notify_transfer_success(link_data, share_url, receive_code)
 
         await _update_tg_status(link_data.get('db_id'), 'success')
         
-        # 批次累积：收集 share_files，到达 episode_count 时批量生成 STRM
-        batch_id = link_data.get("batch_task_id")
-        if batch_id and transfer_res.get("share_files"):
-            if batch_id not in _batch_pending:
-                _batch_pending[batch_id] = {"share_files": [], "episode_count": link_data.get("episode_count", 0)}
-            _batch_pending[batch_id]["share_files"].extend(transfer_res["share_files"])
-            current = len(_batch_pending[batch_id]["share_files"])
-            total = _batch_pending[batch_id]["episode_count"]
-            logger.info(f"[Batch] {batch_id}: {current}/{total} share_files accumulated")
-            if total > 0 and current >= total:
-                sf = _batch_pending.pop(batch_id)["share_files"]
-                strm_dir = link_data.get("series_path_str", "")
-                logger.info(f"[Batch] {batch_id}: all {len(sf)} files received, generating STRMs to {strm_dir}")
-                spawn_task(generator_115.generate_strm_for_folder(target_dir_id, sf, strm_dir), name=f"strm_batch_{batch_id}")
-                
     except Exception as e:
         logger.error(f"Exception during transfer: {e}")
         await _update_tg_status(link_data.get('db_id'), 'failed')
+
+
+async def _notify_transfer_success(link_data: dict, share_url: str, receive_code: str):
+    await notify_manager.notify(
+        title="[STRM] 自动转存成功",
+        content=f"链接: {share_url}\n密码: {receive_code}\n已成功转存并加入处理队列！",
+        message_type="success",
+        group="transfer-single",
+    )
+
+
+async def _notify_transfer_failure(link_data: dict, share_url: str, error_message: str):
+    await notify_manager.notify(
+        title="[STRM] 自动转存失败",
+        content=f"链接: {share_url}\n报错: {error_message}",
+        message_type="error",
+        group="transfer-single",
+    )
 
 
 async def _update_tg_status(db_id, status: str):

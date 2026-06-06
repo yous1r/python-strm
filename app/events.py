@@ -1,8 +1,10 @@
 """事件总线 + 后台任务追踪器"""
 import asyncio
+import inspect
 import time
 import uuid
-from typing import Callable, Dict, List, Any, Optional
+from typing import Any, Awaitable, Callable, Dict, List
+
 from loguru import logger
 
 
@@ -13,9 +15,7 @@ class TaskTracker:
         self._tasks: Dict[str, dict] = {}  # task_id -> {name, type, created_at, status, error}
         self._lock = asyncio.Lock()
 
-    async def spawn(
-        self, coro, name: str = "", task_type: str = "async"
-    ) -> str:
+    async def spawn(self, coro: Awaitable[Any], name: str = "", task_type: str = "async") -> str:
         """
         创建并追踪一个后台任务。
         task_type: "async" (协程) 或 "thread" (asyncio.to_thread)
@@ -55,6 +55,48 @@ class TaskTracker:
 
         asyncio.create_task(_wrapper())
         return task_id
+
+    async def create_task(
+        self,
+        coro: Awaitable[Any],
+        *,
+        name: str = "",
+        task_type: str = "async",
+    ) -> tuple[str, asyncio.Task]:
+        """创建已登记的后台任务，并返回 task_id 与 task 对象。"""
+        task_id = str(uuid.uuid4())[:8]
+        now = time.time()
+
+        async with self._lock:
+            self._tasks[task_id] = {
+                "task_id": task_id,
+                "name": name or getattr(coro, "__name__", "unknown"),
+                "type": task_type,
+                "created_at": now,
+                "status": "running",
+                "error": None,
+            }
+
+        async def _wrapper():
+            try:
+                result = await coro
+                async with self._lock:
+                    if task_id in self._tasks:
+                        self._tasks[task_id]["status"] = "done"
+                        self._tasks[task_id]["duration"] = time.time() - now
+                logger.debug(f"[TaskTracker] ✓ {task_id} ({name}): done")
+                return result
+            except Exception as e:
+                async with self._lock:
+                    if task_id in self._tasks:
+                        self._tasks[task_id]["status"] = "error"
+                        self._tasks[task_id]["error"] = str(e)[:200]
+                        self._tasks[task_id]["duration"] = time.time() - now
+                logger.error(f"[TaskTracker] ✗ {task_id} ({name}): {e}")
+                raise
+
+        task = asyncio.create_task(_wrapper())
+        return task_id, task
 
     async def track_to_thread(self, func, *args, name: str = "", **kwargs) -> str:
         """追踪 asyncio.to_thread 调用"""
@@ -123,15 +165,42 @@ class TaskTracker:
 task_tracker = TaskTracker()
 
 
-def spawn_task(coro, name: str = "", task_type: str = "async") -> str:
+def spawn_task(coro: Awaitable[Any], name: str = "", task_type: str = "async") -> str:
     """
     创建并追踪后台任务。替代裸 asyncio.create_task()。
     返回 task_id 供后续查询。
     """
-    async def _deferred():
-        return await task_tracker.spawn(coro, name=name, task_type=task_type)
-
     task_id = str(uuid.uuid4())[:8]
+
+    async def _deferred():
+        async with task_tracker._lock:
+            task_tracker._tasks[task_id] = {
+                "task_id": task_id,
+                "name": name or getattr(coro, "__name__", "unknown"),
+                "type": task_type,
+                "created_at": time.time(),
+                "status": "running",
+                "error": None,
+            }
+
+        started_at = task_tracker._tasks[task_id]["created_at"]
+        try:
+            result = await coro
+            async with task_tracker._lock:
+                if task_id in task_tracker._tasks:
+                    task_tracker._tasks[task_id]["status"] = "done"
+                    task_tracker._tasks[task_id]["duration"] = time.time() - started_at
+            logger.debug(f"[TaskTracker] ✓ {task_id} ({name}): done")
+            return result
+        except Exception as e:
+            async with task_tracker._lock:
+                if task_id in task_tracker._tasks:
+                    task_tracker._tasks[task_id]["status"] = "error"
+                    task_tracker._tasks[task_id]["error"] = str(e)[:200]
+                    task_tracker._tasks[task_id]["duration"] = time.time() - started_at
+            logger.error(f"[TaskTracker] ✗ {task_id} ({name}): {e}")
+            raise
+
     asyncio.create_task(_deferred())
     return task_id
 
@@ -154,23 +223,30 @@ class EventBus:
     async def emit(self, event_type: str, **kwargs):
         if event_type not in self._subscribers:
             return
-        callbacks = self._subscribers[event_type]
+        callbacks = list(self._subscribers[event_type])
         logger.debug(f"[EventBus] emit {event_type} → {len(callbacks)} handler(s)")
-        # 使用 spawn_task 追踪每个回调
-        names = [f"event:{event_type}:{getattr(cb, '__name__', str(cb))}" for cb in callbacks]
-        tasks = [
-            asyncio.create_task(task_tracker.spawn(cb(**kwargs), name=names[i], task_type="async"))
-            for i, cb in enumerate(callbacks)
-        ]
+        tasks = []
+        for callback in callbacks:
+            name = f"event:{event_type}:{getattr(callback, '__name__', str(callback))}"
+            task_id, task = await task_tracker.create_task(
+                self._safe_call(callback, **kwargs),
+                name=name,
+                task_type="async",
+            )
+            tasks.append((task_id, task))
         if tasks:
-            await asyncio.gather(*tasks)
+            await asyncio.gather(*(task for _, task in tasks))
+
+    def emit_background(self, event_type: str, *, name: str = "", **kwargs) -> str:
+        """后台发布事件，返回可查询的 task_id。"""
+        task_name = name or f"event:{event_type}"
+        return spawn_task(self.emit(event_type, **kwargs), name=task_name)
 
     async def _safe_call(self, callback: Callable, **kwargs):
         try:
-            if asyncio.iscoroutinefunction(callback):
-                await callback(**kwargs)
-            else:
-                callback(**kwargs)
+            result = callback(**kwargs)
+            if inspect.isawaitable(result):
+                await result
         except Exception as e:
             logger.error(f"Error in event callback {callback.__name__}: {e}")
 
@@ -185,6 +261,12 @@ EVENT_TRANSFER_COMPLETE = "transfer_complete"
 EVENT_MONITOR_NEW_LINK = "monitor_new_link"
 EVENT_TRANSFER_RECEIVED = "transfer_received"
 EVENT_TRANSFER_MOVED = "transfer_moved"
+EVENT_TRANSFER_BATCH_REQUESTED = "transfer_batch_requested"
+EVENT_TRANSFER_BATCH_PREPARED = "transfer_batch_prepared"
+EVENT_TRANSFER_BATCH_ITEM_DONE = "transfer_batch_item_done"
+EVENT_TRANSFER_BATCH_ITEM_FAILED = "transfer_batch_item_failed"
+EVENT_TRANSFER_BATCH_DONE = "transfer_batch_done"
+EVENT_STRM_BATCH_REQUESTED = "strm_batch_requested"
 EVENT_ORGANIZE_START = "organize_start"
 EVENT_ORGANIZE_FILE_DONE = "organize_file_done"
 EVENT_ROLLBACK_START = "rollback_start"

@@ -1,0 +1,207 @@
+import asyncio
+from typing import Iterable
+
+from loguru import logger
+
+from app.config import get_config
+from app.core.monitor.telegram import telegram_monitor
+from app.core.monitor.telegram_runtime import (
+    build_telegram_client,
+    parse_channel_reference,
+    parse_channels,
+)
+from app.events import EVENT_MONITOR_NEW_LINK, event_bus
+
+
+class TelegramValidationError(ValueError):
+    """Telegram 请求参数校验失败。"""
+
+
+def validate_monitor_request(
+    api_id: str,
+    api_hash: str,
+    channels: Iterable[str] | None,
+    *,
+    empty_channels_message: str,
+) -> list[str]:
+    if not api_id or not api_hash:
+        raise TelegramValidationError("API ID 和 API Hash 不能为空")
+
+    normalized_channels = [channel.strip() for channel in (channels or []) if channel and channel.strip()]
+    if not normalized_channels:
+        raise TelegramValidationError(empty_channels_message)
+
+    return normalized_channels
+
+
+async def restart_monitor(delay_seconds: float = 1.0) -> None:
+    """热重启 Telegram 监听器。"""
+    await telegram_monitor.stop()
+    if get_config().monitor.telegram.enabled:
+        await asyncio.sleep(delay_seconds)
+        await telegram_monitor.start()
+
+
+async def test_monitor_connection(
+    api_id: str,
+    api_hash: str,
+    bot_token: str = "",
+    proxy: str = "",
+    channels: Iterable[str] | None = None,
+) -> dict[str, str]:
+    normalized_channels = validate_monitor_request(
+        api_id,
+        api_hash,
+        channels,
+        empty_channels_message="未配置频道！请在前端添加至少一个监听频道后再试。",
+    )
+    first_channel = normalized_channels[0]
+    parsed_channel = parse_channel_reference(first_channel)
+
+    client_to_use, disconnect_after, is_auth, auth_error = await _acquire_client(
+        api_id,
+        api_hash,
+        bot_token=bot_token,
+        proxy=proxy,
+    )
+
+    try:
+        if auth_error:
+            return {"status": "error", "message": auth_error}
+
+        if not is_auth:
+            return {
+                "status": "error",
+                "message": "连接成功，但尚未登录。请填写 Bot Token 或在后端运行 python login_tg.py 完成扫码登录。",
+            }
+
+        try:
+            messages = await client_to_use.get_messages(parsed_channel, limit=1)
+            msg_text = messages[0].text if messages and messages[0].text else "[图片/非文本消息或空消息]"
+            success_msg = f"连接并鉴权成功！\n成功读取到频道 [{first_channel}] 的最新一条消息：\n\n{msg_text}"
+        except Exception as exc:
+            success_msg = (
+                f"连接并鉴权成功！但读取频道 [{first_channel}] 失败，可能您还未加入该频道，或者权限不足。\n"
+                f"错误信息: {exc}"
+            )
+
+        return {"status": "success", "message": success_msg}
+    finally:
+        if disconnect_after:
+            await client_to_use.disconnect()
+
+
+async def scrape_monitor_history(
+    api_id: str,
+    api_hash: str,
+    bot_token: str = "",
+    proxy: str = "",
+    channels: Iterable[str] | None = None,
+    keywords: Iterable[str] | None = None,
+) -> None:
+    normalized_channels = validate_monitor_request(
+        api_id,
+        api_hash,
+        channels,
+        empty_channels_message="未配置任何监听频道，无法抓取",
+    )
+    parsed_channels = parse_channels(normalized_channels)
+
+    client_to_use, disconnect_after, is_auth, auth_error = await _acquire_client(
+        api_id,
+        api_hash,
+        bot_token=bot_token,
+        proxy=proxy,
+    )
+
+    if auth_error:
+        logger.error(f"Scrape History failed: {auth_error}")
+        if disconnect_after:
+            await client_to_use.disconnect()
+        return
+
+    if not is_auth:
+        logger.error("Scrape History failed: Telegram client not authorized.")
+        if disconnect_after:
+            await client_to_use.disconnect()
+        return
+
+    try:
+        total_links_found = 0
+        valid_kws = [keyword.strip().lower() for keyword in (keywords or []) if keyword and keyword.strip()]
+        seen_messages: set[tuple[int | str, int]] = set()
+
+        for channel in parsed_channels:
+            try:
+                msg_count = 0
+                if valid_kws:
+                    for keyword in valid_kws:
+                        async for message in client_to_use.iter_messages(channel, search=keyword, limit=None):
+                            message_key = (channel, message.id)
+                            if message_key in seen_messages:
+                                continue
+                            seen_messages.add(message_key)
+                            msg_count += 1
+                            await _throttle_scrape(msg_count)
+                            total_links_found += await _dispatch_scraped_message(channel, message)
+                else:
+                    async for message in client_to_use.iter_messages(channel, limit=None):
+                        msg_count += 1
+                        await _throttle_scrape(msg_count)
+                        total_links_found += await _dispatch_scraped_message(channel, message)
+            except Exception as exc:
+                logger.error(f"Failed to scrape channel {channel}: {exc}")
+
+        logger.info(f"Telegram history scraping finished. Found {total_links_found} links added to queue.")
+    except Exception as exc:
+        logger.error(f"Error during Telegram history scraping: {exc}")
+    finally:
+        if disconnect_after:
+            await client_to_use.disconnect()
+
+
+async def _acquire_client(
+    api_id: str,
+    api_hash: str,
+    *,
+    bot_token: str = "",
+    proxy: str = "",
+):
+    if telegram_monitor.client and telegram_monitor.client.is_connected():
+        is_auth = await telegram_monitor.client.is_user_authorized()
+        return telegram_monitor.client, False, is_auth, None
+
+    client_to_use = build_telegram_client(api_id, api_hash, proxy)
+    await client_to_use.connect()
+
+    if await client_to_use.is_user_authorized():
+        return client_to_use, True, True, None
+
+    if bot_token:
+        try:
+            await client_to_use.start(bot_token=bot_token)
+            return client_to_use, True, True, None
+        except Exception as exc:
+            return client_to_use, True, False, f"Bot Token 登录失败: {exc}"
+
+    return client_to_use, True, False, None
+
+
+async def _dispatch_scraped_message(channel: int | str, message) -> int:
+    text = message.message or ""
+    new_links = await telegram_monitor.ingest_message(
+        text,
+        message_id=message.id,
+        channel_id=str(channel),
+        msg_date=str(message.date),
+    )
+
+    for link_data in new_links:
+        event_bus.emit_background(EVENT_MONITOR_NEW_LINK, link_data=link_data, source="telegram")
+
+    return len(new_links)
+
+
+async def _throttle_scrape(message_count: int) -> None:
+    if message_count % 100 == 0:
+        await asyncio.sleep(2)
