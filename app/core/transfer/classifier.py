@@ -12,6 +12,8 @@ def _sanitize(name: str) -> str:
     # 去掉扩展名、去掉常见分隔符后面的季集信息
     import os
     base = os.path.splitext(name)[0]
+    # 去掉消息展示前缀，避免 fallback 目录带入 emoji 或标签。
+    base = re.sub(r'^\s*[\U0001F300-\U0001FAFF\u2600-\u27BF]+\s*', '', base)
     # 去掉 " - S01E03" 这类季集标记
     base = re.sub(r'\s*[-–]\s*S\d+E\d+.*$', '', base, flags=re.IGNORECASE)
     # 去掉末尾的季集信息

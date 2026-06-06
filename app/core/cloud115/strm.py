@@ -31,7 +31,15 @@ class StrmGenerator115:
         # 允许瞬间并发10个请求（按批处理），但限制在2秒内最多10个，防止触发 WAF
         self.rate_limiter = RateLimiter(max_calls=5, period=5.0)
 
-    async def generate_strm(self, pickcode: str, file_name: str, current_dir: str, root_dir: str, base_url: str) -> str:
+    async def generate_strm(
+        self,
+        pickcode: str,
+        file_name: str,
+        current_dir: str,
+        root_dir: str,
+        base_url: str,
+        skip_organize: bool = False,
+    ) -> str:
         """生成单个STRM文件，支持智能刮削打平"""
         config = get_config()
         
@@ -41,7 +49,7 @@ class StrmGenerator115:
         if config.cloud115.play_ua:
             strm_content += f"|User-Agent={config.cloud115.play_ua}"
         
-        if config.organize.enabled:
+        if config.organize.enabled and not skip_organize:
             # 智能整理模式：忽略网盘原生路径，打平为 大类/地区/特定名称
             category, region, target_folder, target_name, tmdb_data = await organizer.get_organized_path(file_name)
             target_dir = os.path.join(root_dir, category, region, target_folder)
@@ -197,7 +205,14 @@ class StrmGenerator115:
             if not is_video_file(matched_name):
                 continue
 
-            strm_path = await self.generate_strm(pc, matched_name, output_dir, output_dir, base_url)
+            strm_path = await self.generate_strm(
+                pc,
+                matched_name,
+                root_output_dir or output_dir,
+                root_output_dir or output_dir,
+                base_url,
+                skip_organize=bool(strm_subdir),
+            )
             if strm_path:
                 generated.append(strm_path)
                 try:
