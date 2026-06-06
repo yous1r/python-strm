@@ -4,6 +4,7 @@ from typing import Iterable, Optional
 from app.config import get_config
 from app.core.cloud115.client import client_115
 from app.core.cloud115.strm import generator_115
+from app.core.transfer.strm_manifest import list_records_for_rewrite
 from app.events import (
     EVENT_ROLLBACK_START,
     EVENT_TRANSFER_MOVED,
@@ -197,6 +198,19 @@ async def overwrite_task_strm(task_id: str) -> dict[str, object]:
         "rewritten_count": len(rewritten),
         "files": rewritten[:10],
         "msg": f"已覆盖 {len(rewritten)} 个 STRM 文件",
+    }
+
+
+async def rewrite_archive_strm(archive_root: str = "") -> dict[str, object]:
+    records = await list_records_for_rewrite(archive_root)
+    if not records:
+        raise TransferServiceError("当前范围内暂无可覆盖的 STRM 记录", status_code=404)
+
+    result = await generator_115.rewrite_from_manifest(archive_root)
+    return {
+        "status": "success",
+        **result,
+        "msg": f"已覆盖 {result['rewritten']} 个 STRM 文件",
     }
 
 

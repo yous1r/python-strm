@@ -11,7 +11,7 @@ from app.config import get_config
 from app.core.cloud115.client import client_115
 from app.core.transfer.classifier import classify
 from app.core.transfer.placement import build_archive_placement
-from app.core.transfer.strm_manifest import build_manifest_record
+from app.core.transfer.strm_manifest import build_manifest_record, list_records_for_rewrite
 from app.utils.helpers import is_video_file
 from app.core.media.organizer import organizer
 
@@ -339,5 +339,16 @@ class StrmGenerator115:
                 logger.error(f"Failed to rewrite STRM file {strm_path}: {e}")
 
         return rewritten
+
+    async def rewrite_from_manifest(self, archive_root: str = "", base_url: str = "") -> dict[str, object]:
+        """Rewrite generated STRM files from persisted manifest records."""
+
+        records = await list_records_for_rewrite(archive_root)
+        rewritten = await self.rewrite_manifest_records(records, base_url=base_url)
+        return {
+            "archive_root": archive_root,
+            "rewritten": len(rewritten),
+            "files": rewritten[:10],
+        }
 
 generator_115 = StrmGenerator115()

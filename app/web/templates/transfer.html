@@ -71,8 +71,22 @@
     </div>
 </div>
 
+<div class="glass-panel transfer-card animate-fade-in delay-2" style="margin-bottom: 1.5rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;">
+        <div>
+            <h2 style="margin: 0 0 0.35rem 0;"><i class="fa-solid fa-rotate" style="color: var(--accent-primary); margin-right: 0.75rem;"></i>归档 STRM 覆盖</h2>
+            <p style="margin: 0; color: var(--text-secondary); font-size: 0.9rem;">基于已记录的 manifest 重写归档 STRM，不补扫历史目录。</p>
+        </div>
+        <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
+            <input type="text" class="form-control" id="rewriteArchiveRoot" placeholder="可选：按归档相对路径过滤，如 剧集/国产剧集" style="min-width: 280px;">
+            <button id="rewriteArchiveStrmBtn" class="btn btn-outline-primary" onclick="rewriteArchiveStrm()">一键覆盖归档 STRM</button>
+        </div>
+    </div>
+    <div id="rewriteArchiveStrmResult" style="margin-top: 0.75rem; color: var(--text-secondary); font-size: 0.85rem;"></div>
+</div>
+
 <!-- Tasks List -->
-<div class="glass-panel animate-fade-in delay-2">
+<div class="glass-panel animate-fade-in delay-3">
     <h2 style="margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between;">
         <span><i class="fa-solid fa-list-check" style="color: var(--accent-primary); margin-right: 0.75rem;"></i>整理任务列表</span>
         <div style="display: flex; gap: 0.5rem;">
@@ -341,6 +355,35 @@ async function overwriteTaskStrm(taskId) {
         }
     } catch (e) {
         showToast('网络错误: ' + e.message, 'error');
+    }
+}
+
+async function rewriteArchiveStrm() {
+    const btn = document.getElementById('rewriteArchiveStrmBtn');
+    const resultEl = document.getElementById('rewriteArchiveStrmResult');
+    const archiveRoot = document.getElementById('rewriteArchiveRoot').value.trim();
+    btn.disabled = true;
+    resultEl.textContent = '正在覆盖归档 STRM...';
+
+    try {
+        const res = await fetch('/api/v1/transfer/strm/rewrite', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ archive_root: archiveRoot }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+            resultEl.textContent = `已覆盖 ${data.rewritten || 0} 个 STRM${archiveRoot ? `，范围：${archiveRoot}` : ''}`;
+            showToast(data.msg || '归档 STRM 覆盖完成', 'success');
+        } else {
+            resultEl.textContent = data.detail || '覆盖失败';
+            showToast('覆盖失败: ' + (data.detail || '未知错误'), 'error');
+        }
+    } catch (e) {
+        resultEl.textContent = '网络错误';
+        showToast('网络错误: ' + e.message, 'error');
+    } finally {
+        btn.disabled = false;
     }
 }
 </script>

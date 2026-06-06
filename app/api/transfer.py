@@ -12,6 +12,7 @@ from app.services.transfer_service import (
     overwrite_task_strm,
     preview_rollback_task,
     receive_share_task,
+    rewrite_archive_strm,
     run_manual_organize_task,
     start_rollback_task,
 )
@@ -24,6 +25,10 @@ class ReceiveRequest(BaseModel):
     receive_code: str = ""
     target_dir_id: str = ""
     filter_rules: Optional[List[str]] = None
+
+
+class RewriteArchiveStrmRequest(BaseModel):
+    archive_root: str = ""
 
 
 def _raise_transfer_http_error(exc: TransferServiceError) -> None:
@@ -64,6 +69,16 @@ async def overwrite_task_strm_files(task_id: str):
     """根据任务 manifest 覆盖已有 STRM 内容"""
     try:
         return await overwrite_task_strm(task_id)
+    except TransferServiceError as exc:
+        _raise_transfer_http_error(exc)
+
+
+@router.post("/strm/rewrite")
+async def rewrite_archive_strm_files(req: RewriteArchiveStrmRequest | None = None):
+    """根据 manifest 一键覆盖归档 STRM 内容。"""
+    try:
+        archive_root = req.archive_root if req else ""
+        return await rewrite_archive_strm(archive_root)
     except TransferServiceError as exc:
         _raise_transfer_http_error(exc)
 

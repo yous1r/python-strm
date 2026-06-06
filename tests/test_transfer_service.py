@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from app.services.transfer_service import TransferServiceError, overwrite_task_strm
+from app.services.transfer_service import TransferServiceError, overwrite_task_strm, rewrite_archive_strm
 
 
 class _AsyncCursor:
@@ -77,6 +77,32 @@ class OverwriteTaskStrmTests(unittest.IsolatedAsyncioTestCase):
         with patch("app.services.transfer_service.get_db_conn", return_value=_AsyncDbContext(db)):
             with self.assertRaises(TransferServiceError) as ctx:
                 await overwrite_task_strm("missing")
+
+        self.assertEqual(ctx.exception.status_code, 404)
+
+
+class RewriteArchiveStrmTests(unittest.IsolatedAsyncioTestCase):
+    async def test_rewrite_archive_strm_delegates_to_manifest_rewrite(self):
+        with patch(
+            "app.services.transfer_service.list_records_for_rewrite",
+            AsyncMock(return_value=[{"file_id": "fid-1"}]),
+        ), patch(
+            "app.services.transfer_service.generator_115.rewrite_from_manifest",
+            AsyncMock(return_value={"archive_root": "剧集/国产剧集", "rewritten": 1, "files": ["/tmp/a.strm"]}),
+        ):
+            result = await rewrite_archive_strm("剧集/国产剧集")
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["rewritten"], 1)
+        self.assertEqual(result["archive_root"], "剧集/国产剧集")
+
+    async def test_rewrite_archive_strm_raises_when_no_records(self):
+        with patch(
+            "app.services.transfer_service.list_records_for_rewrite",
+            AsyncMock(return_value=[]),
+        ):
+            with self.assertRaises(TransferServiceError) as ctx:
+                await rewrite_archive_strm("剧集/国产剧集")
 
         self.assertEqual(ctx.exception.status_code, 404)
 
