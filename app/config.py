@@ -59,11 +59,17 @@ class TmdbConfig(BaseModel):
     language: str = "zh-CN"
     proxy: str = ""
 
+class EmbyStrmPathMappingConfig(BaseModel):
+    emby_prefix: str = ""
+    local_prefix: str = ""
+
+
 class EmbyProxyInstanceConfig(BaseModel):
     name: str = ""
     url: str = ""
     api_key: str = ""
     proxy_port: int = 0
+    strm_path_mappings: List[EmbyStrmPathMappingConfig] = []
 
 class EmbyProxyConfig(BaseModel):
     enabled: bool = False

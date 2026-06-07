@@ -53,11 +53,12 @@
                     <th>代理端口</th>
                     <th>上游服务器地址</th>
                     <th>API Key</th>
+                    <th>STRM映射</th>
                     <th style="text-align: right;">操作</th>
                 </tr>
             </thead>
             <tbody id="instanceList">
-                <tr><td colspan="5" style="text-align: center; padding: 2rem;">正在加载配置...</td></tr>
+                <tr><td colspan="6" style="text-align: center; padding: 2rem;">正在加载配置...</td></tr>
             </tbody>
         </table>
     </div>
@@ -92,6 +93,11 @@
                 <input type="text" id="inst_apikey" class="form-control" placeholder="非必填。如果不填，代理仍可正常工作">
                 <small class="form-text text-muted">代理自身不需要 API Key 即可工作。配置后可支持自动刷新库等高级功能。</small>
             </div>
+            <div class="form-group">
+                <label class="form-label">STRM 路径映射 (选填)</label>
+                <textarea id="inst_strm_path_mappings" class="form-control" rows="3" placeholder="/mnt/strm-self/archive => /app/strm_output/archive"></textarea>
+                <small class="form-text text-muted">每行一条映射：Emby 中的路径前缀 => 当前服务可读取的本地路径前缀。</small>
+            </div>
             <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 1.5rem;">
                 <button type="button" class="btn btn-secondary" onclick="closeInstanceModal()">取消</button>
                 <button type="submit" id="modalSubmitBtn" class="btn btn-primary"><i class="fa-solid fa-check"></i> 保存</button>
@@ -125,7 +131,7 @@ function renderInstances(instances) {
     tbody.innerHTML = '';
     
     if (instances.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem; color: var(--text-secondary);">暂无配置实例，请添加</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 2rem; color: var(--text-secondary);">暂无配置实例，请添加</td></tr>';
         return;
     }
     
@@ -136,6 +142,7 @@ function renderInstances(instances) {
             <td style="vertical-align: middle;"><code>${inst.proxy_port || '未设置'}</code></td>
             <td style="vertical-align: middle;"><code>${inst.url}</code></td>
             <td style="vertical-align: middle;"><code>${inst.api_key ? (inst.api_key.length > 8 ? inst.api_key.substring(0,4) + '...' + inst.api_key.substring(inst.api_key.length-4) : '已配置') : '未配置'}</code></td>
+            <td style="vertical-align: middle;"><code>${(inst.strm_path_mappings || []).length || '未配置'}</code></td>
             <td style="text-align: right; vertical-align: middle; white-space: nowrap;">
                 <button class="btn btn-sm btn-info" onclick="testConnection(${index})" title="测试连接">
                     <i class="fa-solid fa-bolt"></i>
@@ -154,6 +161,28 @@ function renderInstances(instances) {
 
 function toggleProxyState() {
     // 改变开关只是改变 UI 状态，不直接触发保存
+}
+
+function parseStrmPathMappings(rawValue) {
+    return rawValue.split('\n').map(line => {
+        const trimmed = line.trim();
+        if (!trimmed) return null;
+
+        let parts = trimmed.split('=>');
+        if (parts.length < 2) {
+            parts = trimmed.split(/\s+/);
+        }
+        if (parts.length < 2) return null;
+
+        const embyPrefix = parts[0].trim();
+        const localPrefix = parts.slice(1).join('=>').trim();
+        if (!embyPrefix || !localPrefix) return null;
+        return { emby_prefix: embyPrefix, local_prefix: localPrefix };
+    }).filter(Boolean);
+}
+
+function formatStrmPathMappings(mappings) {
+    return (mappings || []).map(mapping => `${mapping.emby_prefix || ''} => ${mapping.local_prefix || ''}`).join('\n');
 }
 
 async function saveProxySettings() {
@@ -210,9 +239,11 @@ function openInstanceModal(index = -1) {
         document.getElementById('inst_url').value = inst.url;
         document.getElementById('inst_apikey').value = inst.api_key;
         document.getElementById('inst_proxy_port').value = inst.proxy_port || '';
+        document.getElementById('inst_strm_path_mappings').value = formatStrmPathMappings(inst.strm_path_mappings);
     } else {
         document.getElementById('modalTitle').innerHTML = '<i class="fa-solid fa-plus"></i> 添加新实例';
         document.getElementById('inst_proxy_port').value = '';
+        document.getElementById('inst_strm_path_mappings').value = '';
     }
     
     modal.style.display = 'flex';
@@ -231,7 +262,8 @@ function submitInstance(e) {
         name: document.getElementById('inst_name').value.trim(),
         url: document.getElementById('inst_url').value.trim(),
         api_key: document.getElementById('inst_apikey').value.trim(),
-        proxy_port: parseInt(document.getElementById('inst_proxy_port').value) || 0
+        proxy_port: parseInt(document.getElementById('inst_proxy_port').value) || 0,
+        strm_path_mappings: parseStrmPathMappings(document.getElementById('inst_strm_path_mappings').value)
     };
     
     if (!globalConfig.emby.proxy.instances) {

@@ -20,15 +20,52 @@ playback_info_pattern = re.compile(r'/Items/(\w+)/PlaybackInfo', re.IGNORECASE)
 proxy_play_pattern = re.compile(r'/115play/([^/|?]+)', re.IGNORECASE)
 
 
-def _resolve_local_strm_path(feiniu_path: str) -> str | None:
-    """将飞牛返回的 Docker 容器内路径映射为代理本地路径"""
+def _normalize_media_path(path: str) -> str:
+    return path.replace("\\", "/").rstrip("/")
+
+
+def _join_mapped_path(local_prefix: str, relative_path: str) -> str:
     import os
-    # 飞牛路径: /vol1/docker-data/python-strm/strm_output/...
-    # 本地路径: strm_output/...
+
+    local_prefix = os.path.normpath(local_prefix)
+    relative_path = relative_path.lstrip("/")
+    if not relative_path:
+        return local_prefix
+    return os.path.normpath(os.path.join(local_prefix, *relative_path.split("/")))
+
+
+def _resolve_local_strm_path(emby_path: str, instance=None) -> str | None:
+    """将 Emby 媒体库中的 STRM 路径映射为代理本地可读路径"""
+    import os
+
+    normalized_path = _normalize_media_path(emby_path)
+
+    mappings = []
+    if instance is not None:
+        mappings = getattr(instance, "strm_path_mappings", []) or []
+
+    sorted_mappings = sorted(
+        mappings,
+        key=lambda item: len(_normalize_media_path(getattr(item, "emby_prefix", ""))),
+        reverse=True,
+    )
+    for mapping in sorted_mappings:
+        emby_prefix = _normalize_media_path(getattr(mapping, "emby_prefix", ""))
+        local_prefix = getattr(mapping, "local_prefix", "")
+        if not emby_prefix or not local_prefix:
+            continue
+        if normalized_path == emby_prefix or normalized_path.startswith(f"{emby_prefix}/"):
+            relative = normalized_path[len(emby_prefix):].lstrip("/")
+            candidate = _join_mapped_path(local_prefix, relative)
+            if os.path.exists(candidate):
+                return candidate
+            logger.warning(f"[PROXY] STRM path mapping matched but local file does not exist: {emby_path} -> {candidate}")
+
+    # 兼容旧逻辑：飞牛路径 /vol1/docker-data/python-strm/strm_output/... 映射到本项目输出目录
     for marker in ["python-strm/strm_output/", "strm_output/"]:
-        idx = feiniu_path.find(marker)
+        idx = normalized_path.find(marker)
         if idx >= 0:
-            relative = feiniu_path[idx + len(marker):]
+            relative = normalized_path[idx + len(marker):]
             candidates = [
                 os.path.join("strm_output", relative),
                 os.path.join("/app/strm_output", relative),
@@ -66,7 +103,7 @@ def _get_emby_headers(request: Request, configured_key: str = "") -> dict:
     return headers
 
 
-async def _extract_pickcode_from_item(upstream_url: str, api_key: str, item_id: str, request: Request) -> tuple[str | None, dict | None]:
+async def _extract_pickcode_from_item(upstream_url: str, api_key: str, item_id: str, request: Request, instance=None) -> tuple[str | None, dict | None]:
     """从 Emby item 信息中提取 115 pickcode 及元数据（用于上游 PlaybackInfo 失败时的 fallback）"""
     try:
         headers = _get_emby_headers(request, api_key)
@@ -107,7 +144,7 @@ async def _extract_pickcode_from_item(upstream_url: str, api_key: str, item_id: 
 
             # 路径是 .strm 文件：尝试本地读取提取 pickcode
             elif path and path.endswith(".strm"):
-                local_path = _resolve_local_strm_path(path)
+                local_path = _resolve_local_strm_path(path, instance)
                 if local_path:
                     try:
                         with open(local_path, "r", encoding="utf-8") as f:
@@ -245,7 +282,7 @@ async def _proxy_request(upstream_url: str, api_key: str, full_path: str, reques
         return Response(status_code=502, content="Bad Gateway")
 
 
-async def _intercept_playback_info(upstream_url: str, api_key: str, full_path: str, request: Request) -> Response:
+async def _intercept_playback_info(upstream_url: str, api_key: str, full_path: str, request: Request, instance=None) -> Response:
     """拦截 PlaybackInfo 请求，注入代理播放 URL 绕过探针"""
     url = f"{upstream_url}{full_path}"
     logger.info(f"[PROXY] Intercepting PlaybackInfo for {url}")
@@ -282,7 +319,7 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, full_path: s
                     pb_match = playback_info_pattern.search(full_path)
                     if pb_match:
                         item_id = pb_match.group(1)
-                        pickcode, item_data = await _extract_pickcode_from_item(upstream_url, api_key, item_id, request)
+                        pickcode, item_data = await _extract_pickcode_from_item(upstream_url, api_key, item_id, request, instance)
                         if pickcode and item_data:
                             scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
                             host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
@@ -383,7 +420,7 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, full_path: s
             
             # 路径是 .strm 文件：尝试本地读取提取 pickcode
             if not pickcode and path_url and path_url.endswith(".strm"):
-                local_path = _resolve_local_strm_path(path_url)
+                local_path = _resolve_local_strm_path(path_url, instance)
                 if local_path:
                     try:
                         with open(local_path, "r", encoding="utf-8") as f:
@@ -591,7 +628,7 @@ def create_proxy_app(instance) -> FastAPI:
 
         # 拦截 PlaybackInfo
         if playback_info_pattern.search(full_path):
-            return await _intercept_playback_info(upstream_url, api_key, full_path, request)
+            return await _intercept_playback_info(upstream_url, api_key, full_path, request, instance)
 
         # 拦截视频流请求
         match = video_stream_pattern.search(full_path)
