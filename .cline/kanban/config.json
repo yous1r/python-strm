@@ -1,0 +1,14 @@
+{
+  "shortcuts": [
+    {
+      "label": "docker",
+      "command": "docker compose up --build",
+      "icon": "console"
+    },
+    {
+      "label": "uvicorn",
+      "command": "/vol1/docker-data/python-strm/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8095",
+      "icon": "console"
+    }
+  ]
+}

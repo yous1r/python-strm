@@ -1,9 +1,8 @@
-import asyncio
 import re
 from loguru import logger
 from telethon import TelegramClient, events
 from app.config import get_config
-from app.core.monitor.telegram_runtime import build_telegram_client, parse_channels
+from app.core.monitor.telegram_runtime import build_telegram_client, extract_message_text, parse_channels
 from app.events import event_bus, EVENT_MONITOR_NEW_LINK
 
 class TelegramMonitor:
@@ -37,7 +36,7 @@ class TelegramMonitor:
         @self.client.on(events.NewMessage(chats=parsed_channels))
         async def handler(event):
             self.config = get_config().monitor.telegram
-            text = event.message.message or ""
+            text = extract_message_text(event.message)
             
             # Keyword matching
             if self.config.keywords:

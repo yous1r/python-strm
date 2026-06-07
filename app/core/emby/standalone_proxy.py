@@ -3,13 +3,13 @@ import httpx
 import re
 from app.events import spawn_task
 import json
-import uuid
 from fastapi import FastAPI, Request, Response, BackgroundTasks
 from fastapi.responses import RedirectResponse
 from loguru import logger
 import uvicorn
 
 from app.config import get_config
+from app.database import get_db_conn
 from app.core.cloud115.client import client_115
 
 # 匹配视频流请求
@@ -32,6 +32,19 @@ def _join_mapped_path(local_prefix: str, relative_path: str) -> str:
     if not relative_path:
         return local_prefix
     return os.path.normpath(os.path.join(local_prefix, *relative_path.split("/")))
+
+
+def _build_upstream_url(upstream_url: str, path: str) -> str:
+    """统一拼接 Emby 上游 URL，避免重复追加 /emby 前缀。"""
+    base = upstream_url.rstrip("/")
+    normalized_path = path if path.startswith("/") else f"/{path}"
+
+    if base.endswith("/emby") and normalized_path.startswith("/emby/"):
+        normalized_path = normalized_path[len("/emby"):]
+    elif not base.endswith("/emby") and not normalized_path.startswith("/emby/"):
+        normalized_path = f"/emby{normalized_path}"
+
+    return f"{base}{normalized_path}"
 
 
 def _resolve_local_strm_path(emby_path: str, instance=None) -> str | None:
@@ -103,94 +116,139 @@ def _get_emby_headers(request: Request, configured_key: str = "") -> dict:
     return headers
 
 
-async def _extract_pickcode_from_item(upstream_url: str, api_key: str, item_id: str, request: Request, instance=None) -> tuple[str | None, dict | None]:
-    """从 Emby item 信息中提取 115 pickcode 及元数据（用于上游 PlaybackInfo 失败时的 fallback）"""
+def _get_emby_user_id(request: Request) -> str | None:
+    """从 query 或 X-Emby-Authorization 中提取 UserId。"""
+    user_id = request.query_params.get("UserId") or request.query_params.get("userId")
+    if user_id:
+        return user_id
+
+    auth_header = request.headers.get("x-emby-authorization", "")
+    match = re.search(r'UserId="([^"]+)"', auth_header, re.IGNORECASE)
+    return match.group(1) if match else None
+
+
+async def _request_upstream_json(
+    upstream_url: str,
+    path: str,
+    request: Request,
+    api_key: str = "",
+    *,
+    method: str = "GET",
+    params: dict | None = None,
+    json_body: dict | None = None,
+    timeout: float = 10,
+) -> httpx.Response | None:
+    """统一发送到上游 Emby 的 JSON 请求。"""
+    headers = _get_emby_headers(request, api_key)
+    if "X-Emby-Token" not in headers:
+        logger.warning(f"[PROXY] Missing Emby token while requesting upstream path={path}")
+        return None
+
+    url = _build_upstream_url(upstream_url, path)
     try:
-        headers = _get_emby_headers(request, api_key)
-
-        user_id = request.query_params.get("UserId") or request.query_params.get("userId")
-        if not user_id and "x-emby-authorization" in request.headers:
-            match = re.search(r'UserId="([^"]+)"', request.headers["x-emby-authorization"], re.IGNORECASE)
-            if match:
-                user_id = match.group(1)
-
-        api_path = f"/emby/Users/{user_id}/Items/{item_id}" if user_id else f"/emby/Items/{item_id}"
-
-        async with httpx.AsyncClient(timeout=10, headers=headers) as client:
-            res = await client.get(
-                f"{upstream_url}{api_path}",
-                params={"Fields": "Path,MediaSources"}
-            )
-            if res.status_code != 200:
-                logger.warning(f"[PROXY] Failed to fetch item info for {item_id}: status={res.status_code}")
-                return None, None
-
-            try:
-                item_data = res.json()
-            except Exception:
-                logger.warning(f"[PROXY] Item {item_id} response is not JSON: {res.text[:500]}")
-                return None, None
-            path = item_data.get("Path", "")
-            if not path and item_data.get("MediaSources"):
-                path = item_data["MediaSources"][0].get("Path", "")
-            logger.debug(f"[PROXY] Item {item_id} Path: {path[:300] if path else '(empty)'}")
-
-            pickcode = None
-            # 路径包含 115 play URL：直接提取 pickcode
-            if path and "/api/v1/115/play/" in path:
-                match = re.search(r'/api/v1/115/play/([^/|?]+)', path)
-                if match:
-                    pickcode = match.group(1)
-
-            # 路径是 .strm 文件：尝试本地读取提取 pickcode
-            elif path and path.endswith(".strm"):
-                local_path = _resolve_local_strm_path(path, instance)
-                if local_path:
-                    try:
-                        with open(local_path, "r", encoding="utf-8") as f:
-                            strm_content = f.read().strip()
-                        match = re.search(r'/api/v1/115/play/([^/|?]+)', strm_content)
-                        if match:
-                            logger.info(f"[PROXY] Extracted pickcode from local STRM for fallback: {local_path}")
-                            pickcode = match.group(1)
-                    except Exception as e:
-                        logger.warning(f"[PROXY] Failed to read local STRM {local_path}: {e}")
-
-            return pickcode, item_data
+        async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
+            return await client.request(method=method, url=url, params=params, json=json_body)
     except Exception as e:
-        logger.error(f"[PROXY] Failed to extract pickcode from item {item_id}: {repr(e)}")
-        return None, None
+        logger.error(f"[PROXY] Upstream JSON request failed for {method} {url}: {repr(e)}")
+        return None
+
+
+async def _build_upstream_proxy_request(
+    upstream_url: str,
+    full_path: str,
+    request: Request,
+    api_key: str = "",
+) -> tuple[httpx.AsyncClient, httpx.Response]:
+    """统一构建并发送透明代理请求到上游 Emby。"""
+    url = _build_upstream_url(upstream_url, full_path)
+    params = dict(request.query_params)
+    if "api_key" not in params and api_key:
+        params["api_key"] = api_key
+
+    headers = {k: v for k, v in request.headers.items() if k.lower() not in ["host", "accept-encoding"]}
+    logger.debug(f"[PROXY] Forwarding request to {url} with params={params}, headers={headers}")
+
+    client = httpx.AsyncClient(timeout=None, follow_redirects=False)
+    req_content = await request.body() if request.method in ("POST", "PUT", "PATCH") else request.stream()
+    req = client.build_request(
+        method=request.method,
+        url=url,
+        params=params,
+        headers=headers,
+        content=req_content,
+    )
+    resp = await client.send(req, stream=True)
+    return client, resp
+
+
+async def _get_upstream_item_payload(upstream_url: str, api_key: str, item_id: str, request: Request) -> dict | None:
+    """读取上游 Emby/FNOS 的 Item 信息，用于把 ItemId 映射回 STRM 路径。"""
+    user_id = _get_emby_user_id(request)
+    api_path = f"/Users/{user_id}/Items/{item_id}" if user_id else f"/Items/{item_id}"
+
+    res = await _request_upstream_json(
+        upstream_url,
+        api_path,
+        request,
+        api_key,
+        params={"Fields": "Path,MediaSources"},
+    )
+    if res is None:
+        return None
+    if res.status_code != 200:
+        logger.warning(f"[PROXY] Upstream item lookup failed for item_id={item_id}, status={res.status_code}")
+        return None
+
+    try:
+        return res.json()
+    except Exception as e:
+        logger.error(f"[PROXY] Failed to decode upstream item payload for item_id={item_id}: {repr(e)}")
+        return None
+
+
+async def _get_local_playback_record_by_path(feiniu_path: str, instance=None) -> dict | None:
+    """通过上游返回的 STRM 路径反查本地 manifest 记录。"""
+    local_path = _resolve_local_strm_path(feiniu_path, instance)
+    if not local_path:
+        logger.warning(f"[PROXY] Could not map upstream path to local STRM path: {feiniu_path}")
+        return None
+
+    normalized_local_path = local_path.replace("\\", "/")
+    rel_path = normalized_local_path
+    marker = "strm_output/"
+    idx = normalized_local_path.find(marker)
+    if idx >= 0:
+        rel_path = normalized_local_path[idx + len(marker):]
+
+    try:
+        async with get_db_conn() as db:
+            cursor = await db.execute(
+                '''
+                SELECT file_id, play_identity, strm_rel_path, strm_abs_path, strm_path
+                FROM strm_records
+                WHERE cloud_type='115'
+                  AND (
+                    strm_abs_path=?
+                    OR strm_path=?
+                    OR strm_rel_path=?
+                  )
+                LIMIT 1
+                ''',
+                (local_path, local_path, rel_path),
+            )
+            row = await cursor.fetchone()
+        return dict(row) if row else None
+    except Exception as e:
+        logger.error(f"[PROXY] Failed to load local playback record by path={local_path}: {repr(e)}")
+        return None
 
 
 async def _resolve_playback_url(upstream_url: str, api_key: str, item_id: str, request: Request) -> str:
     """解析出真实播放地址"""
     logger.debug(f"[PROXY] Resolving playback URL for item_id={item_id}")
     try:
-        headers = _get_emby_headers(request, api_key)
-        if "X-Emby-Token" not in headers:
-            return None
-
-        user_id = request.query_params.get("UserId") or request.query_params.get("userId")
-        if not user_id and "x-emby-authorization" in request.headers:
-            match = re.search(r'UserId="([^"]+)"', request.headers["x-emby-authorization"], re.IGNORECASE)
-            if match:
-                user_id = match.group(1)
-
-        api_path = f"/emby/Users/{user_id}/Items/{item_id}" if user_id else f"/emby/Items/{item_id}"
-
-        async with httpx.AsyncClient(timeout=10, headers=headers) as client:
-            res = await client.get(
-                f"{upstream_url}{api_path}",
-                params={"Fields": "Path,MediaSources"}
-            )
-            if res.status_code != 200:
-                return None
-
-            try:
-                item_data = res.json()
-            except Exception:
-                logger.warning(f"[PROXY] Item {item_id} response is not JSON in _resolve_playback_url")
-                return None
+        item_data = await _get_upstream_item_payload(upstream_url, api_key, item_id, request)
+        if item_data:
             path = item_data.get("Path", "")
             if not path and item_data.get("MediaSources"):
                 path = item_data["MediaSources"][0].get("Path", "")
@@ -217,34 +275,8 @@ async def _resolve_playback_url(upstream_url: str, api_key: str, item_id: str, r
 async def _proxy_request(upstream_url: str, api_key: str, full_path: str, request: Request) -> Response:
     """透明代理请求到真实的Emby服务器"""
     try:
-        url = f"{upstream_url}{full_path}"
-        params = dict(request.query_params)
-        if "api_key" not in params and api_key:
-            params["api_key"] = api_key
-
-        headers = {k: v for k, v in request.headers.items() if k.lower() not in ['host', 'accept-encoding']}
-        
-        logger.debug(f"[PROXY] Forwarding request to {url} with params={params}, headers={headers}")
-
-        # 伪装为 Emby 客户端 UA，让飞牛返回 Emby API JSON 而非 Web 管理页 HTML
-        # headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
-        client = httpx.AsyncClient(timeout=None, follow_redirects=False)
-
-        if request.method in ('POST', 'PUT', 'PATCH'):
-            req_content = await request.body()
-        else:
-            req_content = request.stream()
-
-        req = client.build_request(
-            method=request.method,
-            url=url,
-            params=params,
-            headers=headers,
-            content=req_content
-        )
-
-        resp = await client.send(req, stream=True)
+        url = _build_upstream_url(upstream_url, full_path)
+        client, resp = await _build_upstream_proxy_request(upstream_url, full_path, request, api_key)
         resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ['content-encoding', 'content-length', 'transfer-encoding']}
         logger.debug(f"[PROXY] Received upstream response from {url}: status={resp.status_code}")
 
@@ -278,186 +310,93 @@ async def _proxy_request(upstream_url: str, api_key: str, full_path: str, reques
             headers=resp_headers
         )
     except Exception as e:
-        logger.error(f"Proxy request failed to {upstream_url}{full_path}: {repr(e)}")
+        logger.error(f"Proxy request failed to {_build_upstream_url(upstream_url, full_path)}: {repr(e)}")
         return Response(status_code=502, content="Bad Gateway")
 
 
 async def _intercept_playback_info(upstream_url: str, api_key: str, full_path: str, request: Request, instance=None) -> Response:
-    """拦截 PlaybackInfo 请求，注入代理播放 URL 绕过探针"""
-    url = f"{upstream_url}{full_path}"
-    logger.info(f"[PROXY] Intercepting PlaybackInfo for {url}")
-    params = dict(request.query_params)
-    if "api_key" not in params and api_key:
-        params["api_key"] = api_key
-
-    headers = {k: v for k, v in request.headers.items() if k.lower() not in ['host', 'accept-encoding']}
+    """本地合成 PlaybackInfo，避免再向 Emby 请求探测信息。"""
+    logger.info(f"[PROXY] Intercepting PlaybackInfo locally for {full_path}")
     body = await request.body()
     logger.debug(f"[PROXY] PlaybackInfo request payload ({len(body)} bytes): {body[:2000].decode('utf-8', errors='replace') if body else '(empty)'}")
 
-    try:
-        async with httpx.AsyncClient(timeout=30.0, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}) as client:
-            resp = await client.request(
-                method=request.method,
-                url=url,
-                params=params,
-                headers=headers,
-                content=body
-            )
+    match = playback_info_pattern.search(full_path)
+    if not match:
+        return Response(status_code=400, content="Invalid PlaybackInfo path")
 
-            if resp.status_code != 200:
-                logger.warning(f"[PROXY] PlaybackInfo upstream returned {resp.status_code}, attempting synthetic fallback")
-                logger.debug(f"[PROXY] PlaybackInfo upstream error response body: {resp.content[:2000].decode('utf-8', errors='replace')}")
+    item_id = match.group(1)
+    record = None
+    item_data = await _get_upstream_item_payload(upstream_url, api_key, item_id, request)
+    path = ""
+    if item_data:
+        path = item_data.get("Path", "")
+        if not path and item_data.get("MediaSources"):
+            path = item_data["MediaSources"][0].get("Path", "")
 
-                # 上游 Emby 探测 STRM 失败（通常因为探针只返回了空 200）
-                # 对原生播放器尝试构造合成 PlaybackInfo，绕过 Emby 探针失败
-                client_ua = request.headers.get("user-agent", "Unknown")
-                ua_lower = client_ua.lower()
-                native_keywords = ["vidhub", "infuse", "senplayer", "fileball", "filmly", "applecoremedia", "vlc", "potplayer", "iina", "kodi", "lavf", "mpv", "xbmc", "embyclient"]
-                is_native_player = any(kw in ua_lower for kw in native_keywords)
+    if path:
+        if "/api/v1/115/play/" in path:
+            direct_match = re.search(r'/api/v1/115/play/([^/|?]+)', path)
+            if direct_match:
+                record = {
+                    "file_id": None,
+                    "play_identity": direct_match.group(1),
+                    "strm_rel_path": None,
+                    "strm_abs_path": None,
+                    "strm_path": path,
+                }
+        else:
+            record = await _get_local_playback_record_by_path(path, instance)
 
-                if is_native_player:
-                    pb_match = playback_info_pattern.search(full_path)
-                    if pb_match:
-                        item_id = pb_match.group(1)
-                        pickcode, item_data = await _extract_pickcode_from_item(upstream_url, api_key, item_id, request, instance)
-                        if pickcode and item_data:
-                            scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
-                            host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
-                            base_url = f"{scheme}://{host}"
-                            proxy_play_url = f"{base_url}/115play/{pickcode}"
+    if not record:
+        logger.warning(f"[PROXY] No playback mapping found for item_id={item_id}")
+        return Response(status_code=404, content="Playback source not found")
 
-                            media_source = {
-                                "Id": item_id,
-                                "Name": "115 Cloud Video",
-                                "Path": proxy_play_url,
-                                "DirectStreamUrl": proxy_play_url,
-                                "Protocol": "Http",
-                                "Type": "Default",
-                                "Container": "mkv",
-                                "IsRemote": True,
-                                "ReadAtNativeFramerate": False,
-                                "SupportsDirectPlay": True,
-                                "SupportsDirectStream": True,
-                                "SupportsTranscoding": False,
-                                "RequiresOpening": False,
-                                "RequiresClosing": False,
-                                "MediaStreams": [],
-                                "Formats": [],
-                                "Bitrate": 0,
-                                "RequiredHttpHeaders": {},
-                            }
+    pickcode = record.get("play_identity") or ""
+    if not pickcode:
+        logger.warning(f"[PROXY] Local STRM manifest record missing play_identity for item_id={item_id}")
+        return Response(status_code=404, content="Playback identity not found")
 
-                            if "RunTimeTicks" in item_data:
-                                media_source["RunTimeTicks"] = item_data["RunTimeTicks"]
-                            if "MediaSources" in item_data and item_data["MediaSources"]:
-                                orig_source = item_data["MediaSources"][0]
-                                if "RunTimeTicks" in orig_source:
-                                    media_source["RunTimeTicks"] = orig_source["RunTimeTicks"]
-                                if "MediaStreams" in orig_source:
-                                    media_source["MediaStreams"] = orig_source["MediaStreams"]
-                                if "Container" in orig_source:
-                                    media_source["Container"] = orig_source["Container"]
-                                if "Id" in orig_source:
-                                    media_source["Id"] = orig_source["Id"]
-                                if "Bitrate" in orig_source:
-                                    media_source["Bitrate"] = orig_source["Bitrate"]
+    media_source_id = request.query_params.get("MediaSourceId") or item_id
 
-                            synthetic_data = {
-                                "MediaSources": [media_source],
-                                "PlaySessionId": uuid.uuid4().hex,
-                            }
-                            content = json.dumps(synthetic_data).encode("utf-8")
-                            logger.info(f"[PROXY] Synthetic PlaybackInfo built for pickcode={pickcode}, item_id={item_id} (UA: {client_ua})")
-                            return Response(content=content, status_code=200, media_type="application/json")
-                        else:
-                            logger.warning(f"[PROXY] Could not extract pickcode for item, passing upstream {resp.status_code}")
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
+    base_url = f"{scheme}://{host}"
+    proxy_play_url = f"{base_url}/115play/{pickcode}"
 
-                # 非原生播放器或无法提取 pickcode → 透传上游错误
-                resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ['content-encoding', 'content-length', 'transfer-encoding']}
-                return Response(content=resp.content, status_code=resp.status_code, headers=resp_headers)
+    media_source = {
+        "Id": media_source_id,
+        "Name": "115 Cloud Video",
+        "Path": proxy_play_url,
+        "DirectStreamUrl": proxy_play_url,
+        "Protocol": "Http",
+        "Type": "Default",
+        "Container": "mkv",
+        "IsRemote": True,
+        "ReadAtNativeFramerate": False,
+        "SupportsDirectPlay": True,
+        "SupportsDirectStream": True,
+        "SupportsTranscoding": False,
+        "RequiresOpening": False,
+        "RequiresClosing": False,
+        "MediaStreams": [],
+        "Formats": [],
+        "Bitrate": 0,
+        "RequiredHttpHeaders": {},
+    }
 
-            data = resp.json()
-            logger.debug(f"[PROXY] PlaybackInfo upstream response payload: {json.dumps(data, ensure_ascii=False)[:3000]}")
-    except Exception as e:
-        logger.error(f"Failed to fetch PlaybackInfo from {url}: {repr(e)}")
-        return Response(status_code=502, content="Bad Gateway")
+    strm_rel_path = record.get("strm_rel_path") or record.get("strm_path") or record.get("strm_abs_path") or ""
+    if strm_rel_path:
+        media_source["ItemId"] = item_id
+        media_source["FileName"] = strm_rel_path.rsplit("/", 1)[-1]
 
-    try:
-        modified = False
-        client_ua = request.headers.get("user-agent", "Unknown")
+    data = {
+        "MediaSources": [media_source],
+        "PlaySessionId": request.query_params.get("PlaySessionId") or item_id,
+    }
 
-        # 仅原生播放器进行劫持注入，Web 浏览器跳过（防 CORS 死循环）
-        is_native_player = False
-        ua_lower = client_ua.lower()
-        native_keywords = ["vidhub", "infuse", "senplayer", "fileball", "filmly", "applecoremedia", "vlc", "potplayer", "iina", "kodi", "lavf", "mpv", "xbmc", "embyclient"]
-        for kw in native_keywords:
-            if kw in ua_lower:
-                is_native_player = True
-                break
-
-        if not is_native_player:
-            resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ['content-encoding', 'transfer-encoding']}
-            return Response(content=resp.content, status_code=resp.status_code, headers=resp_headers)
-
-        media_sources = data.get("MediaSources", [])
-
-        # 构造 absolute base url（host 含端口，如 192.168.1.100:8096）
-        scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
-        host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
-        base_url = f"{scheme}://{host}"
-
-        for source in media_sources:
-            path_url = source.get("Path", "")
-            logger.debug(f"[PROXY] PlaybackInfo MediaSource Path: {path_url[:300] if path_url else '(empty)'}")
-            
-            pickcode = None
-            
-            # 路径包含 115 play URL：直接从 URL 提取 pickcode
-            if path_url and "/api/v1/115/play/" in path_url:
-                match = re.search(r'/api/v1/115/play/([^/|?]+)', path_url)
-                if match:
-                    pickcode = match.group(1)
-            
-            # 路径是 .strm 文件：尝试本地读取提取 pickcode
-            if not pickcode and path_url and path_url.endswith(".strm"):
-                local_path = _resolve_local_strm_path(path_url, instance)
-                if local_path:
-                    try:
-                        with open(local_path, "r", encoding="utf-8") as f:
-                            strm_content = f.read().strip()
-                        match = re.search(r'/api/v1/115/play/([^/|?]+)', strm_content)
-                        if match:
-                            pickcode = match.group(1)
-                            logger.info(f"[PROXY] Extracted pickcode {pickcode} from local STRM file: {local_path}")
-                    except Exception as e:
-                        logger.warning(f"[PROXY] Failed to read local STRM {local_path}: {e}")
-            
-            if pickcode:
-                proxy_play_url = f"{base_url}/115play/{pickcode}"
-                source["Path"] = proxy_play_url
-                source["DirectStreamUrl"] = proxy_play_url
-                source["IsRemote"] = True
-                source["Protocol"] = "Http"
-                source["SupportsDirectPlay"] = True
-                source["SupportsDirectStream"] = True
-                source["SupportsTranscoding"] = False
-                source["RequiresOpening"] = False
-                source["RequiresClosing"] = False
-                modified = True
-                logger.info(f"[PROXY] Injected proxy play URL for pickcode {pickcode} (UA: {client_ua})")
-
-        if modified:
-            content = json.dumps(data).encode("utf-8")
-            headers = dict(resp.headers)
-            headers["content-length"] = str(len(content))
-            headers.pop("content-encoding", None)
-            return Response(content=content, status_code=200, headers=headers)
-
-    except Exception as e:
-        logger.error(f"Failed to modify PlaybackInfo JSON: {repr(e)}")
-
-    resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ['content-encoding', 'transfer-encoding']}
-    return Response(content=resp.content, status_code=resp.status_code, headers=resp_headers)
+    content = json.dumps(data).encode("utf-8")
+    logger.info(f"[PROXY] Built local PlaybackInfo for item_id={item_id}, pickcode={pickcode}")
+    return Response(content=content, status_code=200, media_type="application/json")
 
 
 def create_proxy_app(instance) -> FastAPI:
@@ -486,11 +425,7 @@ def create_proxy_app(instance) -> FastAPI:
                             position_ticks = payload.get("PositionTicks")
                             runtime_ticks = payload.get("RunTimeTicks")
                             
-                            auth_header = request.headers.get("x-emby-authorization", "")
-                            user_id = None
-                            match = re.search(r'UserId="([^"]+)"', auth_header)
-                            if match:
-                                user_id = match.group(1)
+                            user_id = _get_emby_user_id(request)
                             
                             is_start = full_path.rstrip("/").endswith("/Sessions/Playing") and "/Progress" not in full_path and "/Stopped" not in full_path
                             is_progress = "/Sessions/Playing/Progress" in full_path
@@ -514,84 +449,107 @@ def create_proxy_app(instance) -> FastAPI:
                             )
                             
                             if item_id and user_id:
-                                async def fix_runtime_and_sync(u_id, i_id, pos_ticks, rt_ticks, evt_type, _upstream_url, _headers):
+                                async def fix_runtime_and_sync(u_id, i_id, pos_ticks, rt_ticks, evt_type, _upstream_url, _request, _api_key):
                                     """修正 RunTimeTicks 并同步播放进度"""
+                                    return
                                     logger.info(f"[PROXY] 🔧 Background task started for {i_id} (Event: {evt_type}, rt_ticks={rt_ticks}, pos_ticks={pos_ticks})")
                                     
                                     if evt_type == "Stopped":
                                         # 延迟 1.5 秒以确保飞牛处理完 Stopped 接口的清零操作后再强制写回进度
                                         await asyncio.sleep(1.5)
                                         
-                                    if not _headers.get("X-Emby-Token"):
+                                    if "X-Emby-Token" not in _get_emby_headers(_request, _api_key):
                                         logger.error(f"[PROXY] ❌ Both configured api_key and client token are empty! Cannot call Emby API for {i_id}")
                                         return
                                     
                                     try:
-                                        async with httpx.AsyncClient(timeout=10.0, headers=_headers) as client:
-                                            # ── 步骤 1：修正 RunTimeTicks ──
-                                            if rt_ticks and rt_ticks > 10_000_000:
-                                                try:
-                                                    item_url = f"{_upstream_url}/emby/Items/{i_id}"
-                                                    logger.debug(f"[PROXY] GET {item_url}...")
-                                                    item_resp = await client.get(item_url)
-                                                    logger.info(f"[PROXY] GET Items/{i_id} status={item_resp.status_code}")
-                                                    
-                                                    if item_resp.status_code == 200:
-                                                        item_dto = item_resp.json()
-                                                        db_runtime = item_dto.get("RunTimeTicks", 0) or 0
-                                                        logger.info(f"[PROXY] DB RunTimeTicks={db_runtime} ({db_runtime/10_000_000:.1f}s), Real={rt_ticks} ({rt_ticks/10_000_000:.1f}s)")
-                                                        
-                                                        if abs(db_runtime - rt_ticks) > 10_000_000:
-                                                            item_dto["RunTimeTicks"] = rt_ticks
-                                                            update_resp = await client.post(item_url, json=item_dto)
-                                                            if update_resp.status_code < 400:
-                                                                logger.info(f"[PROXY] ✅ Fixed RunTimeTicks for {i_id}: {db_runtime} → {rt_ticks}")
-                                                            else:
-                                                                logger.error(f"[PROXY] ❌ Failed to fix RunTimeTicks: status={update_resp.status_code}, body={update_resp.text[:500]}")
+                                        # ── 步骤 1：修正 RunTimeTicks ──
+                                        if rt_ticks and rt_ticks > 10_000_000:
+                                            try:
+                                                item_path = f"/Items/{i_id}"
+                                                logger.debug(f"[PROXY] GET {item_path}...")
+                                                item_resp = await _request_upstream_json(_upstream_url, item_path, _request, _api_key)
+                                                if item_resp is None:
+                                                    logger.error(f"[PROXY] ❌ GET Items failed: missing token or upstream request error")
+                                                    return
+
+                                                logger.info(f"[PROXY] GET Items/{i_id} status={item_resp.status_code}")
+                                                if item_resp.status_code == 200:
+                                                    item_dto = item_resp.json()
+                                                    db_runtime = item_dto.get("RunTimeTicks", 0) or 0
+                                                    logger.info(f"[PROXY] DB RunTimeTicks={db_runtime} ({db_runtime/10_000_000:.1f}s), Real={rt_ticks} ({rt_ticks/10_000_000:.1f}s)")
+
+                                                    if abs(db_runtime - rt_ticks) > 10_000_000:
+                                                        item_dto["RunTimeTicks"] = rt_ticks
+                                                        update_resp = await _request_upstream_json(
+                                                            _upstream_url,
+                                                            item_path,
+                                                            _request,
+                                                            _api_key,
+                                                            method="POST",
+                                                            json_body=item_dto,
+                                                        )
+                                                        if update_resp is not None and update_resp.status_code < 400:
+                                                            logger.info(f"[PROXY] ✅ Fixed RunTimeTicks for {i_id}: {db_runtime} → {rt_ticks}")
+                                                        elif update_resp is not None:
+                                                            logger.error(f"[PROXY] ❌ Failed to fix RunTimeTicks: status={update_resp.status_code}, body={update_resp.text[:500]}")
                                                         else:
-                                                            logger.info(f"[PROXY] RunTimeTicks already correct for {i_id}, skip")
+                                                            logger.error(f"[PROXY] ❌ Failed to fix RunTimeTicks: missing token or upstream request error")
                                                     else:
-                                                        logger.error(f"[PROXY] ❌ GET Items failed: status={item_resp.status_code}, body={item_resp.text[:500]}")
-                                                except Exception as e:
-                                                    logger.error(f"[PROXY] RunTimeTicks fix error for {i_id}: {repr(e)}")
-                                            else:
-                                                logger.debug(f"[PROXY] No RunTimeTicks in payload or too small (rt_ticks={rt_ticks}), skip fix")
-                                            
-                                            # ── 步骤 2：同步播放进度到 UserData（永久落盘） ──
-                                            if pos_ticks is not None and pos_ticks >= 0:
-                                                try:
-                                                    from datetime import datetime, timezone, timedelta
-                                                    beijing_tz = timezone(timedelta(hours=8))
-                                                    
-                                                    useritem_url = f"{_upstream_url}/emby/Users/{u_id}/Items/{i_id}"
-                                                    get_resp = await client.get(useritem_url)
-                                                    logger.debug(f"[PROXY] GET UserItem status={get_resp.status_code}")
-                                                    
-                                                    if get_resp.status_code == 200:
-                                                        user_item = get_resp.json()
-                                                        user_data = user_item.get("UserData", {})
-                                                        
-                                                        user_data["PlaybackPositionTicks"] = pos_ticks
-                                                        user_data["Played"] = False
-                                                        user_data["LastPlayedDate"] = datetime.now(beijing_tz).isoformat()
-                                                        
-                                                        userdata_url = f"{_upstream_url}/emby/Users/{u_id}/Items/{i_id}/UserData"
-                                                        post_resp = await client.post(userdata_url, json=user_data)
-                                                        if post_resp.status_code < 400:
-                                                            logger.info(f"[PROXY] ✅ Synced UserData for {i_id} (Ticks: {pos_ticks}, Event: {evt_type})")
-                                                        else:
-                                                            logger.error(f"[PROXY] ❌ UserData sync failed: status={post_resp.status_code}, body={post_resp.text[:500]}")
+                                                        logger.info(f"[PROXY] RunTimeTicks already correct for {i_id}, skip")
+                                                else:
+                                                    logger.error(f"[PROXY] ❌ GET Items failed: status={item_resp.status_code}, body={item_resp.text[:500]}")
+                                            except Exception as e:
+                                                logger.error(f"[PROXY] RunTimeTicks fix error for {i_id}: {repr(e)}")
+                                        else:
+                                            logger.debug(f"[PROXY] No RunTimeTicks in payload or too small (rt_ticks={rt_ticks}), skip fix")
+
+                                        # ── 步骤 2：同步播放进度到 UserData（永久落盘） ──
+                                        if pos_ticks is not None and pos_ticks >= 0:
+                                            try:
+                                                from datetime import datetime, timezone, timedelta
+                                                beijing_tz = timezone(timedelta(hours=8))
+
+                                                user_item_path = f"/Users/{u_id}/Items/{i_id}"
+                                                get_resp = await _request_upstream_json(_upstream_url, user_item_path, _request, _api_key)
+                                                if get_resp is None:
+                                                    logger.error(f"[PROXY] ❌ GET UserItem failed: missing token or upstream request error")
+                                                    return
+
+                                                logger.debug(f"[PROXY] GET UserItem status={get_resp.status_code}")
+                                                if get_resp.status_code == 200:
+                                                    user_item = get_resp.json()
+                                                    user_data = user_item.get("UserData", {})
+
+                                                    user_data["PlaybackPositionTicks"] = pos_ticks
+                                                    user_data["Played"] = False
+                                                    user_data["LastPlayedDate"] = datetime.now(beijing_tz).isoformat()
+
+                                                    post_resp = await _request_upstream_json(
+                                                        _upstream_url,
+                                                        f"/Users/{u_id}/Items/{i_id}/UserData",
+                                                        _request,
+                                                        _api_key,
+                                                        method="POST",
+                                                        json_body=user_data,
+                                                    )
+                                                    if post_resp is not None and post_resp.status_code < 400:
+                                                        logger.info(f"[PROXY] ✅ Synced UserData for {i_id} (Ticks: {pos_ticks}, Event: {evt_type})")
+                                                    elif post_resp is not None:
+                                                        logger.error(f"[PROXY] ❌ UserData sync failed: status={post_resp.status_code}, body={post_resp.text[:500]}")
                                                     else:
-                                                        logger.error(f"[PROXY] ❌ GET UserItem failed: status={get_resp.status_code}")
-                                                except Exception as e:
-                                                    logger.error(f"[PROXY] UserData sync error for {i_id}: {repr(e)}")
+                                                        logger.error(f"[PROXY] ❌ UserData sync failed: missing token or upstream request error")
+                                                else:
+                                                    logger.error(f"[PROXY] ❌ GET UserItem failed: status={get_resp.status_code}")
+                                            except Exception as e:
+                                                logger.error(f"[PROXY] UserData sync error for {i_id}: {repr(e)}")
                                     except Exception as e:
                                         logger.error(f"[PROXY] fix_runtime_and_sync failed for {i_id}: {repr(e)}")
                                 
                                 background_tasks.add_task(
                                     fix_runtime_and_sync, user_id, item_id, 
                                     position_ticks, effective_runtime_ticks, event_type,
-                                    upstream_url, effective_headers
+                                    upstream_url, request, api_key
                                 )
                                 logger.info(f"[PROXY] 📋 Background task dispatched for {item_id} (Event: {event_type})")
                             else:

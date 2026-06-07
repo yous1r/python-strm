@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, patch
 from pathlib import Path
 from types import SimpleNamespace
 
+from app.core.cloud115.client import Cloud115Client
 from app.core.media.parser import parse_filename
 from app.core.transfer.classifier import _sanitize, classify
 from app.core.transfer.batch import (
@@ -272,7 +273,50 @@ class StrmBatchPathTests(unittest.IsolatedAsyncioTestCase):
             "strm_output/剧集/国产剧集/灵魂摆渡·十年 (2026) {tmdb-289271}/Season 1/灵魂摆渡·十年 - S01E05.strm",
         )
         self.assertEqual(params[6], "pc1")
-        self.assertEqual(params[8], "strm_output/剧集/国产剧集/灵魂摆渡·十年 (2026) {tmdb-289271}/Season 1/灵魂摆渡·十年 - S01E05.strm")
+        self.assertEqual(
+            params[8],
+            "strm_output/剧集/国产剧集/灵魂摆渡·十年 (2026) {tmdb-289271}/Season 1/灵魂摆渡·十年 - S01E05.strm",
+        )
+
+
+class Cloud115LocalCacheTests(unittest.IsolatedAsyncioTestCase):
+    async def test_list_files_local_first_returns_recursive_items_with_pickcode(self):
+        client = Cloud115Client()
+
+        with patch(
+            "app.core.cloud115.db_sync.list_local_files",
+            return_value=[
+                {"id": 10, "parent_id": 0, "name": "电视剧", "is_dir": True, "size": 0, "pickcode": ""},
+                {"id": 11, "parent_id": 10, "name": "第一集.mkv", "is_dir": False, "size": 123, "pickcode": "pc-11"},
+            ],
+        ) as mocked_local:
+            result = await client.list_files_local_first("0", limit=100, offset=0, recursive=True)
+
+        mocked_local.assert_called_once_with("0", recursive=True)
+        self.assertEqual(result["total"], 2)
+        self.assertEqual(result["items"][0], {"cid": "10", "n": "电视剧", "pid": "0"})
+        self.assertEqual(
+            result["items"][1],
+            {"fid": "11", "n": "第一集.mkv", "pid": "10", "pc": "pc-11", "s": 123},
+        )
+
+    async def test_batch_generate_requests_non_recursive_local_listing(self):
+        generator = StrmGenerator115()
+
+        with patch.object(
+            generator.client,
+            "list_files_local_first",
+            AsyncMock(return_value={"total": 0, "items": []}),
+        ) as mocked_list:
+            result = await generator.batch_generate("cid-root", "strm_output", "http://example.com")
+
+        self.assertEqual(result, [])
+        mocked_list.assert_awaited_once_with(
+            dir_id="cid-root",
+            limit=1000,
+            offset=0,
+            recursive=False,
+        )
 
 
 class MediaOrganizerRegionTests(unittest.IsolatedAsyncioTestCase):

@@ -83,3 +83,12 @@ def parse_channels(channels: Iterable[str] | None) -> list[int | str]:
         if channel and channel.strip():
             parsed_channels.append(parse_channel_reference(channel))
     return parsed_channels
+
+
+def extract_message_text(message) -> str:
+    """统一提取 Telethon message 上的文本或 caption。"""
+    for attr in ("message", "text"):
+        value = getattr(message, attr, "")
+        if value:
+            return value
+    return ""

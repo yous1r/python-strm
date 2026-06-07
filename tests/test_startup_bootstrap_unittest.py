@@ -1,0 +1,145 @@
+import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
+from app.config import AppConfig, MonitorConfig, TelegramConfig
+
+
+class StartupBootstrapTests(unittest.IsolatedAsyncioTestCase):
+    def test_app_config_includes_startup_pipeline_defaults(self):
+        config = AppConfig()
+
+        self.assertFalse(config.monitor.startup_pipeline.enabled)
+        self.assertTrue(config.monitor.startup_pipeline.run_db_sync)
+        self.assertTrue(config.monitor.startup_pipeline.run_telegram_sync)
+        self.assertTrue(config.monitor.startup_pipeline.run_strm_sync)
+        self.assertEqual(config.monitor.telegram.startup_sync, "latest")
+
+    async def test_run_startup_pipeline_executes_enabled_steps_in_order(self):
+        from app.services.startup_bootstrap_service import run_startup_pipeline
+
+        calls = []
+
+        async def fake_db_sync():
+            calls.append("db")
+            return {"status": "ok"}
+
+        async def fake_telegram_sync(*args, **kwargs):
+            calls.append(("telegram", kwargs.get("startup_mode")))
+            return {"status": "ok"}
+
+        async def fake_sync_task(force=False):
+            calls.append(("strm", force))
+            return {"status": "ok"}
+
+        config = AppConfig(
+            monitor=MonitorConfig(
+                telegram=TelegramConfig(
+                    enabled=True,
+                    api_id="1",
+                    api_hash="2",
+                    channels=["@demo"],
+                    startup_sync="incremental",
+                ),
+                startup_pipeline={
+                    "enabled": True,
+                    "run_db_sync": True,
+                    "run_telegram_sync": True,
+                    "run_strm_sync": True,
+                },
+            )
+        )
+
+        with patch("app.services.startup_bootstrap_service.get_config", lambda: config), \
+             patch("app.services.startup_bootstrap_service.sync_all_configured", fake_db_sync), \
+             patch("app.services.startup_bootstrap_service.sync_configured_channels", fake_telegram_sync), \
+             patch("app.services.startup_bootstrap_service.sync_engine.run_sync_task", fake_sync_task):
+            result = await run_startup_pipeline()
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(calls, ["db", ("telegram", "incremental"), ("strm", False)])
+
+    async def test_run_startup_pipeline_skips_disabled_telegram_step(self):
+        from app.services.startup_bootstrap_service import run_startup_pipeline
+
+        telegram_sync = AsyncMock()
+        strm_sync = AsyncMock(return_value={"status": "ok"})
+
+        config = AppConfig(
+            monitor=MonitorConfig(
+                telegram=TelegramConfig(
+                    enabled=True,
+                    api_id="1",
+                    api_hash="2",
+                    channels=["@demo"],
+                    startup_sync="incremental",
+                ),
+                startup_pipeline={
+                    "enabled": True,
+                    "run_db_sync": False,
+                    "run_telegram_sync": False,
+                    "run_strm_sync": True,
+                },
+            )
+        )
+
+        with patch("app.services.startup_bootstrap_service.get_config", lambda: config), \
+             patch("app.services.startup_bootstrap_service.sync_configured_channels", telegram_sync), \
+             patch("app.services.startup_bootstrap_service.sync_engine.run_sync_task", strm_sync):
+            result = await run_startup_pipeline()
+
+        self.assertEqual(result["status"], "success")
+        telegram_sync.assert_not_awaited()
+        strm_sync.assert_awaited_once_with(force=False)
+
+
+class TelegramMonitorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_start_does_not_schedule_startup_sync(self):
+        from app.core.monitor.telegram import TelegramMonitor
+
+        class FakeClient:
+            def on(self, *args, **kwargs):
+                def decorator(func):
+                    return func
+
+                return decorator
+
+            async def connect(self):
+                return None
+
+            async def is_user_authorized(self):
+                return True
+
+            async def start(self, *args, **kwargs):
+                return None
+
+            async def disconnect(self):
+                return None
+
+        fake_config = SimpleNamespace(
+            enabled=True,
+            api_id="1",
+            api_hash="2",
+            proxy="",
+            channels=["@demo"],
+            keywords=["电影"],
+            startup_sync="latest",
+            bot_token="",
+        )
+        wrapped_config = SimpleNamespace(monitor=SimpleNamespace(telegram=fake_config))
+        create_task_mock = AsyncMock()
+        monitor = TelegramMonitor()
+        monitor.config = fake_config
+
+        with patch("app.core.monitor.telegram.get_config", lambda: wrapped_config), \
+             patch("app.core.monitor.telegram.build_telegram_client", lambda *args, **kwargs: FakeClient()), \
+             patch("app.core.monitor.telegram.parse_channels", lambda channels: channels), \
+             patch("app.services.telegram_service.sync_configured_channels", AsyncMock()), \
+             patch("asyncio.create_task", create_task_mock):
+            await monitor.start()
+
+        create_task_mock.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

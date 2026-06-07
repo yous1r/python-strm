@@ -91,6 +91,7 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     elif "Lavf/" in player_ua and client_param != "vidhub":
         is_probe = True
 
+    # return Response(status_code=200)
     if is_probe:
         # 直连飞牛 → 直接 200
         if not client_param:

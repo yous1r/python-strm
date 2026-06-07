@@ -11,7 +11,11 @@ from app.services.system_service import (
 )
 from app.services.telegram_service import (
     TelegramValidationError,
+    get_monitor_status,
+    restart_monitor,
     scrape_monitor_history,
+    sync_configured_channels,
+    sync_single_channel,
     test_monitor_connection,
     validate_monitor_request,
 )
@@ -30,6 +34,10 @@ class TelegramScrapeRequest(BaseModel):
     proxy: str = ""
     channels: List[str] = []
     keywords: List[str] = []
+
+
+class TelegramSyncChannelRequest(TelegramScrapeRequest):
+    channel_ref: str
 
 router = APIRouter(prefix="/system", tags=["System Config"])
 
@@ -118,6 +126,50 @@ async def scrape_telegram_monitor(req: TelegramScrapeRequest, background_tasks: 
         req.keywords,
     )
     return {"status": "success", "message": "全量历史消息抓取任务已加入后台！\n匹配到的资源链接将自动进入排队系统，并按照防封控频率（间隔 3 秒）依次转存。您可以去主日志查看实时抓取和转存进度。"}
+
+
+@router.get("/telegram/status")
+async def telegram_status():
+    return await get_monitor_status()
+
+
+@router.post("/telegram/restart")
+async def restart_telegram_monitor():
+    await restart_monitor()
+    return {"status": "success", "message": "Telegram 监听器已重启"}
+
+
+@router.post("/telegram/sync")
+async def sync_telegram_monitor(req: TelegramScrapeRequest):
+    try:
+        return await sync_configured_channels(
+            req.api_id,
+            req.api_hash,
+            bot_token=req.bot_token,
+            proxy=req.proxy,
+            channels=req.channels,
+            keywords=req.keywords,
+            emit_events=True,
+            startup_mode="incremental",
+        )
+    except TelegramValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/telegram/sync-channel")
+async def sync_telegram_monitor_channel(req: TelegramSyncChannelRequest):
+    try:
+        return await sync_single_channel(
+            req.api_id,
+            req.api_hash,
+            bot_token=req.bot_token,
+            proxy=req.proxy,
+            channels=req.channels,
+            keywords=req.keywords,
+            channel_ref=req.channel_ref,
+        )
+    except TelegramValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 @router.post("/test-emby")
 async def test_emby(request: Request):

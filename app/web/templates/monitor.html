@@ -45,6 +45,17 @@
             <textarea id="mon_tg_keywords" class="form-control" rows="3" placeholder="蓝光&#10;洗版"></textarea>
         </div>
         <div class="form-group">
+            <label class="form-label">启动时历史同步模式</label>
+            <select id="mon_tg_startup_sync" class="form-control">
+                <option value="disabled">禁用</option>
+                <option value="latest">仅抓取最近窗口</option>
+                <option value="incremental">按频道增量同步</option>
+            </select>
+            <div style="margin-top: 0.5rem; color: var(--text-secondary); font-size: 0.9rem;">
+                应用启动后是否自动补抓 Telegram 历史消息。推荐配合下方“启动编排”一起使用。
+            </div>
+        </div>
+        <div class="form-group">
             <label class="form-label">资源匹配过滤规则 (可选，正则表达式，每行一个。仅转存115分享链接内文件名匹配的资源)</label>
             <div style="display: flex; gap: 0.5rem; flex-direction: column;">
                 <textarea id="mon_tg_filter_rules" class="form-control" rows="3" placeholder="1080p&#10;.*S01.*"></textarea>
@@ -82,6 +93,43 @@
                 <input type="checkbox" id="mon_tg_auto_strm">
                 <span class="slider round"></span>
             </label>
+        </div>
+
+        <div style="margin: 2rem 0 1rem; padding-top: 1.5rem; border-top: 1px solid var(--border);">
+            <h3 style="margin-bottom: 1rem; display: flex; align-items: center; gap: 0.6rem;">
+                <i class="fa-solid fa-rocket"></i> 启动编排
+            </h3>
+            <div style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.95rem;">
+                控制服务启动后是否自动执行一次启动流水：115 本地目录缓存同步、Telegram 历史同步、STRM 增量同步。
+            </div>
+            <div class="form-group" style="display: flex; align-items: center; gap: 1rem; margin-top: 1rem;">
+                <label class="form-label" style="margin-bottom: 0;">启用启动编排</label>
+                <label class="switch">
+                    <input type="checkbox" id="mon_startup_pipeline_enabled">
+                    <span class="slider round"></span>
+                </label>
+            </div>
+            <div class="form-group" style="display: flex; align-items: center; gap: 1rem; margin-top: 1rem;">
+                <label class="form-label" style="margin-bottom: 0;">启动时同步 115 本地数据库缓存</label>
+                <label class="switch">
+                    <input type="checkbox" id="mon_startup_run_db_sync">
+                    <span class="slider round"></span>
+                </label>
+            </div>
+            <div class="form-group" style="display: flex; align-items: center; gap: 1rem; margin-top: 1rem;">
+                <label class="form-label" style="margin-bottom: 0;">启动时执行 Telegram 历史同步</label>
+                <label class="switch">
+                    <input type="checkbox" id="mon_startup_run_telegram_sync">
+                    <span class="slider round"></span>
+                </label>
+            </div>
+            <div class="form-group" style="display: flex; align-items: center; gap: 1rem; margin-top: 1rem;">
+                <label class="form-label" style="margin-bottom: 0;">启动时执行 STRM 增量同步</label>
+                <label class="switch">
+                    <input type="checkbox" id="mon_startup_run_strm_sync">
+                    <span class="slider round"></span>
+                </label>
+            </div>
         </div>
     </form>
 </div>
@@ -272,11 +320,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('mon_tg_proxy').value = config.monitor.telegram.proxy || '';
             document.getElementById('mon_tg_channels').value = (config.monitor.telegram.channels || []).join('\n');
             document.getElementById('mon_tg_keywords').value = (config.monitor.telegram.keywords || []).join('\n');
+            document.getElementById('mon_tg_startup_sync').value = config.monitor.telegram.startup_sync || 'latest';
             document.getElementById('mon_tg_filter_rules').value = (config.monitor.telegram.filter_rules || []).join('\n');
             document.getElementById('mon_tg_target_dir_id').value = config.monitor.telegram.target_dir_id || '0';
             document.getElementById('mon_tg_archive_dir_id').value = config.monitor.telegram.archive_dir_id || '0';
             document.getElementById('mon_tg_auto_organize').checked = config.monitor.telegram.auto_organize;
             document.getElementById('mon_tg_auto_strm').checked = config.monitor.telegram.auto_strm;
+            document.getElementById('mon_startup_pipeline_enabled').checked = config.monitor.startup_pipeline?.enabled || false;
+            document.getElementById('mon_startup_run_db_sync').checked = config.monitor.startup_pipeline?.run_db_sync ?? true;
+            document.getElementById('mon_startup_run_telegram_sync').checked = config.monitor.startup_pipeline?.run_telegram_sync ?? true;
+            document.getElementById('mon_startup_run_strm_sync').checked = config.monitor.startup_pipeline?.run_strm_sync ?? true;
         }
     } catch (e) {
         console.error('Failed to load config', e);
@@ -303,11 +356,18 @@ async function saveMonitorConfig() {
                 proxy: document.getElementById('mon_tg_proxy').value,
                 channels: tgChannels,
                 keywords: tgKeywords,
+                startup_sync: document.getElementById('mon_tg_startup_sync').value,
                 filter_rules: tgFilterRules,
                 target_dir_id: document.getElementById('mon_tg_target_dir_id').value,
                 archive_dir_id: document.getElementById('mon_tg_archive_dir_id').value,
                 auto_organize: document.getElementById('mon_tg_auto_organize').checked,
                 auto_strm: document.getElementById('mon_tg_auto_strm').checked
+            },
+            startup_pipeline: {
+                enabled: document.getElementById('mon_startup_pipeline_enabled').checked,
+                run_db_sync: document.getElementById('mon_startup_run_db_sync').checked,
+                run_telegram_sync: document.getElementById('mon_startup_run_telegram_sync').checked,
+                run_strm_sync: document.getElementById('mon_startup_run_strm_sync').checked
             }
         }
     };

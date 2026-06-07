@@ -84,27 +84,47 @@ def get_query_db():
     if not os.path.exists(db_path):
         return None
     try:
-        return P115QueryDB(dbfile=db_path)
+        return P115QueryDB(db_path)
     except Exception as e:
         logger.error(f"[DBSync] 打开查询数据库失败: {e}")
         return None
 
 
-def list_local_files(dir_id: str) -> list[dict]:
+def list_local_files(dir_id: str, recursive: bool = False) -> list[dict]:
     """
     从本地数据库列出目录内容（不调用 115 API）。
-    返回 [{"id": int, "name": str, "is_dir": bool, "size": int}, ...]
+    recursive=False 时仅返回直属子项；为 True 时返回整棵子树。
+    返回 [{"id": int, "name": str, "parent_id": int, "is_dir": bool, "size": int, "pickcode": str}, ...]
     """
     qdb = get_query_db()
     if not qdb:
         return []
     try:
         cid = int(dir_id)
-        rows = qdb.listdir(cid, limit=-1)
-        return [{"id": r["id"], "name": r["name"], "is_dir": bool(r["is_dir"]), "size": r.get("size", 0)} for r in rows]
+        fields = ("id", "parent_id", "name", "is_dir", "size", "pickcode")
+        if recursive:
+            rows = list(qdb.iter_descendants(cid, fields=fields))
+        else:
+            rows = list(qdb.iter_children(cid, fields=fields))
+        return [
+            {
+                "id": r["id"],
+                "parent_id": r.get("parent_id", cid),
+                "name": r["name"],
+                "is_dir": bool(r["is_dir"]),
+                "size": r.get("size", 0),
+                "pickcode": r.get("pickcode", ""),
+            }
+            for r in rows
+        ]
     except Exception as e:
         logger.error(f"[DBSync] 本地查询失败: {e}")
         return []
+    finally:
+        try:
+            qdb.con.close()
+        except Exception:
+            pass
 
 
 def file_exists_locally(file_id: str) -> bool:
@@ -114,7 +134,11 @@ def file_exists_locally(file_id: str) -> bool:
         return False
     try:
         fid = int(file_id)
-        result = qdb.get(fid)
-        return result is not None and result.get("is_alive", True)
+        return bool(qdb.has_id(fid))
     except Exception:
         return False
+    finally:
+        try:
+            qdb.con.close()
+        except Exception:
+            pass

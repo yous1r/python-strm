@@ -101,7 +101,11 @@ class StrmGenerator115:
             # 防风控：使用按批限流器，允许瞬间迸发，降低请求频率惩罚
             await self.rate_limiter.acquire()
             
-            res = await self.client.list_files_local_first(dir_id=dir_id, limit=limit, offset=offset)
+            res = await self.client.list_files_local_first(
+                dir_id=dir_id,
+                limit=limit,
+                offset=offset,
+            )
             if "error" in res:
                 logger.error(f"Batch generate error: {res['error']}")
                 break

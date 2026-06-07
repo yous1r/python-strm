@@ -113,9 +113,20 @@ class TelegramConfig(BaseModel):
     archive_dir_id: str = "0"
     auto_organize: bool = False
     auto_strm: bool = False
+    mode: str = "auto"
+    startup_sync: str = "latest"
+    history_limit: int = 100
+    reconnect_backoff: int = 5
+
+class StartupPipelineConfig(BaseModel):
+    enabled: bool = False
+    run_db_sync: bool = True
+    run_telegram_sync: bool = True
+    run_strm_sync: bool = True
 
 class MonitorConfig(BaseModel):
     telegram: TelegramConfig = TelegramConfig()
+    startup_pipeline: StartupPipelineConfig = StartupPipelineConfig()
     poll_interval: int = 60
 
 class WecomConfig(BaseModel):

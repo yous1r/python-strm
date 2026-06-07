@@ -16,11 +16,11 @@ logger = setup_logger()
 from app.core.monitor.telegram import telegram_monitor
 from app.core.monitor.handler import init_handlers
 from app.core.sync.engine import sync_engine
-import asyncio
 
 from app.core.emby.standalone_proxy import restart_standalone_proxy, stop_standalone_proxy
 from app.core.transfer import init_transfer_pipeline
 from app.events import spawn_task
+from app.services.startup_bootstrap_service import run_startup_pipeline
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -42,6 +42,9 @@ async def lifespan(app: FastAPI):
     from app.core.cloud115.db_sync import sync_all_configured
     add_job(sync_all_configured, "interval", hours=6, id="db_sync", replace_existing=True)
     logger.info("Registered 115 DB sync job (every 6h)")
+
+    if config.monitor.startup_pipeline.enabled:
+        spawn_task(run_startup_pipeline(), name="startup_pipeline")
 
     if config.monitor.telegram.enabled:
         spawn_task(telegram_monitor.start(), name="telegram_monitor")

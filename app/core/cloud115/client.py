@@ -77,21 +77,35 @@ class Cloud115Client:
                 logger.error(f"Failed to list files for dir {dir_id}: {e}")
                 return {"error": str(e)}
 
-    async def list_files_local_first(self, dir_id: str = '0', limit: int = 100, offset: int = 0) -> dict:
-        """列出目录文件，优先使用本地缓存，回退到 115 API"""
+    async def list_files_local_first(
+        self,
+        dir_id: str = '0',
+        limit: int = 100,
+        offset: int = 0,
+        recursive: bool = True,
+    ) -> dict:
+        """列出目录文件，优先使用本地缓存，回退到 115 API。"""
         try:
             from app.core.cloud115.db_sync import list_local_files
-            local = list_local_files(dir_id)
+            local = list_local_files(dir_id, recursive=recursive)
             if local and len(local) > 0:
-                # 转换为统一格式
+                # 本地缓存命中时统一转换字段，并在内存中做分页。
                 items = []
                 for f in local:
                     if f.get("is_dir"):
                         items.append({"cid": str(f["id"]), "n": f["name"], "pid": str(f.get("parent_id", "0"))})
                     else:
-                        items.append({"fid": str(f["id"]), "n": f["name"], "s": f.get("size", 0)})
-                logger.debug(f"[Local] 从缓存返回 {dir_id}: {len(items)} 项")
-                return {"total": len(items), "items": items}
+                        items.append({
+                            "fid": str(f["id"]),
+                            "n": f["name"],
+                            "pid": str(f.get("parent_id", "0")),
+                            "pc": f.get("pickcode", ""),
+                            "s": f.get("size", 0),
+                        })
+                total = len(items)
+                paged_items = items[offset: offset + limit] if limit > 0 else items[offset:]
+                logger.debug(f"[Local] 从缓存返回 {dir_id}: {len(paged_items)}/{total} 项 (recursive={recursive})")
+                return {"total": total, "items": paged_items}
         except Exception:
             pass
         # 回退到 API

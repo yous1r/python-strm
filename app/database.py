@@ -1,6 +1,7 @@
 import aiosqlite
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime
 from app.config import get_config
 from loguru import logger
 
@@ -129,7 +130,7 @@ async def init_db():
                 channel_id TEXT,
                 title TEXT NOT NULL,
                 raw_text TEXT,
-                link TEXT NOT NULL UNIQUE,
+                link TEXT NOT NULL,
                 password TEXT,
                 disk_type TEXT NOT NULL,
                 msg_date DATETIME,
@@ -137,6 +138,25 @@ async def init_db():
                 base_title TEXT,
                 poster_url TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        await _migrate_tg_resources_unique_constraint(db)
+        await db.execute('''
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_tg_resources_channel_message
+            ON tg_resources(channel_id, message_id)
+        ''')
+        
+        # Telegram 频道监听状态表
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS telegram_monitor_state (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel_ref TEXT NOT NULL UNIQUE,
+                resolved_channel_id TEXT,
+                last_message_id INTEGER,
+                last_message_date TEXT,
+                last_success_at TEXT,
+                last_error TEXT DEFAULT '',
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         
@@ -190,7 +210,7 @@ async def get_db_conn():
         await conn.close()
 
 async def insert_tg_resource(db, resource: dict) -> bool:
-    """插入资源，如果链接已存在则忽略。返回 True 表示新插入，False 表示已存在/忽略"""
+    """插入资源，如果同频道同消息已存在则忽略。"""
     cursor = await db.execute('''
         INSERT OR IGNORE INTO tg_resources 
         (message_id, channel_id, title, raw_text, link, password, disk_type, msg_date, status, base_title, poster_url, overview, cast_text)
@@ -211,3 +231,124 @@ async def insert_tg_resource(db, resource: dict) -> bool:
         resource.get('cast_text')
     ))
     return cursor.rowcount > 0
+
+
+async def _migrate_tg_resources_unique_constraint(db) -> None:
+    """统一 tg_resources 唯一约束为同频道同消息唯一。"""
+    async with db.execute("PRAGMA index_list(tg_resources)") as cursor:
+        indexes = await cursor.fetchall()
+
+    unique_index_names = [row[1] for row in indexes if row[2]]
+    needs_migration = False
+    for index_name in unique_index_names:
+        async with db.execute(f"PRAGMA index_info({index_name})") as cursor:
+            columns = [row[2] for row in await cursor.fetchall()]
+        if columns in (["link"], ["channel_id", "message_id", "link"]):
+            needs_migration = True
+            break
+
+    if not needs_migration:
+        return
+
+    logger.info("Migrating tg_resources unique constraint to channel/message level")
+    await db.execute("ALTER TABLE tg_resources RENAME TO tg_resources_legacy")
+    await db.execute('''
+        CREATE TABLE tg_resources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id INTEGER,
+            channel_id TEXT,
+            title TEXT NOT NULL,
+            raw_text TEXT,
+            link TEXT NOT NULL,
+            password TEXT,
+            disk_type TEXT NOT NULL,
+            msg_date DATETIME,
+            status TEXT DEFAULT 'pending',
+            base_title TEXT,
+            poster_url TEXT,
+            overview TEXT,
+            cast_text TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    await db.execute('''
+        INSERT INTO tg_resources (
+            message_id, channel_id, title, raw_text, link, password, disk_type,
+            msg_date, status, base_title, poster_url, overview, cast_text, created_at
+        )
+        SELECT
+            message_id, channel_id, title, raw_text, link, password, disk_type,
+            msg_date, status, base_title, poster_url, overview, cast_text, MAX(created_at)
+        FROM tg_resources_legacy
+        GROUP BY channel_id, message_id
+    ''')
+    await db.execute("DROP TABLE tg_resources_legacy")
+    await db.execute('''
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_tg_resources_channel_message
+        ON tg_resources(channel_id, message_id)
+    ''')
+
+
+async def upsert_telegram_monitor_state(
+    channel_ref: str,
+    resolved_channel_id: str | None = None,
+    last_message_id: int | None = None,
+    last_message_date: str | None = None,
+    last_error: str = "",
+) -> None:
+    now = datetime.utcnow().isoformat()
+    async with get_db_conn() as db:
+        await db.execute(
+            '''
+            INSERT INTO telegram_monitor_state (
+                channel_ref, resolved_channel_id, last_message_id, last_message_date,
+                last_success_at, last_error, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(channel_ref) DO UPDATE SET
+                resolved_channel_id=excluded.resolved_channel_id,
+                last_message_id=COALESCE(excluded.last_message_id, telegram_monitor_state.last_message_id),
+                last_message_date=COALESCE(excluded.last_message_date, telegram_monitor_state.last_message_date),
+                last_success_at=excluded.last_success_at,
+                last_error=excluded.last_error,
+                updated_at=excluded.updated_at
+            ''',
+            (
+                channel_ref,
+                resolved_channel_id,
+                last_message_id,
+                last_message_date,
+                now,
+                last_error,
+                now,
+            ),
+        )
+        await db.commit()
+
+
+async def get_telegram_monitor_state(channel_ref: str):
+    async with get_db_conn() as db:
+        async with db.execute(
+            '''
+            SELECT channel_ref, resolved_channel_id, last_message_id, last_message_date,
+                   last_success_at, last_error, updated_at
+            FROM telegram_monitor_state
+            WHERE channel_ref = ?
+            ''',
+            (channel_ref,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+
+async def list_telegram_monitor_states() -> list[dict]:
+    async with get_db_conn() as db:
+        async with db.execute(
+            '''
+            SELECT channel_ref, resolved_channel_id, last_message_id, last_message_date,
+                   last_success_at, last_error, updated_at
+            FROM telegram_monitor_state
+            ORDER BY channel_ref ASC
+            '''
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
