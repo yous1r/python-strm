@@ -65,6 +65,7 @@ class EmbyStrmPathMappingConfig(BaseModel):
 
 
 class EmbyProxyInstanceConfig(BaseModel):
+    media_server_type: str = "emby"
     name: str = ""
     url: str = ""
     api_key: str = ""

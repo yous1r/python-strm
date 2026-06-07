@@ -13,6 +13,7 @@
 .result-ok { background: rgba(34,197,94,0.1); color: #4ade80; display: block !important; }
 .result-err { background: rgba(239,68,68,0.1); color: #f87171; display: block !important; }
 .cfg-info { font-size: 0.82rem; color: var(--accent-primary); margin-bottom: 1rem; padding: 0.5rem; background: rgba(99,102,241,0.08); border-radius: 4px; }
+.result-running { background: rgba(59,130,246,0.12); color: #93c5fd; display: block !important; }
 </style>
 
 <div class="glass-panel animate-fade-in delay-1" style="margin-bottom: 1.5rem;">
@@ -117,6 +118,15 @@
     </div>
     <pre class="result" id="r8"></pre>
 </div>
+
+<div class="debug-step">
+    <h4>9. 115 全链路验证</h4>
+    <div class="desc">验证 <code>db_sync -> strm_records 刷新 -> strm 更新</code> 整条链路，并轮询展示阶段与统计结果。</div>
+    <div class="row">
+        <button class="btn btn-primary" onclick="runStep9()" id="step9Btn" style="padding: 0.35rem 0.75rem; font-size: 0.85rem;">执行</button>
+    </div>
+    <pre class="result" id="r9"></pre>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -153,6 +163,14 @@ async function step(url, method, body, resultId) {
         el.textContent = '网络错误: ' + e.message;
         el.className = 'result result-err';
     }
+}
+
+let fullSyncPoller = null;
+
+function setResultState(resultId, text, state) {
+    const el = document.getElementById(resultId);
+    el.textContent = text;
+    el.className = 'result ' + state;
 }
 
 function runStep1() {
@@ -199,6 +217,72 @@ function runStep8() {
         file_cid: document.getElementById('s8_cid').value, file_name: document.getElementById('s8_name').value,
         temp_dir_id: document.getElementById('s8_temp').value
     }, 'r8');
+}
+
+async function runStep9() {
+    const btn = document.getElementById('step9Btn');
+    btn.disabled = true;
+    setResultState('r9', '启动中...', 'result-running');
+    try {
+        const res = await fetch('/api/v1/debug/cloud115/full-sync', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok || !data.task_id) {
+            throw new Error(data.detail || data.message || '启动失败');
+        }
+        showToast(`任务已启动: ${data.task_id}`, 'success');
+        pollFullSync(data.task_id);
+    } catch (e) {
+        setResultState('r9', '启动失败: ' + e.message, 'result-err');
+        showToast('115 全链路验证启动失败', 'error');
+        btn.disabled = false;
+    }
+}
+
+function renderFullSyncResult(data) {
+    const payload = {
+        task_id: data.task_id,
+        status: data.status,
+        current_stage: data.current_stage,
+        started_at: data.started_at,
+        finished_at: data.finished_at,
+        db_sync_results: data.db_sync_results,
+        manifest_results: data.manifest_results,
+        strm_results: data.strm_results,
+        stats: data.stats,
+        error: data.error,
+    };
+    return JSON.stringify(payload, null, 2);
+}
+
+async function pollFullSync(taskId) {
+    if (fullSyncPoller) {
+        clearTimeout(fullSyncPoller);
+        fullSyncPoller = null;
+    }
+
+    const btn = document.getElementById('step9Btn');
+    try {
+        const res = await fetch(`/api/v1/debug/cloud115/full-sync/${encodeURIComponent(taskId)}`);
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.detail || '查询失败');
+        }
+
+        const done = !!data.completed;
+        const state = data.status === 'failed' ? 'result-err' : (done ? 'result-ok' : 'result-running');
+        setResultState('r9', renderFullSyncResult(data), state);
+
+        if (!done) {
+            fullSyncPoller = setTimeout(() => pollFullSync(taskId), 1500);
+            return;
+        }
+
+        btn.disabled = false;
+        showToast(data.status === 'failed' ? '115 全链路验证失败' : '115 全链路验证完成', data.status === 'failed' ? 'error' : 'success');
+    } catch (e) {
+        setResultState('r9', '查询失败: ' + e.message, 'result-err');
+        btn.disabled = false;
+    }
 }
 
 document.addEventListener('DOMContentLoaded', loadConfig);

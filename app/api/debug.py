@@ -8,6 +8,7 @@ from app.core.transfer.classifier import classify, build_archive_path
 from app.core.transfer.catalog import ensure_path
 from app.core.transfer.scope import init_scope, validate, expand_allowed_dirs
 from app.config import get_config
+from app.services.cloud115_full_sync_service import cloud115_full_sync_service
 
 router = APIRouter(prefix="/api/v1/debug", tags=["调试"])
 
@@ -17,6 +18,28 @@ class DebugResult(BaseModel):
     success: bool
     data: dict = {}
     error: str = ""
+
+
+@router.post("/cloud115/full-sync")
+async def start_cloud115_full_sync():
+    result = await cloud115_full_sync_service.start_full_sync(source="debug")
+    return {
+        "success": True,
+        **result,
+    }
+
+
+@router.get("/cloud115/full-sync/{task_id}")
+async def get_cloud115_full_sync(task_id: str):
+    task = await cloud115_full_sync_service.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    return {
+        "success": task.get("status") != "failed",
+        **task,
+        "completed": task.get("status") in {"completed", "failed"},
+    }
 
 
 # --- Step 1: 接收分享 ---

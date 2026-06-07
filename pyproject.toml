@@ -20,6 +20,7 @@ dependencies = [
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
     "pytest>=9.0.3",
+    "pytest-asyncio>=1.4.0",
     "python-multipart>=0.0.9",
     "python-socks[asyncio]>=2.4.4",
     "pyyaml>=6.0.0",

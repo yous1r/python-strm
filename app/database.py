@@ -63,6 +63,42 @@ async def init_db():
                 UNIQUE(cloud_type, file_id)
             )
         ''')
+        await db.execute('''
+            CREATE INDEX IF NOT EXISTS idx_strm_records_play_identity
+            ON strm_records(cloud_type, play_identity)
+        ''')
+        await db.execute('''
+            CREATE INDEX IF NOT EXISTS idx_strm_records_paths
+            ON strm_records(strm_abs_path, strm_path, strm_rel_path)
+        ''')
+
+        # 媒体服务器扩展索引表：将 Emby/Jellyfin/FNOS item 映射到 STRM 核心播放身份
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS media_item_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                media_server_type TEXT NOT NULL,
+                media_server_name TEXT NOT NULL DEFAULT '',
+                media_item_id TEXT NOT NULL,
+                media_source_id TEXT NOT NULL DEFAULT '',
+                cloud_type TEXT NOT NULL,
+                file_id TEXT,
+                play_identity TEXT NOT NULL,
+                strm_record_id INTEGER,
+                source_path TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(media_server_type, media_server_name, media_item_id, media_source_id),
+                FOREIGN KEY(strm_record_id) REFERENCES strm_records(id)
+            )
+        ''')
+        await db.execute('''
+            CREATE INDEX IF NOT EXISTS idx_media_item_links_cloud_file
+            ON media_item_links(cloud_type, file_id)
+        ''')
+        await db.execute('''
+            CREATE INDEX IF NOT EXISTS idx_media_item_links_play_identity
+            ON media_item_links(cloud_type, play_identity)
+        ''')
         
         # 转存整理任务表
         await db.execute('''
@@ -192,6 +228,32 @@ async def init_db():
         for column_name, ddl in strm_record_columns.items():
             if column_name not in strm_columns:
                 await db.execute(ddl)
+
+        async with db.execute("PRAGMA table_info(media_item_links)") as cursor:
+            media_link_columns = {row[1] for row in await cursor.fetchall()}
+
+        media_item_link_columns = {
+            "media_source_id": "ALTER TABLE media_item_links ADD COLUMN media_source_id TEXT NOT NULL DEFAULT ''",
+            "strm_record_id": "ALTER TABLE media_item_links ADD COLUMN strm_record_id INTEGER",
+            "source_path": "ALTER TABLE media_item_links ADD COLUMN source_path TEXT",
+            "updated_at": "ALTER TABLE media_item_links ADD COLUMN updated_at DATETIME",
+        }
+        for column_name, ddl in media_item_link_columns.items():
+            if column_name not in media_link_columns:
+                await db.execute(ddl)
+
+        await db.execute('''
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_media_item_links_item
+            ON media_item_links(media_server_type, media_server_name, media_item_id, media_source_id)
+        ''')
+        await db.execute('''
+            CREATE INDEX IF NOT EXISTS idx_media_item_links_cloud_file
+            ON media_item_links(cloud_type, file_id)
+        ''')
+        await db.execute('''
+            CREATE INDEX IF NOT EXISTS idx_media_item_links_play_identity
+            ON media_item_links(cloud_type, play_identity)
+        ''')
         
         await db.commit()
         logger.info("Database initialized successfully")

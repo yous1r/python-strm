@@ -9,8 +9,13 @@ from loguru import logger
 import uvicorn
 
 from app.config import get_config
-from app.database import get_db_conn
 from app.core.cloud115.client import client_115
+from app.core.transfer.strm_manifest import (
+    get_media_item_link,
+    get_strm_record_by_file_id,
+    get_strm_record_by_path,
+    upsert_media_item_link,
+)
 
 # 匹配视频流请求
 video_stream_pattern = re.compile(r'/videos/(\w+)/stream', re.IGNORECASE)
@@ -18,6 +23,19 @@ video_stream_pattern = re.compile(r'/videos/(\w+)/stream', re.IGNORECASE)
 playback_info_pattern = re.compile(r'/Items/(\w+)/PlaybackInfo', re.IGNORECASE)
 # 匹配 115play 中转请求
 proxy_play_pattern = re.compile(r'/115play/([^/|?]+)', re.IGNORECASE)
+
+
+def _extract_115_pickcode(path: str) -> str | None:
+    match = re.search(r'/api/v1/115/play/([^/|?]+)', path or "")
+    return match.group(1) if match else None
+
+
+def _get_media_server_type(instance=None) -> str:
+    return (getattr(instance, "media_server_type", "") or "emby").lower()
+
+
+def _get_media_server_name(instance=None) -> str:
+    return getattr(instance, "name", "") if instance is not None else ""
 
 
 def _normalize_media_path(path: str) -> str:
@@ -48,7 +66,8 @@ def _build_upstream_url(upstream_url: str, path: str) -> str:
 
 
 def _resolve_local_strm_path(emby_path: str, instance=None) -> str | None:
-    """将 Emby 媒体库中的 STRM 路径映射为代理本地可读路径"""
+    """将 Emby 媒体库中的 STRM 路径映射为代理本地路径。"""
+
     import os
 
     normalized_path = _normalize_media_path(emby_path)
@@ -70,9 +89,9 @@ def _resolve_local_strm_path(emby_path: str, instance=None) -> str | None:
         if normalized_path == emby_prefix or normalized_path.startswith(f"{emby_prefix}/"):
             relative = normalized_path[len(emby_prefix):].lstrip("/")
             candidate = _join_mapped_path(local_prefix, relative)
-            if os.path.exists(candidate):
-                return candidate
-            logger.warning(f"[PROXY] STRM path mapping matched but local file does not exist: {emby_path} -> {candidate}")
+            if not os.path.exists(candidate):
+                logger.warning(f"[PROXY] STRM path mapping matched but local file does not exist: {emby_path} -> {candidate}")
+            return candidate
 
     # 兼容旧逻辑：飞牛路径 /vol1/docker-data/python-strm/strm_output/... 映射到本项目输出目录
     for marker in ["python-strm/strm_output/", "strm_output/"]:
@@ -83,9 +102,10 @@ def _resolve_local_strm_path(emby_path: str, instance=None) -> str | None:
                 os.path.join("strm_output", relative),
                 os.path.join("/app/strm_output", relative),
             ]
-            for c in candidates:
-                if os.path.exists(c):
-                    return c
+            for candidate in candidates:
+                if os.path.exists(candidate):
+                    return candidate
+            return candidates[0]
     return None
 
 
@@ -208,55 +228,365 @@ async def _get_upstream_item_payload(upstream_url: str, api_key: str, item_id: s
 
 async def _get_local_playback_record_by_path(feiniu_path: str, instance=None) -> dict | None:
     """通过上游返回的 STRM 路径反查本地 manifest 记录。"""
-    local_path = _resolve_local_strm_path(feiniu_path, instance)
-    if not local_path:
-        logger.warning(f"[PROXY] Could not map upstream path to local STRM path: {feiniu_path}")
-        return None
 
-    normalized_local_path = local_path.replace("\\", "/")
-    rel_path = normalized_local_path
+    normalized_source_path = _normalize_media_path(feiniu_path)
+    candidate_paths = [normalized_source_path]
+
     marker = "strm_output/"
-    idx = normalized_local_path.find(marker)
+    idx = normalized_source_path.find(marker)
     if idx >= 0:
-        rel_path = normalized_local_path[idx + len(marker):]
+        candidate_paths.append(normalized_source_path[idx + len(marker):])
+
+    local_path = _resolve_local_strm_path(feiniu_path, instance)
+    if local_path:
+        normalized_local_path = local_path.replace("\\", "/")
+        candidate_paths.append(normalized_local_path)
+
+        idx = normalized_local_path.find(marker)
+        if idx >= 0:
+            candidate_paths.append(normalized_local_path[idx + len(marker):])
+    else:
+        logger.warning(f"[PROXY] Could not map upstream path to local STRM path: {feiniu_path}")
 
     try:
-        async with get_db_conn() as db:
-            cursor = await db.execute(
-                '''
-                SELECT file_id, play_identity, strm_rel_path, strm_abs_path, strm_path
-                FROM strm_records
-                WHERE cloud_type='115'
-                  AND (
-                    strm_abs_path=?
-                    OR strm_path=?
-                    OR strm_rel_path=?
-                  )
-                LIMIT 1
-                ''',
-                (local_path, local_path, rel_path),
-            )
-            row = await cursor.fetchone()
-        return dict(row) if row else None
+        return await get_strm_record_by_path(cloud_type="115", paths=candidate_paths)
     except Exception as e:
-        logger.error(f"[PROXY] Failed to load local playback record by path={local_path}: {repr(e)}")
+        logger.error(f"[PROXY] Failed to load local playback record by path={feiniu_path}: {repr(e)}")
         return None
 
 
-async def _resolve_playback_url(upstream_url: str, api_key: str, item_id: str, request: Request) -> str:
+async def _get_playback_record_by_media_item(item_id: str, media_source_id: str = "", instance=None) -> dict | None:
+    """通过媒体服务器 item 索引查找播放记录。"""
+
+    try:
+        link = await get_media_item_link(
+            media_server_type=_get_media_server_type(instance),
+            media_server_name=_get_media_server_name(instance),
+            media_item_id=item_id,
+            media_source_id=media_source_id,
+        )
+        if not link and media_source_id:
+            link = await get_media_item_link(
+                media_server_type=_get_media_server_type(instance),
+                media_server_name=_get_media_server_name(instance),
+                media_item_id=item_id,
+                media_source_id="",
+            )
+        if not link:
+            return None
+
+        if link.get("play_identity"):
+            return {
+                "id": link.get("strm_record_id"),
+                "file_id": link.get("file_id"),
+                "play_identity": link.get("play_identity"),
+                "strm_rel_path": None,
+                "strm_abs_path": None,
+                "strm_path": link.get("source_path"),
+            }
+
+        file_id = link.get("file_id")
+        if not file_id:
+            return None
+
+        record = await get_strm_record_by_file_id(cloud_type="115", file_id=str(file_id))
+        if record and link.get("source_path") and not record.get("strm_path"):
+            record = dict(record)
+            record["strm_path"] = link.get("source_path")
+        return record
+    except Exception as e:
+        logger.error(f"[PROXY] Failed to load media item link for item_id={item_id}: {repr(e)}")
+        return None
+
+
+async def _cache_media_item_playback_record(
+    *,
+    item_id: str,
+    media_source_id: str = "",
+    record: dict,
+    source_path: str = "",
+    instance=None,
+) -> None:
+    """缓存媒体服务器 item 到 115 pickcode 的映射。"""
+
+    normalized_record = record
+    play_identity = normalized_record.get("play_identity") or ""
+    if not play_identity and normalized_record.get("file_id"):
+        hydrated_record = await get_strm_record_by_file_id(
+            cloud_type="115",
+            file_id=str(normalized_record["file_id"]),
+        )
+        if hydrated_record:
+            normalized_record = hydrated_record
+            play_identity = hydrated_record.get("play_identity") or ""
+
+    if not item_id or not play_identity:
+        return
+
+    try:
+        await upsert_media_item_link(
+            media_server_type=_get_media_server_type(instance),
+            media_server_name=_get_media_server_name(instance),
+            media_item_id=item_id,
+            media_source_id=media_source_id,
+            cloud_type="115",
+            file_id=normalized_record.get("file_id"),
+            play_identity=play_identity,
+            strm_record_id=normalized_record.get("id"),
+            source_path=source_path or normalized_record.get("strm_path") or normalized_record.get("strm_abs_path"),
+        )
+    except Exception as e:
+        logger.error(f"[PROXY] Failed to cache media item link for item_id={item_id}: {repr(e)}")
+
+
+async def _resolve_playback_record_from_path(
+    *,
+    item_id: str,
+    media_source_id: str = "",
+    path: str,
+    instance=None,
+) -> dict | None:
+    """按方案 2 从媒体服务器路径提取或回查本地播放记录。"""
+
+    if not path:
+        return None
+
+    direct_pickcode = _extract_115_pickcode(path)
+    if direct_pickcode:
+        record = {
+            "id": None,
+            "file_id": None,
+            "play_identity": direct_pickcode,
+            "strm_rel_path": None,
+            "strm_abs_path": None,
+            "strm_path": path,
+        }
+    else:
+        record = await _get_local_playback_record_by_path(path, instance)
+
+    if record and item_id:
+        await _cache_media_item_playback_record(
+            item_id=item_id,
+            media_source_id=media_source_id,
+            record=record,
+            source_path=path,
+            instance=instance,
+        )
+
+    return record
+
+
+async def _iterate_upstream_items(
+    upstream_url: str,
+    api_key: str,
+    request: Request,
+    *,
+    user_id: str = "",
+    library_ids: list[str] | None = None,
+    limit: int = 0,
+    page_size: int = 200,
+) -> list[dict]:
+    """分页读取上游媒体项，用于批量预热 media_item_links。"""
+    items: list[dict] = []
+    start_index = 0
+    library_ids = [item for item in (library_ids or []) if item]
+    total_limit = max(limit, 0)
+
+    while True:
+        remaining = total_limit - len(items) if total_limit else page_size
+        if total_limit and remaining <= 0:
+            break
+        current_limit = min(page_size, remaining) if total_limit else page_size
+
+        params = {
+            "Recursive": "true",
+            "IncludeItemTypes": "Movie,Episode,Video",
+            "Fields": "Path,MediaSources",
+            "StartIndex": str(start_index),
+            "Limit": str(current_limit),
+        }
+        if library_ids:
+            params["ParentId"] = ",".join(library_ids)
+
+        api_path = f"/Users/{user_id}/Items" if user_id else "/Items"
+        res = await _request_upstream_json(
+            upstream_url,
+            api_path,
+            request,
+            api_key,
+            params=params,
+            timeout=20,
+        )
+        if res is None or res.status_code != 200:
+            logger.warning(f"[PROXY] Preheat upstream list failed: path={api_path}, status={getattr(res, 'status_code', None)}")
+            break
+
+        try:
+            payload = res.json()
+        except Exception as e:
+            logger.error(f"[PROXY] Failed to decode upstream items payload: {repr(e)}")
+            break
+
+        batch = payload.get("Items") or []
+        if not batch:
+            break
+
+        items.extend(batch)
+        start_index += len(batch)
+
+        total_record_count = payload.get("TotalRecordCount") or 0
+        if len(batch) < current_limit:
+            break
+        if total_record_count and start_index >= total_record_count:
+            break
+
+    return items[:total_limit] if total_limit else items
+
+
+async def _preheat_instance_media_item_links(
+    instance,
+    *,
+    user_id: str = "",
+    library_ids: list[str] | None = None,
+    limit: int = 0,
+    overwrite: bool = False,
+) -> dict:
+    """为单个媒体服务器实例批量预热 media_item_links。"""
+    upstream_url = instance.url.rstrip("/")
+    api_key = instance.api_key
+
+    class _PreheatRequest:
+        def __init__(self, configured_api_key: str, configured_user_id: str = ""):
+            self.headers = {}
+            self.query_params = {}
+            self.url = type("URL", (), {"scheme": "http", "netloc": "localhost"})()
+            if configured_api_key:
+                self.query_params["api_key"] = configured_api_key
+            if configured_user_id:
+                self.query_params["UserId"] = configured_user_id
+
+    request = _PreheatRequest(api_key, user_id)
+    items = await _iterate_upstream_items(
+        upstream_url,
+        api_key,
+        request,
+        user_id=user_id,
+        library_ids=library_ids,
+        limit=limit,
+    )
+
+    scanned = 0
+    linked = 0
+    skipped = 0
+    failed = 0
+
+    for item in items:
+        scanned += 1
+        item_id = item.get("Id") or ""
+        media_sources = item.get("MediaSources") or [{}]
+        media_source = media_sources[0] if media_sources else {}
+        media_source_id = media_source.get("Id", "") or ""
+        path = item.get("Path", "") or media_source.get("Path", "") or ""
+
+        try:
+            if not overwrite:
+                existing = await _get_playback_record_by_media_item(item_id, media_source_id, instance)
+                if existing:
+                    skipped += 1
+                    continue
+
+            record = await _resolve_playback_record_from_path(
+                item_id=item_id,
+                media_source_id=media_source_id,
+                path=path,
+                instance=instance,
+            )
+
+            if not record or not record.get("play_identity"):
+                failed += 1
+                continue
+
+            linked += 1
+        except Exception as e:
+            logger.error(f"[PROXY] Failed to preheat media item link for item_id={item_id}: {repr(e)}")
+            failed += 1
+
+    return {
+        "media_server_type": _get_media_server_type(instance),
+        "media_server_name": _get_media_server_name(instance),
+        "scanned": scanned,
+        "linked": linked,
+        "skipped": skipped,
+        "failed": failed,
+    }
+
+
+async def preheat_media_item_links(
+    *,
+    instance_name: str = "",
+    user_id: str = "",
+    library_ids: list[str] | None = None,
+    limit: int = 0,
+    overwrite: bool = False,
+) -> dict:
+    """批量预热所有或指定实例的 media_item_links。"""
+    config = get_config()
+    instances = config.emby.proxy.instances or []
+    if instance_name:
+        instances = [instance for instance in instances if instance.name == instance_name]
+
+    results = []
+    for instance in instances:
+        if not instance.url:
+            continue
+        results.append(
+            await _preheat_instance_media_item_links(
+                instance,
+                user_id=user_id,
+                library_ids=library_ids,
+                limit=limit,
+                overwrite=overwrite,
+            )
+        )
+
+    return {
+        "status": "success",
+        "instance_count": len(results),
+        "results": results,
+    }
+
+
+async def _resolve_playback_url(upstream_url: str, api_key: str, item_id: str, request: Request, instance=None) -> str:
     """解析出真实播放地址"""
     logger.debug(f"[PROXY] Resolving playback URL for item_id={item_id}")
     try:
+        media_source_id = request.query_params.get("MediaSourceId") or ""
+        record = await _get_playback_record_by_media_item(item_id, media_source_id=media_source_id, instance=instance)
+        if record and record.get("play_identity"):
+            player_ua = request.headers.get("user-agent", "Unknown")
+            config = get_config()
+            target_ua = config.cloud115.play_ua
+            request_ua = target_ua if target_ua else player_ua
+            return await client_115.get_download_url(record["play_identity"], user_agent=request_ua)
+
         item_data = await _get_upstream_item_payload(upstream_url, api_key, item_id, request)
         if item_data:
             path = item_data.get("Path", "")
-            if not path and item_data.get("MediaSources"):
-                path = item_data["MediaSources"][0].get("Path", "")
+            media_sources = item_data.get("MediaSources") or []
+            if not path and media_sources:
+                path = media_sources[0].get("Path", "")
+            if not media_source_id and media_sources:
+                media_source_id = media_sources[0].get("Id", "") or ""
 
-            if path and "/api/v1/115/play/" in path:
-                match = re.search(r'/api/v1/115/play/([^/|?]+)', path)
-                if match:
-                    pickcode = match.group(1)
+            if path:
+                record = await _resolve_playback_record_from_path(
+                    item_id=item_id,
+                    media_source_id=media_source_id,
+                    path=path,
+                    instance=instance,
+                )
+                pickcode = record.get("play_identity") if record else ""
+                if pickcode:
                     player_ua = request.headers.get("user-agent", "Unknown")
                     config = get_config()
                     target_ua = config.cloud115.play_ua
@@ -325,27 +655,23 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, full_path: s
         return Response(status_code=400, content="Invalid PlaybackInfo path")
 
     item_id = match.group(1)
-    record = None
-    item_data = await _get_upstream_item_payload(upstream_url, api_key, item_id, request)
+    media_source_id = request.query_params.get("MediaSourceId") or ""
+    record = await _get_playback_record_by_media_item(item_id, media_source_id, instance)
     path = ""
-    if item_data:
-        path = item_data.get("Path", "")
-        if not path and item_data.get("MediaSources"):
-            path = item_data["MediaSources"][0].get("Path", "")
+    if not record:
+        item_data = await _get_upstream_item_payload(upstream_url, api_key, item_id, request)
+        if item_data:
+            path = item_data.get("Path", "")
+            if not path and item_data.get("MediaSources"):
+                path = item_data["MediaSources"][0].get("Path", "")
 
-    if path:
-        if "/api/v1/115/play/" in path:
-            direct_match = re.search(r'/api/v1/115/play/([^/|?]+)', path)
-            if direct_match:
-                record = {
-                    "file_id": None,
-                    "play_identity": direct_match.group(1),
-                    "strm_rel_path": None,
-                    "strm_abs_path": None,
-                    "strm_path": path,
-                }
-        else:
-            record = await _get_local_playback_record_by_path(path, instance)
+    if not record and path:
+        record = await _resolve_playback_record_from_path(
+            item_id=item_id,
+            media_source_id=media_source_id,
+            path=path,
+            instance=instance,
+        )
 
     if not record:
         logger.warning(f"[PROXY] No playback mapping found for item_id={item_id}")
@@ -356,7 +682,7 @@ async def _intercept_playback_info(upstream_url: str, api_key: str, full_path: s
         logger.warning(f"[PROXY] Local STRM manifest record missing play_identity for item_id={item_id}")
         return Response(status_code=404, content="Playback identity not found")
 
-    media_source_id = request.query_params.get("MediaSourceId") or item_id
+    media_source_id = media_source_id or item_id
 
     scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
     host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
@@ -592,7 +918,7 @@ def create_proxy_app(instance) -> FastAPI:
         match = video_stream_pattern.search(full_path)
         if match:
             item_id = match.group(1)
-            redirect_url = await _resolve_playback_url(upstream_url, api_key, item_id, request)
+            redirect_url = await _resolve_playback_url(upstream_url, api_key, item_id, request, instance)
             if redirect_url:
                 return RedirectResponse(url=redirect_url, status_code=302)
 

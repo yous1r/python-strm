@@ -1,9 +1,12 @@
 """115 网盘本地数据库同步：使用 p115client.updatedb 将网盘目录树缓存到本地 SQLite"""
-import os
 import asyncio
+import os
+
 from loguru import logger
+
 from app.config import get_config
 from app.core.cloud115.auth import auth_manager
+from app.events import EVENT_CLOUD115_DB_SYNC_COMPLETED, event_bus
 
 
 def _get_db_path() -> str:
@@ -63,6 +66,14 @@ async def sync_all_configured() -> dict:
     for sd in config.cloud115.sync_dirs:
         count = await sync_directory(sd.dir_id, sd.name)
         results[sd.name] = count
+        await event_bus.emit(
+            EVENT_CLOUD115_DB_SYNC_COMPLETED,
+            dir_id=sd.dir_id,
+            dir_name=sd.name,
+            recursive=True,
+            count=count,
+            source="sync_all_configured",
+        )
 
     # 2. 同步 transfer 管道中的 temp_dir 和 archive_dir
     transfer_cfg = config.transfer
@@ -80,6 +91,7 @@ async def sync_all_configured() -> dict:
 def get_query_db():
     """获取 P115QueryDB 实例，用于本地查询（避免 115 API 调用）"""
     from p115client.tool.updatedb import P115QueryDB
+
     db_path = _get_db_path()
     if not os.path.exists(db_path):
         return None
@@ -127,6 +139,26 @@ def list_local_files(dir_id: str, recursive: bool = False) -> list[dict]:
             pass
 
 
+def get_local_pickcode(file_id: str) -> str:
+    """按 115 文件 ID 从本地缓存读取 pickcode。"""
+    qdb = get_query_db()
+    if not qdb:
+        return ""
+
+    try:
+        fid = int(file_id)
+        pickcode = qdb.get_pickcode(fid)
+        return str(pickcode) if pickcode else ""
+    except Exception as e:
+        logger.debug(f"[DBSync] 读取 pickcode 失败: file_id={file_id}, error={e}")
+        return ""
+    finally:
+        try:
+            qdb.con.close()
+        except Exception:
+            pass
+
+
 def file_exists_locally(file_id: str) -> bool:
     """检查文件是否在本地数据库中"""
     qdb = get_query_db()
@@ -142,3 +174,40 @@ def file_exists_locally(file_id: str) -> bool:
             qdb.con.close()
         except Exception:
             pass
+
+
+async def handle_cloud115_db_sync_completed(
+    dir_id: str,
+    dir_name: str = "",
+    recursive: bool = True,
+    count: int = 0,
+    **kwargs,
+):
+    """115 本地目录树同步完成后，补齐对应 sync_dir 的 STRM 与 manifest。"""
+    from app.core.cloud115.strm import generator_115
+
+    config = get_config()
+    output_name = dir_name or dir_id
+    output_dir = os.path.join(config.strm.output_dir, output_name)
+
+    logger.info(
+        f"[DBSync] 目录同步完成后开始刷新 STRM: {output_name} (cid={dir_id}, changed={count})"
+    )
+
+    generated = await generator_115.batch_generate(
+        dir_id=dir_id,
+        output_dir=output_dir,
+        base_url=config.strm.base_url,
+        recursive=recursive,
+        root_output_dir=config.strm.output_dir,
+        force=False,
+    )
+
+    logger.info(
+        f"[DBSync] STRM 刷新完成: {output_name}, generated={len(generated)}"
+    )
+
+
+def init_db_sync_events():
+    """保留旧初始化入口，避免旧调用点报错。"""
+    logger.info("[DBSync] 旧版 DB sync 事件处理器已停用，等待全链路编排服务接管")

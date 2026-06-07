@@ -23,10 +23,33 @@ def trigger_sync_task(force: bool = False) -> dict[str, str]:
 
 
 def trigger_db_sync_task() -> dict[str, str]:
-    from app.core.cloud115.db_sync import sync_all_configured
+    from app.services.cloud115_full_sync_service import cloud115_full_sync_service
 
-    spawn_task(sync_all_configured(), name="db_sync_manual")
-    return {"status": "success", "message": "115 目录树同步任务已触发，稍后本地缓存将更新"}
+    spawn_task(cloud115_full_sync_service.start_full_sync(source="system"), name="db_sync_manual")
+    return {"status": "success", "message": "115 全链路同步任务已触发，稍后可在调试页查看结果"}
+
+
+def trigger_emby_preheat_task(
+    *,
+    instance_name: str = "",
+    user_id: str = "",
+    library_ids: list[str] | None = None,
+    limit: int = 0,
+    overwrite: bool = False,
+) -> dict[str, str]:
+    from app.core.emby.standalone_proxy import preheat_media_item_links
+
+    spawn_task(
+        preheat_media_item_links(
+            instance_name=instance_name,
+            user_id=user_id,
+            library_ids=library_ids,
+            limit=limit,
+            overwrite=overwrite,
+        ),
+        name="emby_preheat_media_links",
+    )
+    return {"status": "success", "message": "Emby media_item_links 预热任务已在后台触发"}
 
 
 def _emby_proxy_changed(changed_data: dict, old_config, new_config) -> bool:

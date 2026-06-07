@@ -9,9 +9,11 @@ from loguru import logger
 
 from app.config import get_config
 from app.core.cloud115.client import client_115
+from app.core.cloud115.db_sync import list_local_files
 from app.core.transfer.classifier import classify
 from app.core.transfer.placement import build_archive_placement
 from app.core.transfer.strm_manifest import build_manifest_record, list_records_for_rewrite
+from app.database import get_db_conn
 from app.utils.helpers import is_video_file
 from app.core.media.organizer import organizer
 
@@ -45,6 +47,173 @@ class StrmGenerator115:
         if config.cloud115.play_ua:
             strm_content += f"|User-Agent={config.cloud115.play_ua}"
         return strm_content
+
+    def _derive_scope_prefix(self, output_dir: str, root_output_dir: str | None = None) -> str:
+        """推导当前批次对应的 manifest 相对目录前缀。"""
+
+        output_path = Path(output_dir).resolve()
+        candidates: list[Path] = []
+
+        if root_output_dir:
+            candidates.append(Path(root_output_dir).resolve())
+
+        configured_output_dir = get_config().strm.output_dir
+        if configured_output_dir:
+            candidates.append(Path(configured_output_dir).resolve())
+
+        for base_path in candidates:
+            try:
+                relative = output_path.relative_to(base_path)
+            except ValueError:
+                continue
+
+            prefix = relative.as_posix().strip("/")
+            if prefix and prefix != ".":
+                return prefix
+
+        return ""
+
+    async def _load_cleanup_candidates(
+        self,
+        *,
+        dir_id: str,
+        archive_dir_ids: list[str],
+        scope_prefix: str,
+    ) -> list[dict]:
+        """加载当前批次作用域内的 manifest 记录，用于无效 STRM 清理。"""
+
+        async with get_db_conn() as db:
+            if scope_prefix:
+                cursor = await db.execute(
+                    """
+                    SELECT id, cloud_type, file_id, archive_dir_id, archive_rel_path,
+                           strm_rel_path, strm_abs_path, strm_path, play_identity, status
+                    FROM strm_records
+                    WHERE cloud_type='115'
+                      AND (
+                        archive_rel_path=?
+                        OR archive_rel_path LIKE ?
+                        OR strm_rel_path LIKE ?
+                      )
+                    ORDER BY id ASC
+                    """,
+                    (scope_prefix, f"{scope_prefix}/%", f"{scope_prefix}/%"),
+                )
+            else:
+                normalized_ids = [archive_dir_id for archive_dir_id in archive_dir_ids if archive_dir_id]
+                if not normalized_ids:
+                    return []
+
+                placeholders = ",".join(["?"] * len(normalized_ids))
+                cursor = await db.execute(
+                    f"""
+                    SELECT id, cloud_type, file_id, archive_dir_id, archive_rel_path,
+                           strm_rel_path, strm_abs_path, strm_path, play_identity, status
+                    FROM strm_records
+                    WHERE cloud_type='115'
+                      AND archive_dir_id IN ({placeholders})
+                    ORDER BY id ASC
+                    """,
+                    tuple(normalized_ids),
+                )
+
+            rows = await cursor.fetchall()
+
+        return [dict(row) for row in rows]
+
+    async def _delete_manifest_records(self, records: list[dict]) -> int:
+        """删除失效 manifest 记录及其 media_item_links 扩展索引。"""
+
+        if not records:
+            return 0
+
+        record_ids = [record["id"] for record in records if record.get("id") is not None]
+        file_ids = [str(record["file_id"]) for record in records if record.get("file_id")]
+
+        async with get_db_conn() as db:
+            if record_ids:
+                placeholders = ",".join(["?"] * len(record_ids))
+                await db.execute(
+                    f"DELETE FROM media_item_links WHERE strm_record_id IN ({placeholders})",
+                    tuple(record_ids),
+                )
+
+            if file_ids:
+                placeholders = ",".join(["?"] * len(file_ids))
+                await db.execute(
+                    f"DELETE FROM media_item_links WHERE cloud_type='115' AND file_id IN ({placeholders})",
+                    tuple(file_ids),
+                )
+                await db.execute(
+                    f"DELETE FROM strm_records WHERE cloud_type='115' AND file_id IN ({placeholders})",
+                    tuple(file_ids),
+                )
+
+            await db.commit()
+
+        return len(file_ids)
+
+    async def _cleanup_invalid_strm_records(
+        self,
+        *,
+        dir_id: str,
+        output_dir: str,
+        root_output_dir: str | None,
+    ) -> dict[str, int]:
+        """按 115 本地缓存清理已经失效的 STRM 文件与 manifest 记录。"""
+
+        local_items = list_local_files(dir_id, recursive=True)
+        alive_file_ids = {
+            str(item["id"])
+            for item in local_items
+            if not item.get("is_dir") and item.get("id") is not None
+        }
+        alive_dir_ids = [str(dir_id)] + [str(item["id"]) for item in local_items if item.get("is_dir")]
+        scope_prefix = self._derive_scope_prefix(output_dir, root_output_dir)
+
+        records = await self._load_cleanup_candidates(
+            dir_id=dir_id,
+            archive_dir_ids=alive_dir_ids,
+            scope_prefix=scope_prefix,
+        )
+        stale_records = [record for record in records if str(record.get("file_id") or "") not in alive_file_ids]
+        if not stale_records:
+            return {"records": 0, "files": 0}
+
+        deleted_files = 0
+        for record in stale_records:
+            strm_path = record.get("strm_abs_path") or record.get("strm_path") or ""
+            if not strm_path:
+                continue
+
+            try:
+                os.remove(strm_path)
+                deleted_files += 1
+            except FileNotFoundError:
+                continue
+            except Exception as exc:
+                logger.warning(f"[STRM cleanup] Failed to remove stale STRM file {strm_path}: {exc}")
+
+        deleted_records = await self._delete_manifest_records(stale_records)
+        logger.info(
+            f"[STRM cleanup] dir_id={dir_id}, stale_records={deleted_records}, deleted_files={deleted_files}, scope={scope_prefix or dir_id}"
+        )
+        return {"records": deleted_records, "files": deleted_files}
+
+    async def cleanup_invalid_strm_records(
+        self,
+        *,
+        dir_id: str,
+        output_dir: str,
+        root_output_dir: str | None,
+    ) -> dict[str, int]:
+        """公开 manifest 清理步骤，供全链路编排单独调用。"""
+
+        return await self._cleanup_invalid_strm_records(
+            dir_id=dir_id,
+            output_dir=output_dir,
+            root_output_dir=root_output_dir,
+        )
 
     async def generate_strm(
         self,
@@ -88,14 +257,35 @@ class StrmGenerator115:
             logger.error(f"Failed to write STRM file {strm_path}: {e}")
             return ""
 
-    async def batch_generate(self, dir_id: str, output_dir: str, base_url: str, recursive: bool = True, root_output_dir: str = None, force: bool = False) -> list[str]:
+    async def batch_generate(
+        self,
+        dir_id: str,
+        output_dir: str,
+        base_url: str,
+        recursive: bool = True,
+        root_output_dir: str = None,
+        force: bool = False,
+        cleanup_invalid: bool = True,
+    ) -> list[str]:
         """批量生成STRM文件"""
         if root_output_dir is None:
             root_output_dir = output_dir
 
+        config = get_config()
+        root_output_path = Path(root_output_dir).resolve()
         generated = []
         limit = 1000
         offset = 0
+
+        if config.strm.clean_invalid and cleanup_invalid:
+            try:
+                await self._cleanup_invalid_strm_records(
+                    dir_id=dir_id,
+                    output_dir=output_dir,
+                    root_output_dir=root_output_dir,
+                )
+            except Exception as exc:
+                logger.warning(f"[STRM cleanup] Failed before batch_generate dir_id={dir_id}: {exc}")
 
         while True:
             # 防风控：使用按批限流器，允许瞬间迸发，降低请求频率惩罚
@@ -105,6 +295,7 @@ class StrmGenerator115:
                 dir_id=dir_id,
                 limit=limit,
                 offset=offset,
+                recursive=False,
             )
             if "error" in res:
                 logger.error(f"Batch generate error: {res['error']}")
@@ -136,13 +327,22 @@ class StrmGenerator115:
             for item in items:
                 # 文件夹处理
                 if "fid" not in item:
-                    if recursive and (skipped_files < total_files or force):
+                    should_descend = force or total_files == 0 or skipped_files < total_files
+                    if recursive and should_descend:
                         # 流控：递归子目录前延迟
                         await asyncio.sleep(1.5)
                         folder_name = item.get("n", "")
                         folder_id = str(item.get("cid"))
                         sub_dir = os.path.join(output_dir, folder_name)
-                        sub_generated = await self.batch_generate(folder_id, sub_dir, base_url, recursive, root_output_dir, force)
+                        sub_generated = await self.batch_generate(
+                            folder_id,
+                            sub_dir,
+                            base_url,
+                            recursive,
+                            root_output_dir,
+                            force,
+                            cleanup_invalid,
+                        )
                         generated.extend(sub_generated)
                     elif recursive:
                         logger.debug(f"Skipping fully processed subdirectory: {item.get('n', '')}")
@@ -162,17 +362,23 @@ class StrmGenerator115:
                             strm_path = await self.generate_strm(pickcode, file_name, output_dir, root_output_dir, base_url)
                             if strm_path:
                                 generated.append(strm_path)
-                                # Record to DB
                                 try:
-                                    from app.database import get_db_conn
-                                    async with get_db_conn() as db:
-                                        await db.execute('''
-                                            INSERT OR IGNORE INTO strm_records (file_id, cloud_type, strm_path)
-                                            VALUES (?, ?, ?)
-                                        ''', (file_id, '115', strm_path))
-                                        await db.commit()
+                                    abs_strm_path = str(Path(strm_path).resolve())
+                                    strm_rel_path = os.path.relpath(abs_strm_path, str(root_output_path)).replace("\\", "/")
+                                    archive_rel_path = Path(strm_rel_path).parent.as_posix()
+                                    if archive_rel_path == ".":
+                                        archive_rel_path = ""
+
+                                    await self._record_manifest(
+                                        file_id=file_id,
+                                        archive_dir_id=dir_id,
+                                        archive_rel_path=archive_rel_path,
+                                        strm_rel_path=strm_rel_path,
+                                        strm_abs_path=abs_strm_path,
+                                        pickcode=pickcode,
+                                    )
                                 except Exception as e:
-                                    logger.error(f"Failed to record STRM in DB: {e}")
+                                    logger.error(f"Failed to record STRM manifest: {e}")
                                 
             # 分页逻辑
             if len(items) < limit:
@@ -192,8 +398,6 @@ class StrmGenerator115:
         pickcode: str,
         task_id: str | None = None,
     ) -> None:
-        from app.database import get_db_conn
-
         record = build_manifest_record(
             cloud_type="115",
             file_id=file_id,

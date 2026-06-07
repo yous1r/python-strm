@@ -15,6 +15,11 @@ logger = setup_logger()
 
 from app.core.monitor.telegram import telegram_monitor
 from app.core.monitor.handler import init_handlers
+from app.core.cloud115.db_sync import init_db_sync_events
+from app.services.cloud115_full_sync_service import (
+    cloud115_full_sync_service,
+    init_cloud115_full_sync_events,
+)
 from app.core.sync.engine import sync_engine
 
 from app.core.emby.standalone_proxy import restart_standalone_proxy, stop_standalone_proxy
@@ -30,6 +35,8 @@ async def lifespan(app: FastAPI):
     start_scheduler()
     
     init_handlers()
+    init_db_sync_events()
+    init_cloud115_full_sync_events()
     init_transfer_pipeline()
 
     config = get_config()
@@ -39,9 +46,14 @@ async def lifespan(app: FastAPI):
     add_job(sync_engine.run_sync_task, "interval", minutes=interval_mins, id="auto_sync", replace_existing=True)
 
     # 注册 115 本地数据库同步任务（每 6 小时）
-    from app.core.cloud115.db_sync import sync_all_configured
-    add_job(sync_all_configured, "interval", hours=6, id="db_sync", replace_existing=True)
-    logger.info("Registered 115 DB sync job (every 6h)")
+    add_job(
+        cloud115_full_sync_service.run_scheduled_full_sync,
+        "interval",
+        hours=6,
+        id="db_sync",
+        replace_existing=True,
+    )
+    logger.info("Registered 115 full sync job (every 6h)")
 
     if config.monitor.startup_pipeline.enabled:
         spawn_task(run_startup_pipeline(), name="startup_pipeline")

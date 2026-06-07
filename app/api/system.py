@@ -7,6 +7,7 @@ from typing import List
 from app.services.system_service import (
     apply_runtime_config_changes,
     trigger_db_sync_task,
+    trigger_emby_preheat_task,
     trigger_sync_task,
 )
 from app.services.telegram_service import (
@@ -38,6 +39,15 @@ class TelegramScrapeRequest(BaseModel):
 
 class TelegramSyncChannelRequest(TelegramScrapeRequest):
     channel_ref: str
+
+
+class EmbyPreheatRequest(BaseModel):
+    instance_name: str = ""
+    user_id: str = ""
+    library_ids: List[str] = []
+    limit: int = 0
+    overwrite: bool = False
+
 
 router = APIRouter(prefix="/system", tags=["System Config"])
 
@@ -249,6 +259,18 @@ async def fetch_sync_history():
 async def trigger_db_sync():
     """手动触发 115 目录树本地缓存同步"""
     return trigger_db_sync_task()
+
+
+@router.post("/emby/preheat-media-links")
+async def trigger_emby_preheat(req: EmbyPreheatRequest):
+    """手动触发 Emby 媒体项到 115 播放索引的批量预热"""
+    return trigger_emby_preheat_task(
+        instance_name=req.instance_name,
+        user_id=req.user_id,
+        library_ids=req.library_ids,
+        limit=req.limit,
+        overwrite=req.overwrite,
+    )
 
 @router.get("/tasks")
 async def get_background_tasks():
