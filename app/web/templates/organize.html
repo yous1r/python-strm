@@ -131,22 +131,11 @@ input:checked + .slider:before {
     </div>
 
     <div class="glass-panel animate-fade-in delay-2" style="max-width: 800px; margin-bottom: 2rem;">
-        <h2 style="margin-bottom: 1.5rem;"><i class="fa-solid fa-folder-tree"></i> 整理分类规则映射</h2>
+        <h2 style="margin-bottom: 1rem;"><i class="fa-solid fa-sliders"></i> 整理偏好</h2>
         <p style="color: var(--text-secondary); margin-bottom: 1.5rem; font-size: 0.9rem;">
-            解析出的影片将按照以下大类与地区建立目录结构：<code>分类/地区/片名/片名.strm</code>
+            分类规则已迁移到“媒体库引擎 -> 转存管道 -> 分类规则”，并直接写入真实生效的 <code>transfer.categories</code>。
         </p>
-        
-        <div style="display: flex; gap: 1.5rem;">
-            <div class="form-group" style="flex: 1;">
-                <label class="form-label">主分类目录 (每行一个)</label>
-                <textarea id="org_categories" class="form-control" rows="6" placeholder="电影&#10;剧集&#10;动漫"></textarea>
-            </div>
-            <div class="form-group" style="flex: 1;">
-                <label class="form-label">地区分类子目录 (每行一个)</label>
-                <textarea id="org_regions" class="form-control" rows="6" placeholder="国产&#10;欧美&#10;日韩"></textarea>
-            </div>
-        </div>
-        
+
         <h3 style="margin-top: 1rem; margin-bottom: 1rem; font-size: 1.1rem; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 1rem;">
             洗版策略 (Wash Config)
         </h3>
@@ -300,8 +289,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             
             // Organize
             document.getElementById('org_enabled').checked = config.organize.enabled;
-            document.getElementById('org_categories').value = (config.organize.categories || []).join('\n');
-            document.getElementById('org_regions').value = (config.organize.regions || []).join('\n');
             
             // Wash
             document.getElementById('wash_dolby').checked = config.organize.wash.prefer_dolby;
@@ -362,8 +349,6 @@ async function saveOrganizeConfig(silent = false) {
         },
         organize: {
             enabled: document.getElementById('org_enabled').checked,
-            categories: parseList(document.getElementById('org_categories').value),
-            regions: parseList(document.getElementById('org_regions').value),
             wash: {
                 prefer_dolby: document.getElementById('wash_dolby').checked,
                 prefer_larger: document.getElementById('wash_larger').checked

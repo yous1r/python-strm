@@ -14,44 +14,10 @@
             Python-STRM
         </div>
         <ul class="nav-links">
+            <li class="nav-section-label">运行面板</li>
             <li>
                 <a href="/" class="nav-link {% if request.url.path == '/' %}active{% endif %}">
                     <i class="fa-solid fa-chart-pie"></i> 仪表盘
-                </a>
-            </li>
-            <li>
-                <a href="/115" class="nav-link {% if request.url.path.startswith('/115') %}active{% endif %}">
-                    <i class="fa-solid fa-cloud"></i> 115网盘
-                </a>
-            </li>
-            <li>
-                <a href="/123" class="nav-link {% if request.url.path.startswith('/123') %}active{% endif %}">
-                    <i class="fa-solid fa-cloud-arrow-down"></i> 123网盘
-                </a>
-            </li>
-            <li>
-                <a href="/strm" class="nav-link {% if request.url.path.startswith('/strm') %}active{% endif %}">
-                    <i class="fa-solid fa-file-video"></i> STRM 管理
-                </a>
-            </li>
-            <li>
-                <a href="/search" class="nav-link {% if request.url.path.startswith('/search') %}active{% endif %}">
-                    <i class="fa-solid fa-search"></i> 资源盘搜
-                </a>
-            </li>
-            <li>
-                <a href="/emby" class="nav-link {% if request.url.path.startswith('/emby') %}active{% endif %}">
-                    <i class="fa-solid fa-tv"></i> Emby 媒体库
-                </a>
-            </li>
-            <li>
-                <a href="/library" class="nav-link {% if request.url.path.startswith('/library') %}active{% endif %}">
-                    <i class="fa-solid fa-photo-film"></i> 资源图鉴
-                </a>
-            </li>
-            <li>
-                <a href="/transfer" class="nav-link {% if request.url.path.startswith('/transfer') %}active{% endif %}">
-                    <i class="fa-solid fa-shuffle"></i> 转存整理
                 </a>
             </li>
             <li>
@@ -64,22 +30,60 @@
                     <i class="fa-solid fa-bug"></i> 管线调试
                 </a>
             </li>
-            <li style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
-                <span style="padding: 0 1.5rem; font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.1em;">核心设置</span>
-            </li>
+
+            <li class="nav-section-label">存储与云盘</li>
             <li>
-                <a href="/notify" class="nav-link {% if request.url.path == '/notify' %}active{% endif %}">
-                    <i class="fa-solid fa-bell"></i> 消息推送
+                <a href="/115" class="nav-link {% if request.url.path.startswith('/115') %}active{% endif %}">
+                    <i class="fa-solid fa-cloud"></i> 115 网盘
                 </a>
             </li>
+            <li>
+                <a href="/123" class="nav-link {% if request.url.path.startswith('/123') %}active{% endif %}">
+                    <i class="fa-solid fa-cloud-arrow-down"></i> 123 网盘
+                </a>
+            </li>
+            <li>
+                <a href="/search" class="nav-link {% if request.url.path.startswith('/search') %}active{% endif %}">
+                    <i class="fa-solid fa-search"></i> 资源盘搜
+                </a>
+            </li>
+
+            <li class="nav-section-label">媒体库引擎</li>
+            <li>
+                <a href="/transfer" class="nav-link {% if request.url.path.startswith('/transfer') %}active{% endif %}">
+                    <i class="fa-solid fa-shuffle"></i> 转存管道
+                </a>
+            </li>
+            <li>
+                <a href="/strm" class="nav-link {% if request.url.path.startswith('/strm') %}active{% endif %}">
+                    <i class="fa-solid fa-file-video"></i> STRM 管理
+                </a>
+            </li>
+            <li>
+                <a href="/organize" class="nav-link {% if request.url.path.startswith('/organize') %}active{% endif %}">
+                    <i class="fa-solid fa-film"></i> 刮削与整理
+                </a>
+            </li>
+            <li>
+                <a href="/emby" class="nav-link {% if request.url.path.startswith('/emby') %}active{% endif %}">
+                    <i class="fa-solid fa-tv"></i> Emby 媒体库
+                </a>
+            </li>
+            <li>
+                <a href="/library" class="nav-link {% if request.url.path.startswith('/library') %}active{% endif %}">
+                    <i class="fa-solid fa-photo-film"></i> 资源图鉴
+                </a>
+            </li>
+
+            <li class="nav-section-label">自动化与通知</li>
             <li>
                 <a href="/monitor" class="nav-link {% if request.url.path == '/monitor' %}active{% endif %}">
                     <i class="fa-solid fa-satellite-dish"></i> 频道监控
                 </a>
             </li>
             <li>
-                <a href="/organize" class="nav-link {% if request.url.path.startswith('/organize') %}active{% endif %}">
-                    <i class="fa-solid fa-film"></i> 刮削与整理
+                <a href="/notify" class="nav-link {% if request.url.path == '/notify' %}active{% endif %}">
+                    <i class="fa-solid fa-bell"></i> 消息推送
                 </a>
             </li>
             <li>

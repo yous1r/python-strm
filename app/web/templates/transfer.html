@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block subtitle %}转存管理：全链路追踪+配置+一键还原{% endblock %}
+{% block subtitle %}统一配置媒体入库、转存中转、整理归档与分类规则{% endblock %}
 
 {% block content %}
 <style>
@@ -23,27 +23,31 @@
 .preview-list { max-height: 300px; overflow-y: auto; }
 .preview-item { padding: 0.5rem 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; align-items: center; gap: 0.75rem; }
 .preview-item i.fa-rotate-left { color: var(--warning); }
+.category-rule-row { display: grid; grid-template-columns: minmax(160px, 220px) 1fr auto; gap: 0.75rem; align-items: start; padding: 0.75rem; border: 1px solid var(--border); border-radius: 0.75rem; background: rgba(0,0,0,0.15); margin-bottom: 0.75rem; }
 </style>
 
 <!-- Transfer Config Panel -->
 <div class="glass-panel transfer-card animate-fade-in delay-1">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-        <h2 style="margin: 0;"><i class="fa-solid fa-gear" style="color: var(--accent-primary); margin-right: 0.75rem;"></i>转存管道配置</h2>
+        <h2 style="margin: 0;"><i class="fa-solid fa-gear" style="color: var(--accent-primary); margin-right: 0.75rem;"></i>媒体入库管道</h2>
         <label style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; cursor: pointer;">
             <input type="checkbox" id="cfg_enabled" onchange="toggleConfig()"> 启用管道
         </label>
     </div>
+    <p style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.9rem;">
+        这里是转存目录的主配置入口。Telegram 自动转存默认沿用下方中转目录和归档根目录。
+    </p>
     <div id="configFields" style="display: none;">
         <div class="form-row" style="margin-bottom: 0.75rem;">
             <div style="flex: 1; min-width: 200px;">
-                <label class="form-label">临时目录 (temp_dir_id)</label>
+                <label class="form-label">统一转存中转目录</label>
                 <div style="display: flex; gap: 0.5rem;">
                     <input type="text" class="form-control" id="cfg_temp_dir" placeholder="转存后暂存目录" readonly>
                     <button type="button" class="btn btn-secondary" onclick="openDirPickerFor('cfg_temp_dir')" style="white-space: nowrap;">选择</button>
                 </div>
             </div>
             <div style="flex: 1; min-width: 200px;">
-                <label class="form-label">归档目录 (archive_dir_id)</label>
+                <label class="form-label">统一整理归档根目录</label>
                 <div style="display: flex; gap: 0.5rem;">
                     <input type="text" class="form-control" id="cfg_archive_dir" placeholder="整理后落点" readonly>
                     <button type="button" class="btn btn-secondary" onclick="openDirPickerFor('cfg_archive_dir')" style="white-space: nowrap;">选择</button>
@@ -52,7 +56,7 @@
         </div>
         <div class="form-row" style="margin-bottom: 0.75rem;">
             <div style="flex: 1; min-width: 150px;">
-                <label class="form-label">收件箱 CID (inbox_dir_id)</label>
+                <label class="form-label">转存收件箱 / 默认来源目录</label>
                 <input type="text" class="form-control" id="cfg_inbox_dir" placeholder="默认 0(最近接收)">
             </div>
         </div>
@@ -73,7 +77,25 @@
     </div>
 </div>
 
-<div class="glass-panel transfer-card animate-fade-in delay-2" style="margin-bottom: 1.5rem;">
+<div class="glass-panel transfer-card animate-fade-in delay-2">
+    <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem;">
+        <div>
+            <h2 style="margin: 0 0 0.35rem 0;"><i class="fa-solid fa-folder-tree" style="color: var(--accent-primary); margin-right: 0.75rem;"></i>分类规则</h2>
+            <p style="margin: 0; color: var(--text-secondary); font-size: 0.9rem;">真实写入 <code>transfer.categories</code>，用于转存整理时生成归档路径。</p>
+        </div>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <button type="button" class="btn btn-secondary" onclick="addCategoryRule()"><i class="fa-solid fa-plus"></i> 添加分类</button>
+            <button type="button" class="btn btn-secondary" onclick="resetCategoryRules()"><i class="fa-solid fa-rotate-left"></i> 恢复默认</button>
+            <button type="button" class="btn btn-secondary" onclick="clearCategoryRules()"><i class="fa-solid fa-broom"></i> 使用后端默认</button>
+        </div>
+    </div>
+    <div id="categoryRulesList"></div>
+    <p style="margin: 0.75rem 0 0; color: var(--text-secondary); font-size: 0.85rem;">
+        子分类每行一个；留空时该主分类不再拆分地区子目录。点击“使用后端默认”会保存为空列表，由后端按内置默认规则分类。
+    </p>
+</div>
+
+<div class="glass-panel transfer-card animate-fade-in delay-3" style="margin-bottom: 1.5rem;">
     <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;">
         <div>
             <h2 style="margin: 0 0 0.35rem 0;"><i class="fa-solid fa-rotate" style="color: var(--accent-primary); margin-right: 0.75rem;"></i>归档 STRM 覆盖</h2>
@@ -163,6 +185,14 @@ let currentTasks = [];
 let currentTaskId = null;
 let currentStatusFilter = null;
 let currentTaskDetail = null;
+let currentCategories = [];
+const DEFAULT_TRANSFER_CATEGORIES = [
+    {name: '电影', subcategories: ['国产电影', '欧美电影', '日韩电影', '其他']},
+    {name: '剧集', subcategories: ['国产剧集', '欧美剧集', '日韩剧集', '其他']},
+    {name: '动漫', subcategories: ['国产动漫', '日韩动漫', '欧美动漫', '其他']},
+    {name: '纪录片', subcategories: []},
+    {name: '综艺', subcategories: []},
+];
 
 document.addEventListener('DOMContentLoaded', () => {
     loadTasks();
@@ -187,6 +217,8 @@ async function loadTransferConfig() {
         document.getElementById('cfg_inbox_dir').value = t.inbox_dir_id || '0';
         document.getElementById('cfg_auto_organize').checked = t.auto_organize !== false;
         document.getElementById('cfg_auto_strm').checked = t.auto_strm !== false;
+        currentCategories = Array.isArray(t.categories) ? t.categories : DEFAULT_TRANSFER_CATEGORIES.map(c => ({...c, subcategories: [...c.subcategories]}));
+        renderCategoryRules();
         document.getElementById('configFields').style.display = t.enabled ? 'block' : 'none';
     } catch(e) {}
 }
@@ -199,6 +231,67 @@ function openDirPickerFor(fieldId) {
     window.openDirectoryPicker((id) => { document.getElementById(fieldId).value = id; }, '115');
 }
 
+function renderCategoryRules() {
+    const list = document.getElementById('categoryRulesList');
+    if (!list) return;
+    if (currentCategories.length === 0) {
+        list.innerHTML = '<div style="padding: 1rem; color: var(--text-secondary); border: 1px dashed var(--border); border-radius: 0.75rem; text-align: center;">当前将使用后端内置默认分类规则。</div>';
+        return;
+    }
+    list.innerHTML = currentCategories.map((cat, idx) => `
+        <div class="category-rule-row">
+            <div>
+                <label class="form-label">主分类</label>
+                <input type="text" class="form-control category-name" data-index="${idx}" value="${escapeAttr(cat.name || '')}" placeholder="如：剧集">
+            </div>
+            <div>
+                <label class="form-label">子分类目录</label>
+                <textarea class="form-control category-subcategories" data-index="${idx}" rows="3" placeholder="国产剧集&#10;欧美剧集">${escapeHtml((cat.subcategories || []).join('\n'))}</textarea>
+            </div>
+            <button type="button" class="btn btn-secondary" style="color: var(--error); padding: 0.75rem;" onclick="removeCategoryRule(${idx})"><i class="fa-solid fa-trash"></i></button>
+        </div>
+    `).join('');
+}
+
+function escapeHtml(value) {
+    return String(value).replace(/[&<>]/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'}[ch]));
+}
+
+function escapeAttr(value) {
+    return escapeHtml(value).replace(/"/g, '&quot;');
+}
+
+function collectCategoryRules() {
+    const rows = Array.from(document.querySelectorAll('.category-rule-row'));
+    return rows.map(row => {
+        const name = row.querySelector('.category-name').value.trim();
+        const subcategories = row.querySelector('.category-subcategories').value.split('\n').map(v => v.trim()).filter(Boolean);
+        return {name, subcategories};
+    }).filter(cat => cat.name);
+}
+
+function addCategoryRule() {
+    currentCategories = collectCategoryRules();
+    currentCategories.push({name: '', subcategories: []});
+    renderCategoryRules();
+}
+
+function removeCategoryRule(idx) {
+    currentCategories = collectCategoryRules();
+    currentCategories.splice(idx, 1);
+    renderCategoryRules();
+}
+
+function resetCategoryRules() {
+    currentCategories = DEFAULT_TRANSFER_CATEGORIES.map(c => ({...c, subcategories: [...c.subcategories]}));
+    renderCategoryRules();
+}
+
+function clearCategoryRules() {
+    currentCategories = [];
+    renderCategoryRules();
+}
+
 async function saveTransferConfig() {
     const payload = {
         transfer: {
@@ -207,7 +300,8 @@ async function saveTransferConfig() {
             archive_dir_id: document.getElementById('cfg_archive_dir').value,
             inbox_dir_id: document.getElementById('cfg_inbox_dir').value || '0',
             auto_organize: document.getElementById('cfg_auto_organize').checked,
-            auto_strm: document.getElementById('cfg_auto_strm').checked
+            auto_strm: document.getElementById('cfg_auto_strm').checked,
+            categories: collectCategoryRules()
         }
     };
     try {

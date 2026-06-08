@@ -62,24 +62,32 @@
                 <button type="button" class="btn btn-outline" style="align-self: flex-start; padding: 0.3rem 0.6rem; font-size: 0.9rem;" onclick="openTmdbModal()"><i class="fa-solid fa-film"></i> TMDB 可视化配置正则</button>
             </div>
         </div>
-        <div class="form-group">
-            <label class="form-label">115 转存中转目录 ID (必填，转存后存放的位置)</label>
-            <div style="display: flex; gap: 0.5rem;">
-                <input type="text" id="mon_tg_target_dir_id" class="form-control" placeholder="点击右侧按钮选择..." readonly>
-                <button type="button" class="btn btn-secondary" onclick="window.openDirectoryPicker(id => document.getElementById('mon_tg_target_dir_id').value = id, '115')" style="white-space: nowrap; padding: 0.5rem 1rem;">
-                    <i class="fa-solid fa-folder-open"></i> 选择目录
-                </button>
-            </div>
+        <div style="margin: 1rem 0; padding: 0.85rem 1rem; border: 1px solid var(--border); border-radius: 0.75rem; color: var(--text-secondary); background: rgba(255,255,255,0.03); font-size: 0.9rem;">
+            <i class="fa-solid fa-circle-info"></i>
+            Telegram 转存默认使用“媒体库引擎 -> 转存管道”中的统一转存中转目录和统一整理归档根目录。
         </div>
-        <div class="form-group">
-            <label class="form-label">115 整理归档根目录 ID (可选，开启自动整理后归档目标根路径)</label>
-            <div style="display: flex; gap: 0.5rem;">
-                <input type="text" id="mon_tg_archive_dir_id" class="form-control" placeholder="点击右侧按钮选择..." readonly>
-                <button type="button" class="btn btn-secondary" onclick="window.openDirectoryPicker(id => document.getElementById('mon_tg_archive_dir_id').value = id, '115')" style="white-space: nowrap; padding: 0.5rem 1rem;">
-                    <i class="fa-solid fa-folder-open"></i> 选择目录
-                </button>
+        <details class="form-group" style="border: 1px solid var(--border); border-radius: 0.75rem; padding: 1rem; background: rgba(0,0,0,0.12);">
+            <summary style="cursor: pointer; color: var(--text-primary); font-weight: 600;">高级覆盖配置</summary>
+            <p style="color: var(--text-secondary); margin: 0.75rem 0 1rem; font-size: 0.9rem;">仅当 Telegram 需要独立于转存管道使用另一套目录时填写。</p>
+            <div class="form-group">
+                <label class="form-label">覆盖默认中转目录（可选）</label>
+                <div style="display: flex; gap: 0.5rem;">
+                    <input type="text" id="mon_tg_target_dir_id" class="form-control" placeholder="为空或 0 时沿用转存管道" readonly>
+                    <button type="button" class="btn btn-secondary" onclick="window.openDirectoryPicker(id => document.getElementById('mon_tg_target_dir_id').value = id, '115')" style="white-space: nowrap; padding: 0.5rem 1rem;">
+                        <i class="fa-solid fa-folder-open"></i> 选择目录
+                    </button>
+                </div>
             </div>
-        </div>
+            <div class="form-group" style="margin-bottom: 0;">
+                <label class="form-label">覆盖默认归档根目录（可选）</label>
+                <div style="display: flex; gap: 0.5rem;">
+                    <input type="text" id="mon_tg_archive_dir_id" class="form-control" placeholder="为空或 0 时沿用转存管道" readonly>
+                    <button type="button" class="btn btn-secondary" onclick="window.openDirectoryPicker(id => document.getElementById('mon_tg_archive_dir_id').value = id, '115')" style="white-space: nowrap; padding: 0.5rem 1rem;">
+                        <i class="fa-solid fa-folder-open"></i> 选择目录
+                    </button>
+                </div>
+            </div>
+        </details>
         <div class="form-group" style="display: flex; align-items: center; gap: 1rem; margin-top: 1rem;">
             <label class="form-label" style="margin-bottom: 0;">自动整理转存的文件</label>
             <label class="switch">

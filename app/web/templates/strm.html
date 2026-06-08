@@ -58,7 +58,7 @@
             </select>
         </div>
         <div class="form-group">
-            <label class="form-label">目标目录 CID (115网盘中的文件夹ID)</label>
+            <label class="form-label">本次生成扫描目录 CID</label>
             <div style="display: flex; gap: 0.5rem;">
                 <input type="text" id="dirId" class="form-control" placeholder="例如: 1234567890">
                 <button type="button" class="btn btn-secondary" onclick="openFolderPicker()" style="white-space: nowrap; padding: 0.5rem 1rem;">
@@ -92,16 +92,16 @@
 
 <!-- 自动化监控目录面板 -->
 <div class="glass-panel animate-fade-in delay-3" style="margin-top: 1.5rem; max-width: 1200px;">
-    <h2 style="margin-bottom: 1.5rem;"><i class="fa-solid fa-list-check"></i> 115网盘 自动化监控目录配置</h2>
+    <h2 style="margin-bottom: 1.5rem;"><i class="fa-solid fa-list-check"></i> 115 STRM 扫描源目录</h2>
     <p style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.9rem;">
-        添加到这里的目录将会被后台自动轮询任务 `sync_engine` 监控。发现新视频将自动拉取元数据生成 NFO 及 STRM，并分发至隔离的子文件夹中。
+        这里定义 115 内容扫描源范围，用于 STRM 扫描、全链路同步和本地目录缓存。手动批量生成工具中的目录只是本次任务参数，不会保存为配置。
     </p>
     <ul id="syncDirsList" style="list-style: none; padding: 0; margin-bottom: 1rem;">
         <!-- 动态渲染 -->
     </ul>
     <div style="display: flex; gap: 0.5rem;">
         <button type="button" class="btn btn-secondary" onclick="openFolderPickerForSync()">
-            <i class="fa-solid fa-plus"></i> 添加监控目录
+            <i class="fa-solid fa-plus"></i> 添加扫描源目录
         </button>
         <button type="button" class="btn btn-primary" onclick="triggerSyncNow(false)" style="background: var(--accent-primary);">
             <i class="fa-solid fa-bolt"></i> 立即增量同步
