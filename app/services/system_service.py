@@ -9,9 +9,11 @@ def apply_runtime_config_changes(changed_data: dict, old_config, new_config) -> 
         spawn_task(restart_standalone_proxy(), name="proxy_restart")
 
     if _telegram_monitor_changed(changed_data, old_config, new_config):
+        from app.services.telegram_background_service import telegram_background_sync_service
         from app.services.telegram_service import restart_monitor
 
         spawn_task(restart_monitor(), name="tg_restart")
+        telegram_background_sync_service.configure_scheduled_sync_job()
 
 
 def trigger_sync_task(force: bool = False) -> dict[str, str]:

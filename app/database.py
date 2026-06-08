@@ -50,6 +50,10 @@ async def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 cloud_type TEXT NOT NULL,
                 file_id TEXT NOT NULL,
+                source_file_name TEXT,
+                source_pickcode TEXT,
+                source_sha TEXT,
+                source_archive_dir_id TEXT,
                 archive_dir_id TEXT,
                 archive_rel_path TEXT,
                 strm_rel_path TEXT,
@@ -215,6 +219,10 @@ async def init_db():
             strm_columns = {row[1] for row in await cursor.fetchall()}
 
         strm_record_columns = {
+            "source_file_name": "ALTER TABLE strm_records ADD COLUMN source_file_name TEXT",
+            "source_pickcode": "ALTER TABLE strm_records ADD COLUMN source_pickcode TEXT",
+            "source_sha": "ALTER TABLE strm_records ADD COLUMN source_sha TEXT",
+            "source_archive_dir_id": "ALTER TABLE strm_records ADD COLUMN source_archive_dir_id TEXT",
             "archive_dir_id": "ALTER TABLE strm_records ADD COLUMN archive_dir_id TEXT",
             "archive_rel_path": "ALTER TABLE strm_records ADD COLUMN archive_rel_path TEXT",
             "strm_rel_path": "ALTER TABLE strm_records ADD COLUMN strm_rel_path TEXT",
@@ -271,8 +279,8 @@ async def get_db_conn():
     finally:
         await conn.close()
 
-async def insert_tg_resource(db, resource: dict) -> bool:
-    """插入资源，如果同频道同消息已存在则忽略。"""
+async def insert_tg_resource(db, resource: dict) -> dict | None:
+    """插入资源，如果同频道同消息已存在则忽略并返回 None。"""
     cursor = await db.execute('''
         INSERT OR IGNORE INTO tg_resources 
         (message_id, channel_id, title, raw_text, link, password, disk_type, msg_date, status, base_title, poster_url, overview, cast_text)
@@ -292,7 +300,19 @@ async def insert_tg_resource(db, resource: dict) -> bool:
         resource.get('overview'),
         resource.get('cast_text')
     ))
-    return cursor.rowcount > 0
+    if cursor.rowcount <= 0:
+        return None
+
+    async with db.execute(
+        '''
+        SELECT *
+        FROM tg_resources
+        WHERE id = ?
+        ''',
+        (cursor.lastrowid,),
+    ) as row_cursor:
+        row = await row_cursor.fetchone()
+        return dict(row) if row else None
 
 
 async def _migrate_tg_resources_unique_constraint(db) -> None:

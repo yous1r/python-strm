@@ -9,6 +9,7 @@ from app.core.transfer.catalog import ensure_path
 from app.core.transfer.scope import init_scope, validate, expand_allowed_dirs
 from app.config import get_config
 from app.services.cloud115_full_sync_service import cloud115_full_sync_service
+from app.services.telegram_background_service import telegram_background_sync_service
 
 router = APIRouter(prefix="/api/v1/debug", tags=["调试"])
 
@@ -39,6 +40,15 @@ async def get_cloud115_full_sync(task_id: str):
         "success": task.get("status") != "failed",
         **task,
         "completed": task.get("status") in {"completed", "failed"},
+    }
+
+
+@router.post("/telegram/latest-transfer")
+async def trigger_telegram_latest_transfer():
+    result = await telegram_background_sync_service.run_scheduled_sync()
+    return {
+        "success": result.get("status") != "failed",
+        **result,
     }
 
 

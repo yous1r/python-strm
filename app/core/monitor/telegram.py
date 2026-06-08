@@ -4,6 +4,7 @@ from telethon import TelegramClient, events
 from app.config import get_config
 from app.core.monitor.telegram_runtime import build_telegram_client, extract_message_text, parse_channels
 from app.events import event_bus, EVENT_MONITOR_NEW_LINK
+from app.services.telegram_resource_transfer_service import normalize_resource_payload
 
 class TelegramMonitor:
     def __init__(self):
@@ -47,15 +48,15 @@ class TelegramMonitor:
                         return
 
             channel_str = str(event.chat_id) if hasattr(event, 'chat_id') else None
-            new_links = await self.ingest_message(
+            new_resources = await self.ingest_message(
                 text, 
                 message_id=event.message.id,
                 channel_id=channel_str,
                 msg_date=str(event.message.date)
             )
-            if new_links:
-                logger.info(f"Found and ingested new links: {new_links}")
-                for link_data in new_links:
+            if new_resources:
+                logger.info(f"Found and ingested {len(new_resources)} new Telegram resources")
+                for link_data in new_resources:
                     # 实时监听只负责投递事件，避免转存链路阻塞消息消费循环。
                     event_bus.emit_background(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
 
@@ -118,8 +119,8 @@ class TelegramMonitor:
                 unique_links.append(link)
         return unique_links
 
-    async def ingest_message(self, text: str, message_id: int = None, channel_id: str = None, msg_date: str = None) -> list:
-        """从文本提取链接，提纯标题并入库。返回成功入库的新链接信息。"""
+    async def ingest_message(self, text: str, message_id: int = None, channel_id: str = None, msg_date: str = None) -> list[dict]:
+        """从文本提取链接，提纯标题并入库。返回成功入库的资源明细。"""
         from app.core.monitor.parser import extract_title_from_text
         from app.database import get_db_conn, insert_tg_resource
         
@@ -147,7 +148,7 @@ class TelegramMonitor:
         except Exception:
             pass
 
-        new_links = []
+        new_resources = []
         
         async with get_db_conn() as db:
             for link_data in links:
@@ -164,11 +165,11 @@ class TelegramMonitor:
                     "base_title": base_title,
                     "poster_url": poster_url
                 }
-                is_new = await insert_tg_resource(db, resource)
-                if is_new:
-                    new_links.append(link_data)
+                inserted_resource = await insert_tg_resource(db, resource)
+                if inserted_resource:
+                    new_resources.append(normalize_resource_payload(inserted_resource))
             await db.commit()
             
-        return new_links
+        return new_resources
 
 telegram_monitor = TelegramMonitor()

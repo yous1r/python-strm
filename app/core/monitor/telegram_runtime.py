@@ -8,6 +8,10 @@ from telethon import TelegramClient
 
 _VALID_PROXY_SCHEMES = ("http://", "https://", "socks5://", "socks5h://")
 _RESERVED_TELEGRAM_PATHS = {"c", "joinchat", "setlanguage"}
+_SUPPORTED_SHARE_LINK_PATTERNS = (
+    re.compile(r"https?://115(?:cdn)?\.com/s/\w+(?:\?[^\s\"'<>]+)?"),
+    re.compile(r"https?://(?:www\.)?123pan\.com/s/\w+-\w+\.html(?:\?[^\s\"'<>]+)?"),
+)
 
 
 def parse_telegram_proxy(proxy: str) -> dict | None:
@@ -87,8 +91,20 @@ def parse_channels(channels: Iterable[str] | None) -> list[int | str]:
 
 def extract_message_text(message) -> str:
     """统一提取 Telethon message 上的文本或 caption。"""
+    candidates = {attr: getattr(message, attr, "") for attr in ("text", "raw_text", "message")}
+
+    for attr in ("text", "raw_text", "message"):
+        value = candidates[attr]
+        if value and any(pattern.search(value) for pattern in _SUPPORTED_SHARE_LINK_PATTERNS):
+            return value
+
     for attr in ("message", "text"):
-        value = getattr(message, attr, "")
+        value = candidates.get(attr, "")
         if value:
             return value
+
+    raw_text = candidates.get("raw_text", "")
+    if raw_text:
+        return raw_text
+
     return ""

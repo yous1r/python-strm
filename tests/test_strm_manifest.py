@@ -113,21 +113,17 @@ class StrmGeneratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         generator = StrmGenerator115()
 
         responses = {
-            "root": {
-                "items": [
-                    {"cid": "child", "n": "Season 1"},
-                ]
-            },
-            "child": {
-                "items": [
-                    {"fid": "f-1", "n": "Episode 01.mkv", "pc": "pc-1"},
-                ]
-            },
+            "root": [
+                {"id": "child", "parent_id": "root", "name": "Season 1", "is_dir": True, "size": 0, "pickcode": "", "sha": ""},
+            ],
+            "child": [
+                {"id": "f-1", "parent_id": "child", "name": "Episode 01.mkv", "is_dir": False, "size": 1, "pickcode": "pc-1", "sha": ""},
+            ],
         }
         visited: list[tuple[str, bool]] = []
         recorded: list[dict] = []
 
-        async def fake_list_files_local_first(dir_id, limit=100, offset=0, recursive=True):
+        def fake_list_local_files(dir_id, recursive=False):
             visited.append((dir_id, recursive))
             return responses[dir_id]
 
@@ -138,7 +134,7 @@ class StrmGeneratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
             recorded.append(kwargs)
 
         with (
-            patch.object(generator.client, "list_files_local_first", side_effect=fake_list_files_local_first),
+            patch("app.core.cloud115.strm.list_local_files", side_effect=fake_list_local_files),
             patch.object(generator, "generate_strm", side_effect=fake_generate_strm),
             patch.object(generator, "_record_manifest", side_effect=fake_record_manifest),
             patch.object(generator, "_cleanup_invalid_strm_records", AsyncMock(return_value={"records": 0, "files": 0})),
@@ -163,20 +159,16 @@ class StrmGeneratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         generator = StrmGenerator115()
 
         responses = {
-            "root": {
-                "items": [
-                    {"cid": "child", "n": "剧集"},
-                ]
-            },
-            "child": {
-                "items": [
-                    {"fid": "f-2", "n": "Episode 02.mkv", "pc": "pc-2"},
-                ]
-            },
+            "root": [
+                {"id": "child", "parent_id": "root", "name": "剧集", "is_dir": True, "size": 0, "pickcode": "", "sha": ""},
+            ],
+            "child": [
+                {"id": "f-2", "parent_id": "child", "name": "Episode 02.mkv", "is_dir": False, "size": 1, "pickcode": "pc-2", "sha": ""},
+            ],
         }
         recorded: list[dict] = []
 
-        async def fake_list_files_local_first(dir_id, limit=100, offset=0, recursive=True):
+        def fake_list_local_files(dir_id, recursive=False):
             return responses[dir_id]
 
         async def fake_generate_strm(*args, **kwargs):
@@ -186,7 +178,7 @@ class StrmGeneratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
             recorded.append(kwargs)
 
         with (
-            patch.object(generator.client, "list_files_local_first", side_effect=fake_list_files_local_first),
+            patch("app.core.cloud115.strm.list_local_files", side_effect=fake_list_local_files),
             patch.object(generator, "generate_strm", side_effect=fake_generate_strm),
             patch.object(generator, "_record_manifest", side_effect=fake_record_manifest),
             patch.object(generator, "_cleanup_invalid_strm_records", AsyncMock(return_value={"records": 0, "files": 0})),
@@ -256,26 +248,24 @@ class StrmGeneratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
 
         generator = StrmGenerator115()
         responses = {
-            "root": {
-                "items": [
-                    {"fid": "f-new", "n": "Episode 01.mkv", "pc": "pc-new"},
-                    {"fid": "f-same", "n": "Episode 02.mkv", "pc": "pc-same"},
-                    {"fid": "f-updated", "n": "Episode 03.mkv", "pc": "pc-updated"},
-                ]
-            }
+            "root": [
+                {"id": "f-1", "parent_id": "root", "name": "Episode 01.mkv", "is_dir": False, "size": 1, "pickcode": "pc-1", "sha": ""},
+                {"id": "f-2", "parent_id": "root", "name": "Episode 02.mkv", "is_dir": False, "size": 1, "pickcode": "pc-2", "sha": ""},
+                {"id": "f-3", "parent_id": "root", "name": "Episode 03.mkv", "is_dir": False, "size": 1, "pickcode": "pc-3", "sha": ""},
+            ]
         }
         existing_records = {
-            "f-same": {
-                "file_id": "f-same",
+            "f-2": {
+                "file_id": "f-2",
                 "archive_dir_id": "root",
                 "archive_rel_path": "剧集",
                 "strm_rel_path": "剧集/Episode 02.strm",
                 "strm_abs_path": "/tmp/剧集/Episode 02.strm",
-                "play_identity": "pc-same",
+                "play_identity": "pc-2",
                 "status": "generated",
             },
-            "f-updated": {
-                "file_id": "f-updated",
+            "f-3": {
+                "file_id": "f-3",
                 "archive_dir_id": "root",
                 "archive_rel_path": "剧集",
                 "strm_rel_path": "剧集/old.strm",
@@ -285,7 +275,7 @@ class StrmGeneratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
             },
         }
         desired_records = {
-            "f-new": {
+            "f-1": {
                 "archive_dir_id": "root",
                 "archive_rel_path": "剧集",
                 "strm_rel_path": "剧集/Episode 01.strm",
@@ -293,7 +283,7 @@ class StrmGeneratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
                 "play_identity": "pc-new",
                 "status": "generated",
             },
-            "f-same": {
+            "f-2": {
                 "archive_dir_id": "root",
                 "archive_rel_path": "剧集",
                 "strm_rel_path": "剧集/Episode 02.strm",
@@ -301,7 +291,7 @@ class StrmGeneratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
                 "play_identity": "pc-same",
                 "status": "generated",
             },
-            "f-updated": {
+            "f-3": {
                 "archive_dir_id": "root",
                 "archive_rel_path": "剧集",
                 "strm_rel_path": "剧集/Episode 03.strm",
@@ -312,7 +302,7 @@ class StrmGeneratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         }
         recorded: list[dict] = []
 
-        async def fake_list_files_local_first(dir_id, limit=100, offset=0, recursive=True):
+        def fake_list_local_files(dir_id, recursive=False):
             return responses[dir_id]
 
         async def fake_load_existing(file_ids):
@@ -327,7 +317,7 @@ class StrmGeneratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
             recorded.append(kwargs)
 
         with (
-            patch.object(generator.client, "list_files_local_first", side_effect=fake_list_files_local_first),
+            patch("app.core.cloud115.strm.list_local_files", side_effect=fake_list_local_files),
             patch.object(generator, "_load_existing_records_by_file_ids", side_effect=fake_load_existing),
             patch.object(generator, "_build_manifest_record_for_item", side_effect=fake_build_manifest),
             patch.object(generator, "_record_manifest", side_effect=fake_record_manifest),
@@ -348,6 +338,260 @@ class StrmGeneratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["unchanged"], 1)
         self.assertTrue(result["changed"])
         self.assertEqual(len(recorded), 2)
+
+    async def test_sync_manifest_records_emits_debug_logs_for_created_updated_and_unchanged(self):
+        from app.core.cloud115.strm import StrmGenerator115
+
+        generator = StrmGenerator115()
+        responses = {
+            "root": [
+                {"id": "f-1", "parent_id": "root", "name": "Episode 01.mkv", "is_dir": False, "size": 1, "pickcode": "pc-1", "sha": ""},
+                {"id": "f-2", "parent_id": "root", "name": "Episode 02.mkv", "is_dir": False, "size": 1, "pickcode": "pc-2", "sha": ""},
+                {"id": "f-3", "parent_id": "root", "name": "Episode 03.mkv", "is_dir": False, "size": 1, "pickcode": "pc-3", "sha": ""},
+            ]
+        }
+        existing_records = {
+            "f-2": {
+                "file_id": "f-2",
+                "archive_dir_id": "root",
+                "archive_rel_path": "剧集",
+                "strm_rel_path": "剧集/Episode 02.strm",
+                "strm_abs_path": "/tmp/剧集/Episode 02.strm",
+                "play_identity": "pc-2",
+                "status": "generated",
+            },
+            "f-3": {
+                "file_id": "f-3",
+                "archive_dir_id": "root",
+                "archive_rel_path": "剧集",
+                "strm_rel_path": "剧集/old.strm",
+                "strm_abs_path": "/tmp/剧集/old.strm",
+                "play_identity": "pc-old",
+                "status": "generated",
+            },
+        }
+        desired_records = {
+            "f-1": {
+                "archive_dir_id": "root",
+                "archive_rel_path": "剧集",
+                "strm_rel_path": "剧集/Episode 01.strm",
+                "strm_abs_path": "/tmp/剧集/Episode 01.strm",
+                "play_identity": "pc-new",
+                "status": "generated",
+            },
+            "f-2": {
+                "archive_dir_id": "root",
+                "archive_rel_path": "剧集",
+                "strm_rel_path": "剧集/Episode 02.strm",
+                "strm_abs_path": "/tmp/剧集/Episode 02.strm",
+                "play_identity": "pc-same",
+                "status": "generated",
+            },
+            "f-3": {
+                "archive_dir_id": "root",
+                "archive_rel_path": "剧集",
+                "strm_rel_path": "剧集/Episode 03.strm",
+                "strm_abs_path": "/tmp/剧集/Episode 03.strm",
+                "play_identity": "pc-updated",
+                "status": "generated",
+            },
+        }
+
+        def fake_list_local_files(dir_id, recursive=False):
+            return responses[dir_id]
+
+        async def fake_load_existing(file_ids):
+            return {file_id: existing_records[file_id] for file_id in file_ids if file_id in existing_records}
+
+        async def fake_build_manifest(**kwargs):
+            record = dict(desired_records[kwargs["file_id"]])
+            record["file_id"] = kwargs["file_id"]
+            return record
+
+        with (
+            patch("app.core.cloud115.strm.list_local_files", side_effect=fake_list_local_files),
+            patch.object(generator, "_load_existing_records_by_file_ids", side_effect=fake_load_existing),
+            patch.object(generator, "_build_manifest_record_for_item", side_effect=fake_build_manifest),
+            patch.object(generator, "_record_manifest", AsyncMock()),
+            patch("app.core.cloud115.strm.is_video_file", return_value=True),
+            patch("app.core.cloud115.strm.get_config", return_value=type("Config", (), {"strm": type("Strm", (), {"clean_invalid": False})(), "organize": type("Organize", (), {"enabled": False})()})()),
+            patch("app.core.cloud115.strm.logger.debug") as debug_mock,
+        ):
+            await generator.sync_manifest_records(
+                dir_id="root",
+                output_dir="/tmp/剧集",
+                base_url="http://localhost:8095",
+                recursive=False,
+                root_output_dir="/tmp",
+            )
+
+        logged_messages = [call.args[0] for call in debug_mock.call_args_list if call.args]
+        self.assertTrue(any("manifest created" in message and "f-1" in message for message in logged_messages))
+        self.assertTrue(any("manifest updated" in message and "f-3" in message for message in logged_messages))
+        self.assertFalse(any("manifest unchanged" in message and "f-2" in message for message in logged_messages))
+        self.assertTrue(any("manifest sync summary" in message and "unchanged=1" in message for message in logged_messages))
+
+    async def test_sync_manifest_records_reuses_existing_record_when_signature_matches(self):
+        from app.core.cloud115.strm import StrmGenerator115
+
+        generator = StrmGenerator115()
+        responses = {
+            "root": [
+                {"id": "f-1", "parent_id": "root", "name": "Episode 01.mkv", "is_dir": False, "size": 1, "pickcode": "pc-1", "sha": "sha-1"},
+            ]
+        }
+        existing_records = {
+            "f-1": {
+                "file_id": "f-1",
+                "source_file_name": "Episode 01.mkv",
+                "source_pickcode": "pc-1",
+                "source_sha": "SHA-1",
+                "source_archive_dir_id": "root",
+                "archive_dir_id": "root",
+                "archive_rel_path": "剧集",
+                "strm_rel_path": "剧集/Episode 01.strm",
+                "strm_abs_path": "/tmp/剧集/Episode 01.strm",
+                "play_identity": "pc-1",
+                "status": "generated",
+            }
+        }
+
+        def fake_list_local_files(dir_id, recursive=False):
+            return responses[dir_id]
+
+        async def fake_load_existing(file_ids):
+            return {file_id: existing_records[file_id] for file_id in file_ids if file_id in existing_records}
+
+        with (
+            patch("app.core.cloud115.strm.list_local_files", side_effect=fake_list_local_files),
+            patch.object(generator, "_load_existing_records_by_file_ids", side_effect=fake_load_existing),
+            patch.object(generator, "_build_manifest_record_for_item", AsyncMock(side_effect=AssertionError("should not rebuild"))),
+            patch.object(generator, "_record_manifest", AsyncMock()),
+            patch("app.core.cloud115.strm.is_video_file", return_value=True),
+            patch("app.core.cloud115.strm.get_config", return_value=type("Config", (), {"strm": type("Strm", (), {"clean_invalid": False})(), "organize": type("Organize", (), {"enabled": True})()})()),
+        ):
+            result = await generator.sync_manifest_records(
+                dir_id="root",
+                output_dir="/tmp/剧集",
+                base_url="http://localhost:8095",
+                recursive=False,
+                root_output_dir="/tmp",
+            )
+
+        self.assertEqual(result["scanned"], 1)
+        self.assertEqual(result["unchanged"], 1)
+        self.assertEqual(result["created"], 0)
+        self.assertEqual(result["updated"], 0)
+
+    async def test_sync_manifest_records_reuses_legacy_record_without_signature_when_scope_matches(self):
+        from app.core.cloud115.strm import StrmGenerator115
+
+        generator = StrmGenerator115()
+        responses = {
+            "root": [
+                {"id": "f-1", "parent_id": "root", "name": "Episode 01.mkv", "is_dir": False, "size": 1, "pickcode": "pc-1", "sha": ""},
+            ]
+        }
+        existing_records = {
+            "f-1": {
+                "file_id": "f-1",
+                "archive_dir_id": "root",
+                "archive_rel_path": "剧集",
+                "strm_rel_path": "剧集/Episode 01.strm",
+                "strm_abs_path": "/tmp/剧集/Episode 01.strm",
+                "play_identity": "pc-1",
+                "status": "generated",
+            }
+        }
+
+        def fake_list_local_files(dir_id, recursive=False):
+            return responses[dir_id]
+
+        async def fake_load_existing(file_ids):
+            return {file_id: existing_records[file_id] for file_id in file_ids if file_id in existing_records}
+
+        with (
+            patch("app.core.cloud115.strm.list_local_files", side_effect=fake_list_local_files),
+            patch.object(generator, "_load_existing_records_by_file_ids", side_effect=fake_load_existing),
+            patch.object(generator, "_build_manifest_record_for_item", AsyncMock(side_effect=AssertionError("should not rebuild legacy record"))),
+            patch.object(generator, "_record_manifest", AsyncMock()),
+            patch("app.core.cloud115.strm.is_video_file", return_value=True),
+            patch("app.core.cloud115.strm.get_config", return_value=type("Config", (), {"strm": type("Strm", (), {"clean_invalid": False})(), "organize": type("Organize", (), {"enabled": False})()})()),
+        ):
+            result = await generator.sync_manifest_records(
+                dir_id="root",
+                output_dir="/tmp/剧集",
+                base_url="http://localhost:8095",
+                recursive=False,
+                root_output_dir="/tmp",
+            )
+
+        self.assertEqual(result["scanned"], 1)
+        self.assertEqual(result["unchanged"], 1)
+        self.assertEqual(result["created"], 0)
+        self.assertEqual(result["updated"], 0)
+
+    async def test_sync_manifest_records_rebuilds_legacy_record_without_signature_when_organize_enabled(self):
+        from app.core.cloud115.strm import StrmGenerator115
+
+        generator = StrmGenerator115()
+        responses = {
+            "root": [
+                {"id": "f-1", "parent_id": "root", "name": "Episode 01.mkv", "is_dir": False, "size": 1, "pickcode": "pc-1", "sha": ""},
+            ]
+        }
+        existing_records = {
+            "f-1": {
+                "file_id": "f-1",
+                "archive_dir_id": "root",
+                "archive_rel_path": "剧集",
+                "strm_rel_path": "剧集/Episode 01.strm",
+                "strm_abs_path": "/tmp/剧集/Episode 01.strm",
+                "play_identity": "pc-1",
+                "status": "generated",
+            }
+        }
+        recorded: list[dict] = []
+
+        def fake_list_local_files(dir_id, recursive=False):
+            return responses[dir_id]
+
+        async def fake_load_existing(file_ids):
+            return {file_id: existing_records[file_id] for file_id in file_ids if file_id in existing_records}
+
+        async def fake_build_manifest(**kwargs):
+            return {
+                "file_id": kwargs["file_id"],
+                "archive_dir_id": "root",
+                "archive_rel_path": "剧集/国产",
+                "strm_rel_path": "剧集/国产/Episode 01.strm",
+                "strm_abs_path": "/tmp/剧集/国产/Episode 01.strm",
+                "play_identity": "pc-1",
+                "status": "generated",
+            }
+
+        async def fake_record_manifest(**kwargs):
+            recorded.append(kwargs)
+
+        with (
+            patch("app.core.cloud115.strm.list_local_files", side_effect=fake_list_local_files),
+            patch.object(generator, "_load_existing_records_by_file_ids", side_effect=fake_load_existing),
+            patch.object(generator, "_build_manifest_record_for_item", side_effect=fake_build_manifest),
+            patch.object(generator, "_record_manifest", side_effect=fake_record_manifest),
+            patch("app.core.cloud115.strm.is_video_file", return_value=True),
+            patch("app.core.cloud115.strm.get_config", return_value=type("Config", (), {"strm": type("Strm", (), {"clean_invalid": False})(), "organize": type("Organize", (), {"enabled": True})()})()),
+        ):
+            result = await generator.sync_manifest_records(
+                dir_id="root",
+                output_dir="/tmp/剧集",
+                base_url="http://localhost:8095",
+                recursive=False,
+                root_output_dir="/tmp",
+            )
+
+        self.assertEqual(result["updated"], 1)
+        self.assertEqual(result["unchanged"], 0)
+        self.assertEqual(recorded[0]["source_file_name"], "Episode 01.mkv")
 
     async def test_sync_strm_files_from_manifest_skips_unchanged_content(self):
         from app.core.cloud115.strm import StrmGenerator115
@@ -378,6 +622,48 @@ class StrmGeneratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["updated"], 0)
         self.assertEqual(result["skipped"], 1)
         self.assertEqual(result["failed"], 0)
+
+    async def test_sync_strm_files_from_manifest_emits_debug_logs_for_skipped_and_written_files(self):
+        from app.core.cloud115.strm import StrmGenerator115
+
+        generator = StrmGenerator115()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            skipped_file = Path(temp_dir) / "Episode 01.strm"
+            skipped_file.write_text("expected-content", encoding="utf-8")
+            updated_file = Path(temp_dir) / "Episode 02.strm"
+            records = [
+                {
+                    "file_id": "f-1",
+                    "strm_abs_path": str(skipped_file),
+                    "strm_rel_path": "Episode 01.strm",
+                    "play_identity": "pc-1",
+                },
+                {
+                    "file_id": "f-2",
+                    "strm_abs_path": str(updated_file),
+                    "strm_rel_path": "Episode 02.strm",
+                    "play_identity": "pc-2",
+                },
+            ]
+
+            with (
+                patch.object(generator, "list_manifest_records_for_scope", AsyncMock(return_value=records)),
+                patch.object(generator, "build_strm_content", side_effect=["expected-content", "new-content"]),
+                patch("app.core.cloud115.strm.logger.debug") as debug_mock,
+            ):
+                result = await generator.sync_strm_files_from_manifest(
+                    dir_id="root",
+                    output_dir=temp_dir,
+                    root_output_dir=temp_dir,
+                    base_url="http://localhost:8095",
+                )
+
+        self.assertEqual(result["updated"], 1)
+        self.assertEqual(result["skipped"], 1)
+        logged_messages = [call.args[0] for call in debug_mock.call_args_list if call.args]
+        self.assertTrue(any("strm skipped" in message and "f-1" in message for message in logged_messages))
+        self.assertTrue(any("strm written" in message and "f-2" in message for message in logged_messages))
 
     async def test_get_strm_record_by_file_id_hydrates_missing_play_identity(self):
         row = {

@@ -157,7 +157,8 @@ async def scrape_monitor_history(
                         continue
                     msg_count += 1
                     await _throttle_scrape(msg_count)
-                    total_links_found += await _dispatch_scraped_message(parsed_channel, message)
+                    resources = await _dispatch_scraped_message(parsed_channel, message)
+                    total_links_found += len(resources)
             except Exception as exc:
                 logger.error(f"Failed to scrape channel {channel_ref}: {exc}")
 
@@ -180,6 +181,7 @@ async def sync_single_channel(
     channel_ref: str,
     emit_events: bool = True,
     startup_mode: str = "incremental",
+    limit: int | None = None,
 ) -> dict[str, object]:
     normalized_channels = validate_monitor_request(
         api_id,
@@ -208,7 +210,7 @@ async def sync_single_channel(
             keywords=keywords,
             emit_events=emit_events,
             startup_mode=startup_mode,
-            limit=getattr(get_config().monitor.telegram, "history_limit", 100),
+            limit=limit or getattr(get_config().monitor.telegram, "history_limit", 100),
         )
     finally:
         if disconnect_after:
@@ -225,6 +227,7 @@ async def sync_configured_channels(
     keywords: Iterable[str] | None = None,
     emit_events: bool = True,
     startup_mode: str = "incremental",
+    limit: int | None = None,
 ) -> dict[str, object]:
     normalized_channels = validate_monitor_request(
         api_id,
@@ -233,25 +236,27 @@ async def sync_configured_channels(
         empty_channels_message="未配置任何监听频道，无法抓取",
     )
     results = []
+    all_resources: list[dict] = []
     for channel_ref in normalized_channels:
         try:
-            results.append(
-                await sync_single_channel(
-                    api_id,
-                    api_hash,
-                    bot_token=bot_token,
-                    proxy=proxy,
-                    channels=normalized_channels,
-                    keywords=keywords,
-                    channel_ref=channel_ref,
-                    emit_events=emit_events,
-                    startup_mode=startup_mode,
-                )
+            channel_result = await sync_single_channel(
+                api_id,
+                api_hash,
+                bot_token=bot_token,
+                proxy=proxy,
+                channels=normalized_channels,
+                keywords=keywords,
+                channel_ref=channel_ref,
+                emit_events=emit_events,
+                startup_mode=startup_mode,
+                limit=limit,
             )
+            results.append(channel_result)
+            all_resources.extend(channel_result.get("resources", []))
         except Exception as exc:
             logger.error(f"Failed to sync channel {channel_ref}: {exc}")
-            results.append({"channel_ref": channel_ref, "processed": 0, "inserted": 0, "error": str(exc)})
-    return {"status": "success", "channels": results}
+            results.append({"channel_ref": channel_ref, "processed": 0, "inserted": 0, "resources": [], "error": str(exc)})
+    return {"status": "success", "channels": results, "resources": all_resources}
 
 
 async def _acquire_client(
@@ -281,21 +286,22 @@ async def _acquire_client(
     return client_to_use, True, False, None
 
 
-async def _dispatch_scraped_message(channel: int | str, message) -> int:
+async def _dispatch_scraped_message(channel: int | str, message, *, emit_events: bool = True) -> list[dict]:
     text = extract_message_text(message)
     message_channel_id = getattr(message, "chat_id", None)
     persisted_channel_id = str(message_channel_id) if message_channel_id is not None else str(channel)
-    new_links = await telegram_monitor.ingest_message(
+    resources = await telegram_monitor.ingest_message(
         text,
         message_id=message.id,
         channel_id=persisted_channel_id,
         msg_date=str(message.date),
     )
 
-    for link_data in new_links:
-        event_bus.emit_background(EVENT_MONITOR_NEW_LINK, link_data=link_data, source="telegram")
+    if emit_events:
+        for link_data in resources:
+            event_bus.emit_background(EVENT_MONITOR_NEW_LINK, link_data=link_data, source="telegram")
 
-    return len(new_links)
+    return resources
 
 
 async def _sync_channel_history(
@@ -317,15 +323,18 @@ async def _sync_channel_history(
 
     processed = 0
     inserted = 0
+    resources: list[dict] = []
+    stop_message_id = state["last_message_id"] if state else None
     highest_id = state["last_message_id"] if state else None
     highest_date = state["last_message_date"] if state else None
 
     if state and not has_existing_resources:
+        stop_message_id = None
         highest_id = None
         highest_date = None
 
     async for message in client_to_use.iter_messages(parsed_channel, limit=limit):
-        if highest_id and message.id <= highest_id:
+        if stop_message_id and message.id <= stop_message_id:
             break
         if startup_mode == "latest" and state is None:
             highest_id = message.id
@@ -337,7 +346,9 @@ async def _sync_channel_history(
             continue
 
         processed += 1
-        inserted += await _dispatch_scraped_message(parsed_channel, message) if emit_events else 0
+        message_resources = await _dispatch_scraped_message(parsed_channel, message, emit_events=emit_events)
+        inserted += len(message_resources)
+        resources.extend(message_resources)
         if highest_id is None or message.id > highest_id:
             highest_id = message.id
             highest_date = str(message.date)
@@ -353,6 +364,7 @@ async def _sync_channel_history(
         "channel_ref": channel_ref,
         "processed": processed,
         "inserted": inserted,
+        "resources": resources,
         "last_message_id": highest_id,
     }
 

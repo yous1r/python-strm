@@ -1,6 +1,4 @@
 import os
-import time
-import asyncio
 import urllib.parse
 from pathlib import Path
 
@@ -17,28 +15,165 @@ from app.database import get_db_conn
 from app.utils.helpers import is_video_file
 from app.core.media.organizer import organizer
 
-class RateLimiter:
-    def __init__(self, max_calls: int, period: float):
-        self.max_calls = max_calls
-        self.period = period
-        self.timestamps = []
-
-    async def acquire(self):
-        now = time.time()
-        self.timestamps = [t for t in self.timestamps if now - t <= self.period]
-        if len(self.timestamps) >= self.max_calls:
-            sleep_time = self.period - (now - self.timestamps[0])
-            if sleep_time > 0:
-                await asyncio.sleep(sleep_time)
-                now = time.time()
-                self.timestamps = [t for t in self.timestamps if now - t <= self.period]
-        self.timestamps.append(now)
-
 class StrmGenerator115:
     def __init__(self):
+        # 保留 client 属性以兼容现有调用方与测试；目录遍历已不再依赖远端 API。
         self.client = client_115
-        # 允许瞬间并发10个请求（按批处理），但限制在2秒内最多10个，防止触发 WAF
-        self.rate_limiter = RateLimiter(max_calls=5, period=5.0)
+
+    def _build_manifest_source_signature(
+        self,
+        *,
+        file_name: str,
+        pickcode: str,
+        file_sha: str,
+        archive_dir_id: str,
+    ) -> dict[str, str]:
+        return {
+            "source_file_name": file_name,
+            "source_pickcode": pickcode,
+            "source_sha": str(file_sha or "").upper(),
+            "source_archive_dir_id": str(archive_dir_id),
+        }
+
+    def _derive_current_archive_rel_path(self, current_output_dir: str, root_output_dir: str) -> str:
+        current_output_path = Path(current_output_dir).resolve()
+        root_output_path = Path(root_output_dir).resolve()
+        archive_rel_path = os.path.relpath(str(current_output_path), str(root_output_path)).replace("\\", "/")
+        if archive_rel_path == ".":
+            return ""
+        return archive_rel_path
+
+    def _is_path_within_root(self, path: str, root_output_dir: str) -> bool:
+        if not path:
+            return False
+
+        try:
+            Path(path).resolve().relative_to(Path(root_output_dir).resolve())
+        except Exception:
+            return False
+        return True
+
+    def _try_reuse_existing_manifest_record(
+        self,
+        existing: dict | None,
+        *,
+        file_name: str,
+        pickcode: str,
+        file_sha: str,
+        archive_dir_id: str,
+        current_output_dir: str,
+        root_output_dir: str,
+        organize_enabled: bool,
+    ) -> dict | None:
+        if not existing:
+            return None
+
+        if (existing.get("status") or "generated") != "generated":
+            return None
+
+        if str(existing.get("archive_dir_id") or "") != str(archive_dir_id):
+            return None
+
+        if str(existing.get("play_identity") or "") != str(pickcode):
+            return None
+
+        existing_strm_path = str(existing.get("strm_abs_path") or existing.get("strm_path") or "")
+        if not self._is_path_within_root(existing_strm_path, root_output_dir):
+            return None
+
+        source_signature = self._build_manifest_source_signature(
+            file_name=file_name,
+            pickcode=pickcode,
+            file_sha=file_sha,
+            archive_dir_id=archive_dir_id,
+        )
+        has_stored_signature = any(
+            existing.get(field) not in (None, "")
+            for field in ("source_file_name", "source_pickcode", "source_sha", "source_archive_dir_id")
+        )
+        if has_stored_signature:
+            if existing.get("source_file_name") != source_signature["source_file_name"]:
+                return None
+            if str(existing.get("source_pickcode") or "") != source_signature["source_pickcode"]:
+                return None
+            if str(existing.get("source_archive_dir_id") or "") != source_signature["source_archive_dir_id"]:
+                return None
+            existing_source_sha = str(existing.get("source_sha") or "").upper()
+            if existing_source_sha and source_signature["source_sha"] and existing_source_sha != source_signature["source_sha"]:
+                return None
+        elif not organize_enabled:
+            expected_archive_rel_path = self._derive_current_archive_rel_path(current_output_dir, root_output_dir)
+            if (existing.get("archive_rel_path") or "") != expected_archive_rel_path:
+                return None
+        else:
+            return None
+
+        persisted_source_signature = source_signature if has_stored_signature else {
+            "source_file_name": str(existing.get("source_file_name") or ""),
+            "source_pickcode": str(existing.get("source_pickcode") or ""),
+            "source_sha": str(existing.get("source_sha") or "").upper(),
+            "source_archive_dir_id": str(existing.get("source_archive_dir_id") or ""),
+        }
+
+        return {
+            "archive_dir_id": str(existing.get("archive_dir_id") or archive_dir_id),
+            "archive_rel_path": existing.get("archive_rel_path") or "",
+            "strm_rel_path": existing.get("strm_rel_path") or "",
+            "strm_abs_path": str(existing.get("strm_abs_path") or existing.get("strm_path") or ""),
+            "play_identity": pickcode,
+            "status": existing.get("status") or "generated",
+            **persisted_source_signature,
+        }
+
+    def _list_local_page(
+        self,
+        dir_id: str,
+        *,
+        limit: int,
+        offset: int,
+        recursive: bool = False,
+    ) -> dict[str, object]:
+        items = []
+        for item in list_local_files(dir_id, recursive=recursive):
+            parent_id = str(item.get("parent_id", "0"))
+            if item.get("is_dir"):
+                items.append({
+                    "cid": str(item.get("id", "")),
+                    "n": item.get("name", ""),
+                    "pid": parent_id,
+                })
+                continue
+
+            items.append({
+                "fid": str(item.get("id", "")),
+                "n": item.get("name", ""),
+                "pid": parent_id,
+                "pc": item.get("pickcode", ""),
+                "s": item.get("size", 0),
+                "sha": str(item.get("sha") or item.get("sha1") or "").upper(),
+            })
+
+        total = len(items)
+        paged_items = items[offset: offset + limit] if limit > 0 else items[offset:]
+        return {"total": total, "items": paged_items}
+
+    def _list_all_local_items(self, dir_id: str) -> list[dict]:
+        limit = 1000
+        offset = 0
+        items: list[dict] = []
+
+        while True:
+            page = self._list_local_page(dir_id, limit=limit, offset=offset, recursive=False)
+            batch = page.get("items", [])
+            if not batch:
+                break
+
+            items.extend(batch)
+            if len(batch) < limit:
+                break
+            offset += limit
+
+        return items
 
     def build_strm_content(self, pickcode: str, file_name: str, base_url: str) -> str:
         config = get_config()
@@ -288,7 +423,8 @@ class StrmGenerator115:
         async with get_db_conn() as db:
             cursor = await db.execute(
                 f"""
-                SELECT id, cloud_type, file_id, archive_dir_id, archive_rel_path,
+                SELECT id, cloud_type, file_id, source_file_name, source_pickcode,
+                       source_sha, source_archive_dir_id, archive_dir_id, archive_rel_path,
                        strm_rel_path, strm_abs_path, strm_path, play_identity, status
                 FROM strm_records
                 WHERE cloud_type='115' AND file_id IN ({placeholders})
@@ -301,6 +437,10 @@ class StrmGenerator115:
 
     def _manifest_record_needs_update(self, existing: dict, desired: dict) -> bool:
         fields = (
+            "source_file_name",
+            "source_pickcode",
+            "source_sha",
+            "source_archive_dir_id",
             "archive_dir_id",
             "archive_rel_path",
             "strm_rel_path",
@@ -338,6 +478,7 @@ class StrmGenerator115:
             root_output_dir = output_dir
 
         config = get_config()
+        organize_enabled = bool(config.organize.enabled)
         stats = {
             "scanned": 0,
             "created": 0,
@@ -361,16 +502,12 @@ class StrmGenerator115:
             offset = 0
 
             while True:
-                await self.rate_limiter.acquire()
-                res = await self.client.list_files_local_first(
+                res = self._list_local_page(
                     dir_id=current_dir_id,
                     limit=limit,
                     offset=offset,
                     recursive=False,
                 )
-                if "error" in res:
-                    logger.error(f"[STRM manifest] list_files_local_first failed: {res['error']}")
-                    break
 
                 items = res.get("items", [])
                 if not items:
@@ -386,7 +523,6 @@ class StrmGenerator115:
                 for item in items:
                     if "fid" not in item:
                         if recursive:
-                            await asyncio.sleep(1.5)
                             folder_name = item.get("n", "")
                             folder_id = str(item.get("cid"))
                             await _walk(folder_id, os.path.join(current_output_dir, folder_name))
@@ -401,16 +537,36 @@ class StrmGenerator115:
                         continue
 
                     file_id = str(item.get("fid", ""))
+                    file_sha = str(item.get("sha") or "").upper()
                     stats["scanned"] += 1
-                    desired = await self._build_manifest_record_for_item(
-                        file_id=file_id,
+                    existing = existing_records.get(file_id)
+                    desired = self._try_reuse_existing_manifest_record(
+                        existing,
                         file_name=file_name,
                         pickcode=pickcode,
+                        file_sha=file_sha,
                         archive_dir_id=current_dir_id,
                         current_output_dir=current_output_dir,
                         root_output_dir=root_output_dir,
+                        organize_enabled=organize_enabled,
                     )
-                    existing = existing_records.get(file_id)
+                    if desired is None:
+                        desired = await self._build_manifest_record_for_item(
+                            file_id=file_id,
+                            file_name=file_name,
+                            pickcode=pickcode,
+                            archive_dir_id=current_dir_id,
+                            current_output_dir=current_output_dir,
+                            root_output_dir=root_output_dir,
+                        )
+                        desired.update(
+                            self._build_manifest_source_signature(
+                                file_name=file_name,
+                                pickcode=pickcode,
+                                file_sha=file_sha,
+                                archive_dir_id=current_dir_id,
+                            )
+                        )
                     if existing and not self._manifest_record_needs_update(existing, desired):
                         stats["unchanged"] += 1
                         continue
@@ -422,11 +578,21 @@ class StrmGenerator115:
                         strm_rel_path=desired["strm_rel_path"],
                         strm_abs_path=desired["strm_abs_path"],
                         pickcode=desired["play_identity"],
+                        source_file_name=desired.get("source_file_name", file_name),
+                        source_pickcode=desired.get("source_pickcode", pickcode),
+                        source_sha=desired.get("source_sha", file_sha),
+                        source_archive_dir_id=desired.get("source_archive_dir_id", current_dir_id),
                     )
                     if existing:
                         stats["updated"] += 1
+                        logger.debug(
+                            f"[STRM manifest] manifest updated file_id={file_id} path={desired['strm_rel_path']}"
+                        )
                     else:
                         stats["created"] += 1
+                        logger.debug(
+                            f"[STRM manifest] manifest created file_id={file_id} path={desired['strm_rel_path']}"
+                        )
 
                 if len(items) < limit:
                     break
@@ -437,6 +603,11 @@ class StrmGenerator115:
             stats["created"] or stats["updated"] or stats["deleted_records"] or stats["deleted_files"]
         )
         stats["base_url"] = base_url
+        logger.debug(
+            "[STRM manifest] manifest sync summary "
+            f"dir_id={dir_id} scanned={stats['scanned']} created={stats['created']} updated={stats['updated']} "
+            f"unchanged={stats['unchanged']} deleted_records={stats['deleted_records']} deleted_files={stats['deleted_files']}"
+        )
         return stats
 
     def _derive_record_media_name(self, record: dict) -> str:
@@ -489,6 +660,9 @@ class StrmGenerator115:
 
             if current_content == expected_content:
                 skipped += 1
+                logger.debug(
+                    f"[STRM sync] strm skipped file_id={record.get('file_id', '')} path={record.get('strm_rel_path') or strm_path}"
+                )
                 continue
 
             os.makedirs(os.path.dirname(strm_path), exist_ok=True)
@@ -497,6 +671,9 @@ class StrmGenerator115:
                     await f.write(expected_content)
                 updated += 1
                 updated_files.append(strm_path)
+                logger.debug(
+                    f"[STRM sync] strm written file_id={record.get('file_id', '')} path={record.get('strm_rel_path') or strm_path}"
+                )
             except Exception as exc:
                 failed += 1
                 logger.error(f"[STRM sync] Failed to write STRM file {strm_path}: {exc}")
@@ -580,18 +757,12 @@ class StrmGenerator115:
                 logger.warning(f"[STRM cleanup] Failed before batch_generate dir_id={dir_id}: {exc}")
 
         while True:
-            # 防风控：使用按批限流器，允许瞬间迸发，降低请求频率惩罚
-            await self.rate_limiter.acquire()
-            
-            res = await self.client.list_files_local_first(
+            res = self._list_local_page(
                 dir_id=dir_id,
                 limit=limit,
                 offset=offset,
                 recursive=False,
             )
-            if "error" in res:
-                logger.error(f"Batch generate error: {res['error']}")
-                break
 
             items = res.get("items", [])
             if not items:
@@ -621,8 +792,6 @@ class StrmGenerator115:
                 if "fid" not in item:
                     should_descend = force or total_files == 0 or skipped_files < total_files
                     if recursive and should_descend:
-                        # 流控：递归子目录前延迟
-                        await asyncio.sleep(1.5)
                         folder_name = item.get("n", "")
                         folder_id = str(item.get("cid"))
                         sub_dir = os.path.join(output_dir, folder_name)
@@ -643,7 +812,7 @@ class StrmGenerator115:
                     file_id = str(item.get("fid", ""))
                     if file_id in existing_fids and not force:
                         skipped_files += 1
-                        logger.debug(f"Skipping already generated file: {item.get('n')}")
+                        # logger.debug(f"Skipping already generated file: {item.get('n')}")
                         continue
                         
                     file_name = item.get("n", "")
@@ -668,6 +837,10 @@ class StrmGenerator115:
                                         strm_rel_path=strm_rel_path,
                                         strm_abs_path=abs_strm_path,
                                         pickcode=pickcode,
+                                        source_file_name=file_name,
+                                        source_pickcode=pickcode,
+                                        source_sha=str(item.get("sha") or "").upper(),
+                                        source_archive_dir_id=dir_id,
                                     )
                                 except Exception as e:
                                     logger.error(f"Failed to record STRM manifest: {e}")
@@ -688,6 +861,10 @@ class StrmGenerator115:
         strm_rel_path: str,
         strm_abs_path: str,
         pickcode: str,
+        source_file_name: str | None = None,
+        source_pickcode: str | None = None,
+        source_sha: str | None = None,
+        source_archive_dir_id: str | None = None,
         task_id: str | None = None,
     ) -> None:
         record = build_manifest_record(
@@ -700,16 +877,27 @@ class StrmGenerator115:
             play_identity=pickcode,
             task_id=task_id,
         )
+        record.update({
+            "source_file_name": source_file_name or "",
+            "source_pickcode": source_pickcode or pickcode,
+            "source_sha": str(source_sha or "").upper(),
+            "source_archive_dir_id": str(source_archive_dir_id or archive_dir_id),
+        })
 
         try:
             async with get_db_conn() as db:
                 await db.execute(
                     '''
                     INSERT INTO strm_records (
-                        cloud_type, file_id, archive_dir_id, archive_rel_path,
-                        strm_rel_path, strm_abs_path, play_identity, task_id, strm_path, status, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        cloud_type, file_id, source_file_name, source_pickcode, source_sha, source_archive_dir_id,
+                        archive_dir_id, archive_rel_path, strm_rel_path, strm_abs_path,
+                        play_identity, task_id, strm_path, status, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(cloud_type, file_id) DO UPDATE SET
+                        source_file_name=excluded.source_file_name,
+                        source_pickcode=excluded.source_pickcode,
+                        source_sha=excluded.source_sha,
+                        source_archive_dir_id=excluded.source_archive_dir_id,
                         archive_dir_id=excluded.archive_dir_id,
                         archive_rel_path=excluded.archive_rel_path,
                         strm_rel_path=excluded.strm_rel_path,
@@ -723,6 +911,10 @@ class StrmGenerator115:
                     (
                         record["cloud_type"],
                         record["file_id"],
+                        record["source_file_name"],
+                        record["source_pickcode"],
+                        record["source_sha"],
+                        record["source_archive_dir_id"],
                         record["archive_dir_id"],
                         record["archive_rel_path"],
                         record["strm_rel_path"],
@@ -739,7 +931,7 @@ class StrmGenerator115:
             logger.error(f"Failed to record STRM manifest: {e}")
 
     async def generate_strm_for_folder(self, folder_cid: str, share_files: list, strm_subdir: str = "", root_output_dir: str = "", task_id: str | None = None) -> list:
-        """按文件夹批量生成STRM：list_files一次拿到全部pickcode，按SHA1匹配生成"""
+        """按文件夹批量生成STRM：仅使用本地缓存目录信息并按 SHA1 匹配生成。"""
         config = get_config()
         base_url = config.strm.base_url
         output_dir = root_output_dir or config.strm.output_dir
@@ -754,13 +946,7 @@ class StrmGenerator115:
                 sha_to_name[s] = sf.get("name", "")
 
         generated = []
-        # list_files 一次拿到全部 pickcode
-        list_res = await self.client.list_files(folder_cid, limit=1000)
-        if list_res.get("error"):
-            logger.error(f"[STRM batch] list_files failed: {list_res['error']}")
-            return generated
-
-        for item in list_res.get("items", []):
+        for item in self._list_all_local_items(folder_cid):
             fid = item.get("fid", "")
             fname = item.get("n", "")
             pc = item.get("pc", "")
@@ -799,6 +985,10 @@ class StrmGenerator115:
                         strm_rel_path=strm_rel_path,
                         strm_abs_path=strm_path,
                         pickcode=pc,
+                        source_file_name=matched_name,
+                        source_pickcode=pc,
+                        source_sha=sha_val,
+                        source_archive_dir_id=folder_cid,
                         task_id=task_id,
                     )
                 else:
@@ -809,6 +999,10 @@ class StrmGenerator115:
                         strm_rel_path=str(Path(strm_path).name),
                         strm_abs_path=strm_path,
                         pickcode=pc,
+                        source_file_name=matched_name,
+                        source_pickcode=pc,
+                        source_sha=sha_val,
+                        source_archive_dir_id=folder_cid,
                         task_id=task_id,
                     )
 

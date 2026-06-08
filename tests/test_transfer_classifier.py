@@ -188,9 +188,9 @@ class StrmBatchPathTests(unittest.IsolatedAsyncioTestCase):
         generator = StrmGenerator115()
         share_files = [{"sha": "ABC", "name": "大唐迷雾.S01E01.mkv"}]
 
-        with patch.object(generator.client, "list_files", return_value={
-            "items": [{"fid": "1", "n": "大唐迷雾.S01E01.mkv", "pc": "pc1", "sha": "ABC"}]
-        }), patch("app.database.get_db_conn") as mocked_db_conn, patch.object(
+        with patch("app.core.cloud115.strm.list_local_files", return_value=[
+            {"id": "1", "parent_id": "cid-1", "name": "大唐迷雾.S01E01.mkv", "is_dir": False, "size": 1, "pickcode": "pc1", "sha": "ABC"}
+        ]), patch("app.database.get_db_conn") as mocked_db_conn, patch.object(
             generator, "generate_strm", return_value=str(Path("strm_output/剧集/国产/大唐迷雾 (2026)/Season 1/大唐迷雾 - S01E01.strm"))
         ) as mocked_generate_strm:
             mocked_db_conn.return_value.__aenter__.return_value.execute.return_value = None
@@ -214,14 +214,14 @@ class StrmBatchPathTests(unittest.IsolatedAsyncioTestCase):
         share_files = [{"sha": "ABC", "name": "灵魂摆渡·十年.2026.S01E05.mkv"}]
         config = SimpleNamespace(strm=SimpleNamespace(base_url="http://example.com", output_dir="strm_output"))
 
-        mocked_db = patch("app.database.get_db_conn").start()
+        mocked_db = patch("app.core.cloud115.strm.get_db_conn").start()
         self.addCleanup(patch.stopall)
         mocked_db.return_value.__aenter__.return_value.execute.return_value = None
         mocked_db.return_value.__aenter__.return_value.commit.return_value = None
 
-        with patch.object(generator.client, "list_files", return_value={
-            "items": [{"fid": "1", "n": "灵魂摆渡·十年.2026.S01E05.mkv", "pc": "pc1", "sha": "ABC"}]
-        }), patch("app.core.cloud115.strm.get_config", return_value=config), patch(
+        with patch("app.core.cloud115.strm.list_local_files", return_value=[
+            {"id": "1", "parent_id": "cid-9", "name": "灵魂摆渡·十年.2026.S01E05.mkv", "is_dir": False, "size": 1, "pickcode": "pc1", "sha": "ABC"}
+        ]), patch("app.core.cloud115.strm.get_config", return_value=config), patch(
             "app.core.cloud115.strm.classify"
         ) as mocked_classify, patch(
             "app.core.cloud115.strm.build_archive_placement"
@@ -303,20 +303,21 @@ class Cloud115LocalCacheTests(unittest.IsolatedAsyncioTestCase):
     async def test_batch_generate_requests_non_recursive_local_listing(self):
         generator = StrmGenerator115()
 
-        with patch.object(
-            generator.client,
-            "list_files_local_first",
-            AsyncMock(return_value={"total": 0, "items": []}),
-        ) as mocked_list:
+        with patch(
+            "app.core.cloud115.strm.list_local_files",
+            return_value=[],
+        ) as mocked_list, patch(
+            "app.core.cloud115.strm.get_config",
+            return_value=SimpleNamespace(
+                strm=SimpleNamespace(clean_invalid=False),
+                organize=SimpleNamespace(enabled=False),
+                cloud115=SimpleNamespace(play_ua=""),
+            ),
+        ):
             result = await generator.batch_generate("cid-root", "strm_output", "http://example.com")
 
         self.assertEqual(result, [])
-        mocked_list.assert_awaited_once_with(
-            dir_id="cid-root",
-            limit=1000,
-            offset=0,
-            recursive=False,
-        )
+        mocked_list.assert_called_once_with("cid-root", recursive=False)
 
 
 class MediaOrganizerRegionTests(unittest.IsolatedAsyncioTestCase):

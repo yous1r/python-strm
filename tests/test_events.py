@@ -148,6 +148,21 @@ class EventBusBehaviorTests(unittest.IsolatedAsyncioTestCase):
 
         await asyncio.wait_for(handled.wait(), timeout=1)
 
+    async def test_emit_logs_when_handler_starts_processing_event(self):
+        bus = EventBus()
+
+        async def handler(value):
+            return value
+
+        bus.subscribe("demo", handler)
+
+        with patch("app.events.logger.debug") as debug_mock:
+            await bus.emit("demo", value=42)
+
+        logged_messages = [call.args[0] for call in debug_mock.call_args_list if call.args]
+        self.assertTrue(any("emit demo" in message for message in logged_messages))
+        self.assertTrue(any("handle demo" in message for message in logged_messages))
+
     async def test_spawn_task_returns_tracked_task_id(self):
         task_id = spawn_task(asyncio.sleep(0.05), name="tracked_sleep")
 

@@ -229,7 +229,7 @@ class EventBus:
         for callback in callbacks:
             name = f"event:{event_type}:{getattr(callback, '__name__', str(callback))}"
             task_id, task = await task_tracker.create_task(
-                self._safe_call(callback, **kwargs),
+                self._safe_call(event_type, callback, **kwargs),
                 name=name,
                 task_type="async",
             )
@@ -242,8 +242,10 @@ class EventBus:
         task_name = name or f"event:{event_type}"
         return spawn_task(self.emit(event_type, **kwargs), name=task_name)
 
-    async def _safe_call(self, callback: Callable, **kwargs):
+    async def _safe_call(self, event_type: str, callback: Callable, **kwargs):
         try:
+            callback_name = getattr(callback, "__name__", str(callback))
+            logger.debug(f"[EventBus] handle {event_type} -> {callback_name}")
             result = callback(**kwargs)
             if inspect.isawaitable(result):
                 await result
@@ -275,6 +277,8 @@ EVENT_CLOUD115_FULL_SYNC_MANIFEST_REFRESH_FINISHED = "cloud115.manifest_refresh.
 EVENT_CLOUD115_FULL_SYNC_STRM_REFRESH_FINISHED = "cloud115.strm_refresh.finished"
 EVENT_CLOUD115_FULL_SYNC_MEDIA_LINKS_REFRESH_FINISHED = "cloud115.media_links_refresh.finished"
 EVENT_CLOUD115_FULL_SYNC_COMPLETED = "cloud115.full_sync.completed"
+EVENT_CLOUD115_COOKIE_INVALID = "cloud115.cookie.invalid"
+EVENT_CLOUD115_COOKIE_RESTORED = "cloud115.cookie.restored"
 EVENT_ORGANIZE_START = "organize_start"
 EVENT_ORGANIZE_FILE_DONE = "organize_file_done"
 EVENT_ROLLBACK_START = "rollback_start"

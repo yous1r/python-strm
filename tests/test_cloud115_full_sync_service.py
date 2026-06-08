@@ -416,3 +416,25 @@ class Cloud115FullSyncServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["status"], "skipped")
         self.assertEqual(result["instance_count"], 0)
         self.assertIn("跳过", result["reason"])
+
+    async def test_run_media_links_refresh_step_skips_when_preheat_disabled(self):
+        service = Cloud115FullSyncService()
+        config = SimpleNamespace(
+            emby=SimpleNamespace(
+                proxy=SimpleNamespace(
+                    instances=[SimpleNamespace(url="http://emby.local", name="emby-1")],
+                    preheat_on_full_sync=False,
+                )
+            )
+        )
+
+        with (
+            patch("app.services.cloud115_full_sync_service.get_config", return_value=config),
+            patch("app.services.cloud115_full_sync_service.preheat_media_item_links", new=AsyncMock()) as preheat_mock,
+        ):
+            result = await service.run_media_links_refresh_step()
+
+        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(result["instance_count"], 1)
+        self.assertIn("已禁用", result["reason"])
+        preheat_mock.assert_not_awaited()

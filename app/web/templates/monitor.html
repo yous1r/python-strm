@@ -97,6 +97,34 @@
 
         <div style="margin: 2rem 0 1rem; padding-top: 1.5rem; border-top: 1px solid var(--border);">
             <h3 style="margin-bottom: 1rem; display: flex; align-items: center; gap: 0.6rem;">
+                <i class="fa-solid fa-calendar-check"></i> Telegram 后台定时同步
+            </h3>
+            <div style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.95rem;">
+                定时抓取最近 Telegram 消息并批量转存。若未来指定分钟内已经排期执行 115 全链路同步，则跳过额外触发，避免重复运行。
+            </div>
+            <div class="form-group" style="display: flex; align-items: center; gap: 1rem; margin-top: 1rem;">
+                <label class="form-label" style="margin-bottom: 0;">启用后台定时同步</label>
+                <label class="switch">
+                    <input type="checkbox" id="mon_tg_scheduled_sync_enabled">
+                    <span class="slider round"></span>
+                </label>
+            </div>
+            <div class="form-group">
+                <label class="form-label">后台同步间隔（分钟）</label>
+                <input type="number" id="mon_tg_scheduled_sync_interval_minutes" class="form-control" min="1" step="1" placeholder="5">
+            </div>
+            <div class="form-group">
+                <label class="form-label">每轮抓取消息数量上限</label>
+                <input type="number" id="mon_tg_scheduled_sync_limit" class="form-control" min="1" step="1" placeholder="20">
+            </div>
+            <div class="form-group">
+                <label class="form-label">未来多少分钟内已排期 115 全链路同步则跳过追加触发</label>
+                <input type="number" id="mon_tg_full_sync_skip_if_scheduled_within_minutes" class="form-control" min="0" step="1" placeholder="20">
+            </div>
+        </div>
+
+        <div style="margin: 2rem 0 1rem; padding-top: 1.5rem; border-top: 1px solid var(--border);">
+            <h3 style="margin-bottom: 1rem; display: flex; align-items: center; gap: 0.6rem;">
                 <i class="fa-solid fa-rocket"></i> 启动编排
             </h3>
             <div style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.95rem;">
@@ -326,6 +354,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('mon_tg_archive_dir_id').value = config.monitor.telegram.archive_dir_id || '0';
             document.getElementById('mon_tg_auto_organize').checked = config.monitor.telegram.auto_organize;
             document.getElementById('mon_tg_auto_strm').checked = config.monitor.telegram.auto_strm;
+            document.getElementById('mon_tg_scheduled_sync_enabled').checked = config.monitor.telegram.scheduled_sync_enabled ?? true;
+            document.getElementById('mon_tg_scheduled_sync_interval_minutes').value = config.monitor.telegram.scheduled_sync_interval_minutes ?? 5;
+            document.getElementById('mon_tg_scheduled_sync_limit').value = config.monitor.telegram.scheduled_sync_limit ?? 20;
+            document.getElementById('mon_tg_full_sync_skip_if_scheduled_within_minutes').value = config.monitor.telegram.full_sync_skip_if_scheduled_within_minutes ?? 20;
             document.getElementById('mon_startup_pipeline_enabled').checked = config.monitor.startup_pipeline?.enabled || false;
             document.getElementById('mon_startup_run_db_sync').checked = config.monitor.startup_pipeline?.run_db_sync ?? true;
             document.getElementById('mon_startup_run_telegram_sync').checked = config.monitor.startup_pipeline?.run_telegram_sync ?? true;
@@ -361,7 +393,11 @@ async function saveMonitorConfig() {
                 target_dir_id: document.getElementById('mon_tg_target_dir_id').value,
                 archive_dir_id: document.getElementById('mon_tg_archive_dir_id').value,
                 auto_organize: document.getElementById('mon_tg_auto_organize').checked,
-                auto_strm: document.getElementById('mon_tg_auto_strm').checked
+                auto_strm: document.getElementById('mon_tg_auto_strm').checked,
+                scheduled_sync_enabled: document.getElementById('mon_tg_scheduled_sync_enabled').checked,
+                scheduled_sync_interval_minutes: parseInt(document.getElementById('mon_tg_scheduled_sync_interval_minutes').value, 10) || 5,
+                scheduled_sync_limit: parseInt(document.getElementById('mon_tg_scheduled_sync_limit').value, 10) || 20,
+                full_sync_skip_if_scheduled_within_minutes: parseInt(document.getElementById('mon_tg_full_sync_skip_if_scheduled_within_minutes').value, 10) || 20
             },
             startup_pipeline: {
                 enabled: document.getElementById('mon_startup_pipeline_enabled').checked,

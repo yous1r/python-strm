@@ -127,6 +127,15 @@
     </div>
     <pre class="result" id="r9"></pre>
 </div>
+
+<div class="debug-step">
+    <h4>10. Telegram 最新消息转存</h4>
+    <div class="desc">复用后台定时同步逻辑，按当前 <code>scheduled_sync_limit</code> 抓取已配置频道最近消息，执行批量转存，并在有成功转存时按规则决定是否触发后续 115 全链路同步。</div>
+    <div class="row">
+        <button class="btn btn-primary" onclick="runStep10()" id="step10Btn" style="padding: 0.35rem 0.75rem; font-size: 0.85rem;">执行</button>
+    </div>
+    <pre class="result" id="r10"></pre>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -234,6 +243,23 @@ async function runStep9() {
     } catch (e) {
         setResultState('r9', '启动失败: ' + e.message, 'result-err');
         showToast('115 全链路验证启动失败', 'error');
+        btn.disabled = false;
+    }
+}
+
+async function runStep10() {
+    const btn = document.getElementById('step10Btn');
+    btn.disabled = true;
+    setResultState('r10', '执行中...', 'result-running');
+    try {
+        const res = await fetch('/api/v1/debug/telegram/latest-transfer', { method: 'POST' });
+        const data = await res.json();
+        setResultState('r10', JSON.stringify(data, null, 2), data.success ? 'result-ok' : 'result-err');
+        showToast(data.success ? 'Telegram 最新消息转存完成' : 'Telegram 最新消息转存失败', data.success ? 'success' : 'error');
+    } catch (e) {
+        setResultState('r10', '执行失败: ' + e.message, 'result-err');
+        showToast('Telegram 最新消息转存失败', 'error');
+    } finally {
         btn.disabled = false;
     }
 }

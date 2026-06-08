@@ -106,18 +106,27 @@ def list_local_files(dir_id: str, recursive: bool = False) -> list[dict]:
     """
     从本地数据库列出目录内容（不调用 115 API）。
     recursive=False 时仅返回直属子项；为 True 时返回整棵子树。
-    返回 [{"id": int, "name": str, "parent_id": int, "is_dir": bool, "size": int, "pickcode": str}, ...]
+    返回 [{"id": int, "name": str, "parent_id": int, "is_dir": bool, "size": int, "pickcode": str, "sha": str}, ...]
     """
     qdb = get_query_db()
     if not qdb:
         return []
     try:
         cid = int(dir_id)
-        fields = ("id", "parent_id", "name", "is_dir", "size", "pickcode")
-        if recursive:
-            rows = list(qdb.iter_descendants(cid, fields=fields))
-        else:
-            rows = list(qdb.iter_children(cid, fields=fields))
+        base_fields = ("id", "parent_id", "name", "is_dir", "size", "pickcode")
+        sha_fields = (*base_fields, "sha1")
+
+        try:
+            if recursive:
+                rows = list(qdb.iter_descendants(cid, fields=sha_fields))
+            else:
+                rows = list(qdb.iter_children(cid, fields=sha_fields))
+        except Exception:
+            if recursive:
+                rows = list(qdb.iter_descendants(cid, fields=base_fields))
+            else:
+                rows = list(qdb.iter_children(cid, fields=base_fields))
+
         return [
             {
                 "id": r["id"],
@@ -126,6 +135,7 @@ def list_local_files(dir_id: str, recursive: bool = False) -> list[dict]:
                 "is_dir": bool(r["is_dir"]),
                 "size": r.get("size", 0),
                 "pickcode": r.get("pickcode", ""),
+                "sha": str(r.get("sha1") or "").upper(),
             }
             for r in rows
         ]

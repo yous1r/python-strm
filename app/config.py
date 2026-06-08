@@ -74,6 +74,7 @@ class EmbyProxyInstanceConfig(BaseModel):
 
 class EmbyProxyConfig(BaseModel):
     enabled: bool = False
+    preheat_on_full_sync: bool = False
     instances: List[EmbyProxyInstanceConfig] = []
 
 class EmbyConfig(BaseModel):
@@ -118,6 +119,10 @@ class TelegramConfig(BaseModel):
     startup_sync: str = "latest"
     history_limit: int = 100
     reconnect_backoff: int = 5
+    scheduled_sync_enabled: bool = True
+    scheduled_sync_interval_minutes: int = 5
+    scheduled_sync_limit: int = 20
+    full_sync_skip_if_scheduled_within_minutes: int = 20
 
 class StartupPipelineConfig(BaseModel):
     enabled: bool = False

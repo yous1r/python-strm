@@ -227,6 +227,14 @@ class Cloud115FullSyncService:
                 "results": [],
             }
 
+        if not getattr(config.emby.proxy, "preheat_on_full_sync", False):
+            return {
+                "status": "skipped",
+                "reason": "已禁用 full sync 阶段的 media_item_links 预热",
+                "instance_count": len(enabled_instances),
+                "results": [],
+            }
+
         result = await preheat_media_item_links(overwrite=False)
         result.setdefault("status", "success")
         result.setdefault("instance_count", len(enabled_instances))

@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.debug import router
+from app.api.web import router as web_router
 
 
 def test_start_cloud115_full_sync_returns_task_id(monkeypatch):
@@ -64,3 +65,52 @@ def test_get_cloud115_full_sync_returns_stats(monkeypatch):
     assert response.json()["completed"] is True
     assert response.json()["stats"]["generated_strm_files"] == 2
     assert response.json()["stats"]["media_links_linked"] == 2
+
+
+def test_trigger_telegram_latest_transfer_returns_background_sync_result(monkeypatch):
+    app = FastAPI()
+    app.include_router(router)
+
+    async def fake_run():
+        return {
+            "status": "success",
+            "resource_count": 2,
+            "successful_transfers": 1,
+            "full_sync": {"status": "skipped", "reason": "db_sync_already_scheduled_soon"},
+        }
+
+    monkeypatch.setattr("app.api.debug.telegram_background_sync_service.run_scheduled_sync", fake_run)
+
+    client = TestClient(app)
+    response = client.post("/api/v1/debug/telegram/latest-transfer")
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["resource_count"] == 2
+    assert response.json()["full_sync"]["reason"] == "db_sync_already_scheduled_soon"
+
+
+def test_debug_page_contains_telegram_latest_transfer_button():
+    app = FastAPI()
+    app.include_router(web_router)
+
+    client = TestClient(app)
+    response = client.get("/debug")
+
+    assert response.status_code == 200
+    assert "Telegram 最新消息转存" in response.text
+    assert "step10Btn" in response.text
+
+
+def test_monitor_page_contains_telegram_scheduled_sync_fields():
+    app = FastAPI()
+    app.include_router(web_router)
+
+    client = TestClient(app)
+    response = client.get("/monitor")
+
+    assert response.status_code == 200
+    assert "mon_tg_scheduled_sync_enabled" in response.text
+    assert "mon_tg_scheduled_sync_interval_minutes" in response.text
+    assert "mon_tg_scheduled_sync_limit" in response.text
+    assert "mon_tg_full_sync_skip_if_scheduled_within_minutes" in response.text

@@ -8,6 +8,7 @@ node_modules
 .vscode
 
 strm_output
+strm_output_bak
 data
 __pycache__/
 
@@ -16,3 +17,7 @@ cache
 config.yaml
 config.yaml.bak
 config.yaml.*.bak
+
+archive
+archive_bak
+

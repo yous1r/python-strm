@@ -81,9 +81,9 @@ async def test_scrape_monitor_history_filters_keywords_locally(monkeypatch):
     async def fake_acquire_client(*args, **kwargs):
         return client, True, True, None
 
-    async def fake_dispatch(channel, message):
+    async def fake_dispatch(channel, message, *, emit_events=True):
         dispatched.append((channel, message.id))
-        return 1
+        return [{"db_id": 2}]
 
     async def no_sleep(*args, **kwargs):
         return None
@@ -120,11 +120,31 @@ async def test_dispatch_scraped_message_prefers_message_chat_id(monkeypatch):
 
     monkeypatch.setattr("app.services.telegram_service.telegram_monitor.ingest_message", fake_ingest_message)
 
-    count = await _dispatch_scraped_message("demo", FakeMessage())
+    resources = await _dispatch_scraped_message("demo", FakeMessage())
 
-    assert count == 0
+    assert resources == []
     assert captured["message_id"] == 9
     assert captured["channel_id"] == "-1009876543210"
+
+
+@pytest.mark.asyncio
+async def test_sync_configured_channels_collects_resources(monkeypatch):
+    from app.services.telegram_service import sync_configured_channels
+
+    async def fake_sync_single_channel(*args, **kwargs):
+        return {
+            "channel_ref": kwargs["channel_ref"],
+            "processed": 1,
+            "inserted": 1,
+            "resources": [{"db_id": 1, "url": "https://115.com/s/abc", "type": "115"}],
+        }
+
+    monkeypatch.setattr("app.services.telegram_service.sync_single_channel", fake_sync_single_channel)
+
+    result = await sync_configured_channels("1", "2", channels=["@a", "@b"])
+
+    assert len(result["channels"]) == 2
+    assert len(result["resources"]) == 2
 
 
 @pytest.mark.asyncio
@@ -149,9 +169,9 @@ async def test_sync_single_channel_rebuilds_when_state_exists_but_resources_miss
     async def fake_state(channel_ref):
         return {"channel_ref": channel_ref, "last_message_id": 100, "last_message_date": "2026-06-06T10:00:00"}
 
-    async def fake_dispatch(channel, message):
+    async def fake_dispatch(channel, message, *, emit_events=True):
         dispatched.append((channel, message.id))
-        return 1
+        return [{"db_id": 2}]
 
     async def fake_upsert(**kwargs):
         saved_states.append(kwargs)
@@ -166,8 +186,55 @@ async def test_sync_single_channel_rebuilds_when_state_exists_but_resources_miss
 
     result = await _sync_channel_history(FakeClient(), "@demo", emit_events=True, startup_mode="incremental", limit=10)
 
-    assert dispatched == [("demo", 100)]
+    assert dispatched == [("demo", 100), ("demo", 99)]
+    assert result["inserted"] == 2
+    assert saved_states[0]["last_message_id"] == 100
+
+
+@pytest.mark.asyncio
+async def test_sync_channel_history_does_not_stop_after_first_message_when_no_state(monkeypatch):
+    from app.services.telegram_service import _sync_channel_history
+
+    class FakeMessage:
+        def __init__(self, message_id, text):
+            self.id = message_id
+            self.text = text
+            self.message = text
+            self.date = None
+
+    class FakeClient:
+        async def iter_messages(self, channel, limit=None):
+            yield FakeMessage(100, "纯文本公告")
+            yield FakeMessage(99, "电影资源 https://115.com/s/abc")
+
+    dispatched = []
+    saved_states = []
+
+    async def fake_state(channel_ref):
+        return None
+
+    async def fake_dispatch(channel, message, *, emit_events=True):
+        dispatched.append((channel, message.id))
+        if message.id == 99:
+            return [{"db_id": 2}]
+        return []
+
+    async def fake_upsert(**kwargs):
+        saved_states.append(kwargs)
+
+    async def fake_has_resources(channel_ref, channel_id):
+        return False
+
+    monkeypatch.setattr("app.services.telegram_service.get_telegram_monitor_state", fake_state)
+    monkeypatch.setattr("app.services.telegram_service._dispatch_scraped_message", fake_dispatch)
+    monkeypatch.setattr("app.services.telegram_service.upsert_telegram_monitor_state", fake_upsert)
+    monkeypatch.setattr("app.services.telegram_service._channel_has_resources", fake_has_resources)
+
+    result = await _sync_channel_history(FakeClient(), "@demo", emit_events=False, startup_mode="incremental", limit=10)
+
+    assert dispatched == [("demo", 100), ("demo", 99)]
     assert result["inserted"] == 1
+    assert [resource["db_id"] for resource in result["resources"]] == [2]
     assert saved_states[0]["last_message_id"] == 100
 
 

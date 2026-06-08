@@ -25,7 +25,13 @@ def add_job(func, trigger, **kwargs):
     logger.info(f"Added job: {job.id}")
     return job
 
+def get_job(job_id: str):
+    """按 job id 查询定时任务。"""
+    return _scheduler.get_job(job_id)
+
 def remove_job(job_id: str):
     """移除定时任务"""
+    if not _scheduler.get_job(job_id):
+        return
     _scheduler.remove_job(job_id)
     logger.info(f"Removed job: {job_id}")
