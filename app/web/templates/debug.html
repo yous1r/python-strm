@@ -121,7 +121,7 @@
 
 <div class="debug-step">
     <h4>9. 115 全链路验证</h4>
-    <div class="desc">验证 <code>db_sync -> strm_records 刷新 -> strm 更新</code> 整条链路，并轮询展示阶段与统计结果。</div>
+    <div class="desc">验证 <code>db_sync -> strm_records 刷新 -> strm 更新 -> media_item_links 生成</code> 整条链路，并轮询展示阶段与统计结果。</div>
     <div class="row">
         <button class="btn btn-primary" onclick="runStep9()" id="step9Btn" style="padding: 0.35rem 0.75rem; font-size: 0.85rem;">执行</button>
     </div>
@@ -248,7 +248,9 @@ function renderFullSyncResult(data) {
         db_sync_results: data.db_sync_results,
         manifest_results: data.manifest_results,
         strm_results: data.strm_results,
+        media_link_results: data.media_link_results,
         stats: data.stats,
+        skip_reason: data.skip_reason,
         error: data.error,
     };
     return JSON.stringify(payload, null, 2);

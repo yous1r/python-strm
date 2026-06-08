@@ -215,6 +215,300 @@ class StrmGenerator115:
             root_output_dir=root_output_dir,
         )
 
+    async def _prepare_strm_target(
+        self,
+        file_name: str,
+        current_dir: str,
+        root_dir: str,
+        *,
+        skip_organize: bool = False,
+    ) -> dict[str, object]:
+        config = get_config()
+
+        if config.organize.enabled and not skip_organize:
+            category, region, target_folder, target_name, tmdb_data = await organizer.get_organized_path(file_name)
+            target_dir = os.path.join(root_dir, category, region, target_folder)
+            base_name = os.path.splitext(target_name)[0]
+            media_type = "movie" if category == "电影" else "episode"
+        else:
+            target_dir = current_dir
+            target_name = file_name
+            tmdb_data = None
+            base_name = os.path.splitext(file_name)[0]
+            media_type = ""
+
+        strm_filename = f"{base_name}.strm"
+        strm_path = os.path.join(target_dir, strm_filename)
+        return {
+            "target_dir": target_dir,
+            "target_name": target_name,
+            "tmdb_data": tmdb_data,
+            "media_type": media_type,
+            "strm_path": strm_path,
+        }
+
+    async def _build_manifest_record_for_item(
+        self,
+        *,
+        file_id: str,
+        file_name: str,
+        pickcode: str,
+        archive_dir_id: str,
+        current_output_dir: str,
+        root_output_dir: str,
+    ) -> dict:
+        prepared = await self._prepare_strm_target(
+            file_name,
+            current_output_dir,
+            root_output_dir,
+            skip_organize=False,
+        )
+        abs_strm_path = str(Path(str(prepared["strm_path"])).resolve())
+        root_output_path = Path(root_output_dir).resolve()
+        strm_rel_path = os.path.relpath(abs_strm_path, str(root_output_path)).replace("\\", "/")
+        archive_rel_path = Path(strm_rel_path).parent.as_posix()
+        if archive_rel_path == ".":
+            archive_rel_path = ""
+
+        return build_manifest_record(
+            cloud_type="115",
+            file_id=file_id,
+            archive_dir_id=archive_dir_id,
+            archive_rel_path=archive_rel_path,
+            strm_rel_path=strm_rel_path,
+            strm_abs_path=abs_strm_path,
+            play_identity=pickcode,
+        )
+
+    async def _load_existing_records_by_file_ids(self, file_ids: list[str]) -> dict[str, dict]:
+        if not file_ids:
+            return {}
+
+        placeholders = ",".join(["?"] * len(file_ids))
+        async with get_db_conn() as db:
+            cursor = await db.execute(
+                f"""
+                SELECT id, cloud_type, file_id, archive_dir_id, archive_rel_path,
+                       strm_rel_path, strm_abs_path, strm_path, play_identity, status
+                FROM strm_records
+                WHERE cloud_type='115' AND file_id IN ({placeholders})
+                """,
+                tuple(file_ids),
+            )
+            rows = await cursor.fetchall()
+
+        return {str(row["file_id"]): dict(row) for row in rows}
+
+    def _manifest_record_needs_update(self, existing: dict, desired: dict) -> bool:
+        fields = (
+            "archive_dir_id",
+            "archive_rel_path",
+            "strm_rel_path",
+            "strm_abs_path",
+            "play_identity",
+            "status",
+        )
+        return any((existing.get(field) or "") != (desired.get(field) or "") for field in fields)
+
+    async def list_manifest_records_for_scope(
+        self,
+        *,
+        dir_id: str,
+        output_dir: str,
+        root_output_dir: str | None,
+    ) -> list[dict]:
+        scope_prefix = self._derive_scope_prefix(output_dir, root_output_dir)
+        records = await self._load_cleanup_candidates(
+            dir_id=dir_id,
+            archive_dir_ids=[str(dir_id)],
+            scope_prefix=scope_prefix,
+        )
+        return [dict(record) for record in records if (record.get("status") or "generated") == "generated"]
+
+    async def sync_manifest_records(
+        self,
+        *,
+        dir_id: str,
+        output_dir: str,
+        base_url: str,
+        recursive: bool = True,
+        root_output_dir: str | None = None,
+    ) -> dict[str, object]:
+        if root_output_dir is None:
+            root_output_dir = output_dir
+
+        config = get_config()
+        stats = {
+            "scanned": 0,
+            "created": 0,
+            "updated": 0,
+            "unchanged": 0,
+            "deleted_records": 0,
+            "deleted_files": 0,
+        }
+
+        if config.strm.clean_invalid:
+            cleanup = await self._cleanup_invalid_strm_records(
+                dir_id=dir_id,
+                output_dir=output_dir,
+                root_output_dir=root_output_dir,
+            )
+            stats["deleted_records"] = cleanup.get("records", 0)
+            stats["deleted_files"] = cleanup.get("files", 0)
+
+        async def _walk(current_dir_id: str, current_output_dir: str):
+            limit = 1000
+            offset = 0
+
+            while True:
+                await self.rate_limiter.acquire()
+                res = await self.client.list_files_local_first(
+                    dir_id=current_dir_id,
+                    limit=limit,
+                    offset=offset,
+                    recursive=False,
+                )
+                if "error" in res:
+                    logger.error(f"[STRM manifest] list_files_local_first failed: {res['error']}")
+                    break
+
+                items = res.get("items", [])
+                if not items:
+                    break
+
+                file_ids = [
+                    str(item.get("fid"))
+                    for item in items
+                    if "fid" in item and is_video_file(item.get("n", "")) and item.get("pc")
+                ]
+                existing_records = await self._load_existing_records_by_file_ids(file_ids)
+
+                for item in items:
+                    if "fid" not in item:
+                        if recursive:
+                            await asyncio.sleep(1.5)
+                            folder_name = item.get("n", "")
+                            folder_id = str(item.get("cid"))
+                            await _walk(folder_id, os.path.join(current_output_dir, folder_name))
+                        continue
+
+                    file_name = item.get("n", "")
+                    if not is_video_file(file_name):
+                        continue
+
+                    pickcode = item.get("pc", "")
+                    if not pickcode:
+                        continue
+
+                    file_id = str(item.get("fid", ""))
+                    stats["scanned"] += 1
+                    desired = await self._build_manifest_record_for_item(
+                        file_id=file_id,
+                        file_name=file_name,
+                        pickcode=pickcode,
+                        archive_dir_id=current_dir_id,
+                        current_output_dir=current_output_dir,
+                        root_output_dir=root_output_dir,
+                    )
+                    existing = existing_records.get(file_id)
+                    if existing and not self._manifest_record_needs_update(existing, desired):
+                        stats["unchanged"] += 1
+                        continue
+
+                    await self._record_manifest(
+                        file_id=file_id,
+                        archive_dir_id=desired["archive_dir_id"],
+                        archive_rel_path=desired["archive_rel_path"],
+                        strm_rel_path=desired["strm_rel_path"],
+                        strm_abs_path=desired["strm_abs_path"],
+                        pickcode=desired["play_identity"],
+                    )
+                    if existing:
+                        stats["updated"] += 1
+                    else:
+                        stats["created"] += 1
+
+                if len(items) < limit:
+                    break
+                offset += limit
+
+        await _walk(str(dir_id), output_dir)
+        stats["changed"] = bool(
+            stats["created"] or stats["updated"] or stats["deleted_records"] or stats["deleted_files"]
+        )
+        stats["base_url"] = base_url
+        return stats
+
+    def _derive_record_media_name(self, record: dict) -> str:
+        strm_path = record.get("strm_rel_path") or record.get("strm_path") or record.get("strm_abs_path") or "video"
+        file_name = Path(strm_path).stem
+        return f"{file_name}.mkv" if file_name else "video.mkv"
+
+    async def sync_strm_files_from_manifest(
+        self,
+        *,
+        dir_id: str,
+        output_dir: str,
+        root_output_dir: str | None,
+        base_url: str = "",
+    ) -> dict[str, object]:
+        records = await self.list_manifest_records_for_scope(
+            dir_id=dir_id,
+            output_dir=output_dir,
+            root_output_dir=root_output_dir,
+        )
+        config = get_config()
+        target_base_url = base_url or config.strm.base_url
+
+        scanned = 0
+        updated = 0
+        skipped = 0
+        failed = 0
+        updated_files: list[str] = []
+
+        for record in records:
+            scanned += 1
+            strm_path = record.get("strm_abs_path") or record.get("strm_path") or ""
+            pickcode = record.get("play_identity") or ""
+            if not strm_path or not pickcode:
+                failed += 1
+                continue
+
+            expected_content = self.build_strm_content(
+                pickcode,
+                self._derive_record_media_name(record),
+                target_base_url,
+            )
+            current_content = None
+            if os.path.exists(strm_path):
+                try:
+                    async with aiofiles.open(strm_path, mode='r', encoding='utf-8') as f:
+                        current_content = await f.read()
+                except Exception as exc:
+                    logger.warning(f"[STRM sync] Failed to read existing STRM file {strm_path}: {exc}")
+
+            if current_content == expected_content:
+                skipped += 1
+                continue
+
+            os.makedirs(os.path.dirname(strm_path), exist_ok=True)
+            try:
+                async with aiofiles.open(strm_path, mode='w', encoding='utf-8') as f:
+                    await f.write(expected_content)
+                updated += 1
+                updated_files.append(strm_path)
+            except Exception as exc:
+                failed += 1
+                logger.error(f"[STRM sync] Failed to write STRM file {strm_path}: {exc}")
+
+        return {
+            "scanned": scanned,
+            "updated": updated,
+            "skipped": skipped,
+            "failed": failed,
+            "files": updated_files[:10],
+        }
+
     async def generate_strm(
         self,
         pickcode: str,
@@ -225,26 +519,24 @@ class StrmGenerator115:
         skip_organize: bool = False,
     ) -> str:
         """生成单个STRM文件，支持智能刮削打平"""
-        config = get_config()
         strm_content = self.build_strm_content(pickcode, file_name, base_url)
-        
-        if config.organize.enabled and not skip_organize:
-            # 智能整理模式：忽略网盘原生路径，打平为 大类/地区/特定名称
-            category, region, target_folder, target_name, tmdb_data = await organizer.get_organized_path(file_name)
-            target_dir = os.path.join(root_dir, category, region, target_folder)
-            
-            base_name = os.path.splitext(target_name)[0]
-            strm_filename = f"{base_name}.strm"
-            strm_path = os.path.join(target_dir, strm_filename)
-            
-            # 同时生成 NFO
-            media_type = "movie" if category == "电影" else "episode"
-            await organizer.write_nfo_file(target_dir, target_name, tmdb_data, media_type)
-        else:
-            # 原生模式：保留网盘的目录嵌套结构
-            base_name = os.path.splitext(file_name)[0]
-            strm_filename = f"{base_name}.strm"
-            strm_path = os.path.join(current_dir, strm_filename)
+        prepared = await self._prepare_strm_target(
+            file_name,
+            current_dir,
+            root_dir,
+            skip_organize=skip_organize,
+        )
+        target_dir = str(prepared["target_dir"])
+        target_name = str(prepared["target_name"])
+        strm_path = str(prepared["strm_path"])
+
+        if prepared.get("tmdb_data") is not None and prepared.get("media_type"):
+            await organizer.write_nfo_file(
+                target_dir,
+                target_name,
+                prepared["tmdb_data"],
+                str(prepared["media_type"]),
+            )
         
         # 确保目录存在
         os.makedirs(os.path.dirname(strm_path), exist_ok=True)

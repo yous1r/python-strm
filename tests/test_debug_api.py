@@ -40,12 +40,18 @@ def test_get_cloud115_full_sync_returns_stats(monkeypatch):
             "db_sync_results": [{"dir_name": "影视", "count": 3}],
             "manifest_results": [{"dir_name": "影视", "cleaned_records": 1, "deleted_strm_files": 1}],
             "strm_results": [{"dir_name": "影视", "generated_count": 2}],
+            "media_link_results": [{"media_server_name": "emby-1", "scanned": 10, "linked": 2, "skipped": 8, "failed": 0}],
             "stats": {
                 "db_sync_rows": 3,
                 "cleaned_records": 1,
                 "deleted_strm_files": 1,
                 "generated_strm_files": 2,
+                "media_links_scanned": 10,
+                "media_links_linked": 2,
+                "media_links_skipped": 8,
+                "media_links_failed": 0,
             },
+            "skip_reason": "",
             "error": "",
         }
 
@@ -57,3 +63,4 @@ def test_get_cloud115_full_sync_returns_stats(monkeypatch):
     assert response.status_code == 200
     assert response.json()["completed"] is True
     assert response.json()["stats"]["generated_strm_files"] == 2
+    assert response.json()["stats"]["media_links_linked"] == 2
