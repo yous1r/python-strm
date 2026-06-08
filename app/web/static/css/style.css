@@ -277,8 +277,35 @@ select.form-control {
 }
 
 select.form-control option {
-    background-color: var(--bg-secondary);
+    background-color: var(--bg-primary);
     color: var(--text-primary);
+}
+
+textarea.form-control {
+    resize: none;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(59,130,246,0.45) transparent;
+}
+
+textarea.form-control::-webkit-scrollbar {
+    width: 8px;
+}
+
+textarea.form-control::-webkit-scrollbar-track {
+    background: transparent;
+    border-radius: 0.75rem;
+}
+
+textarea.form-control::-webkit-scrollbar-thumb {
+    border-radius: 10px;
+    background: var(--sidebar-scrollbar-thumb);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+
+textarea.form-control::-webkit-scrollbar-thumb:hover {
+    background: var(--sidebar-scrollbar-thumb-hover);
 }
 
 /* Grid Layouts */
