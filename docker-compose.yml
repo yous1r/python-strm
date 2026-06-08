@@ -14,7 +14,7 @@ services:
       # 持久化数据库与日志
       - ./data:/app/data
       # 持久化 STRM 生成产物 (映射给外层的 Emby/Jellyfin 读取)
-      - ./strm_output:/strm
+      - ./strm:/app/strm
 
     environment:
       - TZ=Asia/Shanghai

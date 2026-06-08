@@ -260,21 +260,32 @@ class StrmBatchPathTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("strm_rel_path", query)
         self.assertIn("strm_abs_path", query)
         self.assertIn("play_identity", query)
+        self.assertIn("source_file_name", query)
+        self.assertIn("source_pickcode", query)
+        self.assertIn("source_sha", query)
+        self.assertIn("source_archive_dir_id", query)
         self.assertEqual(params[0], "115")
         self.assertEqual(params[1], "1")
-        self.assertEqual(params[2], "cid-9")
-        self.assertEqual(params[3], "剧集/国产剧集/灵魂摆渡·十年 (2026) {tmdb-289271}/Season 1")
+        self.assertEqual(params[2], "灵魂摆渡·十年.2026.S01E05.mkv")
+        self.assertEqual(params[3], "pc1")
+        self.assertEqual(params[4], "ABC")
+        self.assertEqual(params[5], "cid-9")
         self.assertEqual(
-            params[4],
+            params[7],
+            "剧集/国产剧集/灵魂摆渡·十年 (2026) {tmdb-289271}/Season 1",
+        )
+        self.assertEqual(
+            params[8],
             "剧集/国产剧集/灵魂摆渡·十年 (2026) {tmdb-289271}/Season 1/灵魂摆渡·十年 - S01E05.strm",
         )
         self.assertEqual(
-            params[5],
+            params[9],
             "strm_output/剧集/国产剧集/灵魂摆渡·十年 (2026) {tmdb-289271}/Season 1/灵魂摆渡·十年 - S01E05.strm",
         )
-        self.assertEqual(params[6], "pc1")
+        self.assertEqual(params[6], "cid-9")
+        self.assertEqual(params[10], "pc1")
         self.assertEqual(
-            params[8],
+            params[12],
             "strm_output/剧集/国产剧集/灵魂摆渡·十年 (2026) {tmdb-289271}/Season 1/灵魂摆渡·十年 - S01E05.strm",
         )
 

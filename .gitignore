@@ -9,6 +9,7 @@ node_modules
 
 strm_output
 strm_output_bak
+strm
 data
 __pycache__/
 
