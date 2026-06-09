@@ -60,15 +60,7 @@ async def classify(file_name: str) -> Optional[ClassifyResult]:
                 cat_config = c
                 break
 
-        subcategory = ""
-        if cat_config and cat_config.subcategories:
-            region_map = {
-                "国产": f"国产{category}",
-                "欧美": f"欧美{category}",
-                "日韩": f"日韩{category}",
-                "其他": "其他"
-            }
-            subcategory = region_map.get(region, "其他")
+        subcategory = _select_subcategory(region, cat_config.subcategories if cat_config else [])
 
         # 确定季号
         season = 1
@@ -96,6 +88,45 @@ def _build_folder_name(result: ClassifyResult) -> str:
     if result.tmdb_id:
         folder_name += f" {{tmdb-{result.tmdb_id}}}"
     return folder_name
+
+
+def _select_subcategory(region: str, subcategories: list[str]) -> str:
+    if not subcategories:
+        return ""
+
+    normalized = [str(item).strip() for item in subcategories if str(item).strip()]
+    if not normalized:
+        return ""
+
+    explicit_rules: dict[str, str] = {}
+    for item in normalized:
+        key, value = _parse_subcategory_rule(item)
+        if key:
+            explicit_rules[key] = value
+
+    if region in explicit_rules:
+        return explicit_rules[region]
+
+    for item in normalized:
+        if item == region or item.startswith(region):
+            return item
+
+    if region == "其他":
+        return normalized[-1]
+
+    return normalized[0]
+
+
+def _parse_subcategory_rule(rule: str) -> tuple[str, str]:
+    for delimiter in ("=", "：", ":", "｜", "|"):
+        if delimiter not in rule:
+            continue
+        region, value = rule.split(delimiter, 1)
+        region = region.strip()
+        value = value.strip()
+        if region and value:
+            return region, value
+    return "", rule
 
 
 def build_archive_path(result: ClassifyResult) -> list:

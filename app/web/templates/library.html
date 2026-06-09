@@ -10,9 +10,9 @@
             <input type="text" id="searchInput" class="form-control" placeholder="搜索影视名称..." style="width: 250px;" onkeyup="if(event.key === 'Enter') loadLibrary(1)">
             <button class="btn btn-primary" onclick="loadLibrary(1)"><i class="fa-solid fa-magnifying-glass"></i></button>
             <select id="pageSize" class="form-control" onchange="loadLibrary(1)" style="width: auto;">
-                <option value="12">12 / 页</option>
-                <option value="24" selected>24 / 页</option>
-                <option value="48">48 / 页</option>
+                <option value="20">20 / 页</option>
+                <option value="50" selected>50 / 页</option>
+                <option value="100">100 / 页</option>
             </select>
             <button class="btn btn-secondary" onclick="migrateLegacy()" title="补全老数据海报">
                 <i class="fa-solid fa-wand-magic-sparkles"></i>

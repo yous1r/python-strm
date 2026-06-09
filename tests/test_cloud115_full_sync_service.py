@@ -131,6 +131,63 @@ class Cloud115FullSyncServiceTests(unittest.IsolatedAsyncioTestCase):
             base_url="http://localhost:8095",
         )
 
+    async def test_run_manifest_and_strm_refresh_step_runs_integrated_workflow(self):
+        service = Cloud115FullSyncService()
+        config = SimpleNamespace(
+            strm=SimpleNamespace(output_dir="strm_output", base_url="http://localhost:8095")
+        )
+        dirs = [
+            {
+                "dir_id": "100",
+                "dir_name": "影视",
+                "recursive": True,
+                "output_dir": "strm_output/影视",
+                "role": "sync_dir",
+                "strm_enabled": True,
+            }
+        ]
+
+        with (
+            patch("app.services.cloud115_full_sync_service.get_config", return_value=config),
+            patch(
+                "app.services.cloud115_full_sync_service.generator_115.sync_manifest_records",
+                new=AsyncMock(
+                    return_value={
+                        "scanned": 5,
+                        "created": 1,
+                        "updated": 1,
+                        "unchanged": 3,
+                        "deleted_records": 0,
+                        "deleted_files": 0,
+                        "changed": False,
+                    }
+                ),
+            ) as manifest_mock,
+            patch(
+                "app.services.cloud115_full_sync_service.generator_115.sync_strm_files_from_manifest",
+                new=AsyncMock(return_value={"scanned": 5, "updated": 2, "skipped": 3, "failed": 0, "files": ["a.strm", "b.strm"]}),
+            ) as strm_mock,
+        ):
+            result = await service.run_manifest_and_strm_refresh_step(dirs)
+
+        self.assertEqual(result["manifest_results"][0]["scanned_records"], 5)
+        self.assertEqual(result["manifest_results"][0]["changed"], False)
+        self.assertEqual(result["strm_results"][0]["generated_count"], 2)
+        self.assertEqual(result["dirs"], dirs)
+        manifest_mock.assert_awaited_once_with(
+            dir_id="100",
+            output_dir="strm_output/影视",
+            base_url="http://localhost:8095",
+            recursive=True,
+            root_output_dir="strm_output",
+        )
+        strm_mock.assert_awaited_once_with(
+            dir_id="100",
+            output_dir="strm_output/影视",
+            root_output_dir="strm_output",
+            base_url="http://localhost:8095",
+        )
+
     async def test_pipeline_stops_when_manifest_step_fails(self):
         service = Cloud115FullSyncService()
         service._tasks["task-1"] = {
@@ -172,7 +229,7 @@ class Cloud115FullSyncServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("boom", task["error"])
         emit_mock.assert_not_awaited()
 
-    async def test_handle_full_sync_requested_skips_followup_when_no_dir_changed(self):
+    async def test_handle_full_sync_requested_emits_db_sync_finished_for_workflow_dirs(self):
         service = Cloud115FullSyncService()
         service._tasks["task-1"] = {
             "task_id": "task-1",
@@ -228,13 +285,17 @@ class Cloud115FullSyncServiceTests(unittest.IsolatedAsyncioTestCase):
 
         task = await service.get_task("task-1")
         self.assertIsNotNone(task)
-        self.assertEqual(task["status"], "completed")
-        self.assertEqual(task["current_stage"], "completed")
-        self.assertIn("跳过", task["skip_reason"])
+        self.assertEqual(task["status"], "running")
+        self.assertEqual(task["current_stage"], "db_sync")
         self.assertEqual(task["stats"]["db_sync_rows"], 0)
-        emit_mock.assert_awaited_once()
+        emit_mock.assert_awaited_once_with(
+            "cloud115.db_sync.finished",
+            task_id="task-1",
+            source="debug",
+            dirs=[db_sync_results[0]],
+        )
 
-    def test_select_changed_strm_dirs_filters_zero_count_dirs(self):
+    def test_select_strm_workflow_dirs_keeps_all_strm_enabled_dirs(self):
         service = Cloud115FullSyncService()
         dirs = [
             {
@@ -260,11 +321,11 @@ class Cloud115FullSyncServiceTests(unittest.IsolatedAsyncioTestCase):
             },
         ]
 
-        changed = service._select_changed_strm_dirs(dirs)
+        changed = service._select_strm_workflow_dirs(dirs)
 
-        self.assertEqual(changed, [dirs[1]])
+        self.assertEqual(changed, [dirs[0], dirs[1]])
 
-    async def test_handle_db_sync_finished_completes_when_manifest_has_no_changes(self):
+    async def test_handle_db_sync_finished_emits_manifest_event_even_when_manifest_has_no_changes(self):
         service = Cloud115FullSyncService()
         service._tasks["task-1"] = {
             "task_id": "task-1",
@@ -319,12 +380,17 @@ class Cloud115FullSyncServiceTests(unittest.IsolatedAsyncioTestCase):
 
         task = await service.get_task("task-1")
         self.assertIsNotNone(task)
-        self.assertEqual(task["status"], "completed")
-        self.assertEqual(task["current_stage"], "completed")
-        self.assertIn("未发现差异", task["skip_reason"])
-        emit_mock.assert_awaited_once()
+        self.assertEqual(task["current_stage"], "manifest_refresh")
+        emit_mock.assert_awaited_once_with(
+            "cloud115.manifest_refresh.finished",
+            task_id="task-1",
+            source="debug",
+            dirs=[{"dir_id": "100", "dir_name": "影视", "output_dir": "strm_output/影视", "strm_enabled": True}],
+            manifest_results=manifest_result["results"],
+            has_changes=False,
+        )
 
-    async def test_handle_manifest_refresh_finished_runs_parallel_refresh(self):
+    async def test_handle_manifest_refresh_finished_emits_strm_refresh_event(self):
         service = Cloud115FullSyncService()
         service._tasks["task-1"] = {
             "task_id": "task-1",
@@ -352,20 +418,6 @@ class Cloud115FullSyncServiceTests(unittest.IsolatedAsyncioTestCase):
             "error": "",
         }
 
-        media_link_result = {
-            "status": "success",
-            "instance_count": 1,
-            "results": [
-                {
-                    "media_server_type": "emby",
-                    "media_server_name": "emby-1",
-                    "scanned": 10,
-                    "linked": 4,
-                    "skipped": 6,
-                    "failed": 0,
-                }
-            ],
-        }
         strm_results = [
             {
                 "dir_id": "100",
@@ -381,7 +433,6 @@ class Cloud115FullSyncServiceTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(service, "run_strm_refresh_step", new=AsyncMock(return_value=strm_results)),
-            patch.object(service, "run_media_links_refresh_step", new=AsyncMock(return_value=media_link_result)),
             patch("app.services.cloud115_full_sync_service.event_bus.emit", new=AsyncMock()) as emit_mock,
         ):
             await service.handle_manifest_refresh_finished(
@@ -392,13 +443,77 @@ class Cloud115FullSyncServiceTests(unittest.IsolatedAsyncioTestCase):
 
         task = await service.get_task("task-1")
         self.assertIsNotNone(task)
-        self.assertEqual(task["current_stage"], "parallel_refresh")
+        self.assertEqual(task["current_stage"], "strm_refresh")
         self.assertEqual(task["strm_results"], strm_results)
-        self.assertEqual(task["media_link_results"], media_link_result["results"])
         self.assertEqual(task["stats"]["generated_strm_files"], 2)
+        emit_mock.assert_awaited_once_with(
+            "cloud115.strm_refresh.finished",
+            task_id="task-1",
+            source="debug",
+            dirs=[{"dir_id": "100", "dir_name": "影视", "output_dir": "strm_output/影视", "strm_enabled": True}],
+        )
+
+    async def test_handle_strm_refresh_finished_runs_media_links_then_completes_event(self):
+        service = Cloud115FullSyncService()
+        service._tasks["task-1"] = {
+            "task_id": "task-1",
+            "source": "debug",
+            "status": "running",
+            "current_stage": "strm_refresh",
+            "skip_reason": "",
+            "started_at": "2026-06-07T20:00:00",
+            "finished_at": None,
+            "dirs": [],
+            "db_sync_results": [],
+            "manifest_results": [],
+            "strm_results": [],
+            "media_link_results": [],
+            "stats": {
+                "db_sync_rows": 0,
+                "cleaned_records": 0,
+                "deleted_strm_files": 0,
+                "generated_strm_files": 0,
+                "media_links_scanned": 0,
+                "media_links_linked": 0,
+                "media_links_skipped": 0,
+                "media_links_failed": 0,
+            },
+            "error": "",
+        }
+        media_link_result = {
+            "status": "success",
+            "instance_count": 1,
+            "results": [
+                {
+                    "media_server_type": "emby",
+                    "media_server_name": "emby-1",
+                    "scanned": 10,
+                    "linked": 4,
+                    "skipped": 6,
+                    "failed": 0,
+                }
+            ],
+        }
+
+        dirs = [{"dir_id": "100", "dir_name": "影视", "output_dir": "strm_output/影视", "strm_enabled": True}]
+        with (
+            patch.object(service, "run_media_links_refresh_step", new=AsyncMock(return_value=media_link_result)) as media_mock,
+            patch("app.services.cloud115_full_sync_service.event_bus.emit", new=AsyncMock()) as emit_mock,
+        ):
+            await service.handle_strm_refresh_finished(task_id="task-1", source="debug", dirs=dirs)
+
+        task = await service.get_task("task-1")
+        self.assertIsNotNone(task)
+        self.assertEqual(task["current_stage"], "media_links_refresh")
+        self.assertEqual(task["media_link_results"], media_link_result["results"])
         self.assertEqual(task["stats"]["media_links_scanned"], 10)
         self.assertEqual(task["stats"]["media_links_linked"], 4)
-        emit_mock.assert_awaited_once()
+        media_mock.assert_awaited_once_with(dirs)
+        emit_mock.assert_awaited_once_with(
+            "cloud115.media_links_refresh.finished",
+            task_id="task-1",
+            source="debug",
+        )
 
     async def test_run_media_links_refresh_step_skips_without_enabled_instances(self):
         service = Cloud115FullSyncService()

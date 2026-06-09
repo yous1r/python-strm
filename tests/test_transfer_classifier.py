@@ -9,8 +9,11 @@ from app.core.transfer.classifier import _sanitize, classify
 from app.core.transfer.batch import (
     _batch_states,
     _build_batch_sample_name,
+    handle_batch_db_sync_completed,
+    handle_batch_db_sync_requested,
     handle_batch_done,
     handle_batch_item_done,
+    handle_strm_batch_rewrite_requested,
     handle_batch_requested,
 )
 from app.core.cloud115.strm import StrmGenerator115
@@ -28,6 +31,15 @@ class ParseFilenameTests(unittest.TestCase):
 
 class ClassifyTests(unittest.IsolatedAsyncioTestCase):
     async def test_classify_treats_extensionless_episode_title_as_tv(self):
+        config = SimpleNamespace(
+            transfer=SimpleNamespace(
+                categories=[
+                    SimpleNamespace(name="电影", subcategories=["国产电影", "欧美电影", "日韩电影", "其他"]),
+                    SimpleNamespace(name="剧集", subcategories=["国产剧集", "欧美剧集", "日韩剧集", "其他"]),
+                ],
+                default_categories=lambda: [],
+            )
+        )
         tmdb_data = {
             "id": 297640,
             "name": "秘恋稽核中",
@@ -35,6 +47,9 @@ class ClassifyTests(unittest.IsolatedAsyncioTestCase):
         }
 
         with patch(
+            "app.core.transfer.classifier.get_config",
+            return_value=config,
+        ), patch(
             "app.core.transfer.classifier.media_organizer.get_organized_path",
             return_value=("剧集", "日韩", "秘恋稽核中 (2026)/Season 01", "秘恋稽核中 - S01E01", tmdb_data),
         ):
@@ -47,6 +62,28 @@ class ClassifyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.season, 1)
         self.assertEqual(result.title, "秘恋稽核中")
         self.assertEqual(result.year, "2026")
+
+    async def test_classify_prefers_frontend_configured_subcategory_order(self):
+        config = SimpleNamespace(
+            transfer=SimpleNamespace(
+                categories=[
+                    SimpleNamespace(name="剧集", subcategories=["国产=华语剧", "欧美=欧美精选", "日韩=日韩精选", "其他=未分类"]),
+                ],
+                default_categories=lambda: [],
+            )
+        )
+
+        with patch(
+            "app.core.transfer.classifier.get_config",
+            return_value=config,
+        ), patch(
+            "app.core.transfer.classifier.media_organizer.get_organized_path",
+            return_value=("剧集", "日韩", "秘恋稽核中 (2026)/Season 01", "秘恋稽核中 - S01E01", {"id": 297640, "name": "秘恋稽核中", "first_air_date": "2026-01-01"}),
+        ):
+            result = await classify("秘恋稽核中 (2026) S01E01.mkv")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.subcategory, "日韩精选")
 
     def test_sanitize_removes_display_prefix_from_fallback_title(self):
         self.assertEqual(_sanitize("📺 大唐迷雾 (2026)"), "大唐迷雾 (2026)")
@@ -145,6 +182,7 @@ class BatchPrepareTests(unittest.IsolatedAsyncioTestCase):
             "title": "秘恋稽核中",
             "episode_count": 2,
             "series_folder_id": "cid-3",
+            "target_dir_id": "cid-3",
             "series_path_str": "剧集/日韩剧集/秘恋稽核中 (2026) {tmdb-297640}/Season 1",
             "share_files": [
                 {"sha": "A1", "name": "E01.mkv"},
@@ -169,18 +207,144 @@ class BatchPrepareTests(unittest.IsolatedAsyncioTestCase):
         mocked_finalize.assert_awaited_once_with("task-3", batch_state)
         mocked_notify.assert_awaited_once_with("task-3", batch_state)
         mocked_emit.assert_awaited_once_with(
-            "strm.batch.requested",
+            "transfer_batch_db_sync_requested",
             task_id="task-3",
-            cloud_type="115",
             archive_dir_id="cid-3",
             archive_rel_path="剧集/日韩剧集/秘恋稽核中 (2026) {tmdb-297640}/Season 1",
             strm_rel_dir="剧集/日韩剧集/秘恋稽核中 (2026) {tmdb-297640}/Season 1",
+            batch_title="秘恋稽核中",
             files=[
                 {"sha": "A1", "name": "E01.mkv"},
                 {"sha": "A2", "name": "E02.mkv"},
             ],
         )
         self.assertNotIn("task-3", _batch_states)
+
+    async def test_handle_batch_db_sync_requested_emits_followup_event_after_sync(self):
+        mocked_emit = AsyncMock()
+
+        with patch(
+            "app.core.transfer.batch.sync_directory",
+            AsyncMock(return_value=6),
+        ) as mocked_sync, patch(
+            "app.core.transfer.batch.event_bus.emit",
+            mocked_emit,
+        ):
+            await handle_batch_db_sync_requested(
+                task_id="task-4",
+                archive_dir_id="cid-4",
+                archive_rel_path="剧集/国产剧集/示例剧/Season 1",
+                strm_rel_dir="剧集/国产剧集/示例剧/Season 1",
+                batch_title="示例剧",
+                files=[{"sha": "A1", "name": "E01.mkv"}],
+            )
+
+        mocked_sync.assert_awaited_once_with("cid-4", "剧集/国产剧集/示例剧/Season 1", recursive=True)
+        mocked_emit.assert_awaited_once_with(
+            "transfer_batch_db_sync_completed",
+            task_id="task-4",
+            archive_dir_id="cid-4",
+            archive_rel_path="剧集/国产剧集/示例剧/Season 1",
+            strm_rel_dir="剧集/国产剧集/示例剧/Season 1",
+            batch_title="示例剧",
+            files=[{"sha": "A1", "name": "E01.mkv"}],
+            count=6,
+        )
+
+    async def test_handle_batch_db_sync_completed_emits_strm_request(self):
+        mocked_emit = AsyncMock()
+
+        with patch("app.core.transfer.batch.event_bus.emit", mocked_emit):
+            await handle_batch_db_sync_completed(
+                task_id="task-5",
+                archive_dir_id="cid-5",
+                archive_rel_path="剧集/国产剧集/示例剧/Season 1",
+                strm_rel_dir="剧集/国产剧集/示例剧/Season 1",
+                files=[{"sha": "A1", "name": "E01.mkv"}],
+                count=3,
+            )
+
+        mocked_emit.assert_awaited_once_with(
+            "strm.batch.requested",
+            task_id="task-5",
+            cloud_type="115",
+            archive_dir_id="cid-5",
+            archive_rel_path="剧集/国产剧集/示例剧/Season 1",
+            strm_rel_dir="剧集/国产剧集/示例剧/Season 1",
+            files=[{"sha": "A1", "name": "E01.mkv"}],
+        )
+
+    async def test_handle_strm_batch_requested_emits_rewrite_event_after_manifest_refresh(self):
+        config = SimpleNamespace(strm=SimpleNamespace(base_url="http://example.com", output_dir="strm_output"))
+
+        with patch("app.core.transfer.batch.get_config", return_value=config), patch(
+            "app.core.transfer.batch.generator_115.sync_manifest_records",
+            AsyncMock(return_value={"scanned": 2, "changed": True}),
+        ) as mocked_manifest, patch(
+            "app.core.transfer.batch.event_bus.emit",
+            AsyncMock(),
+        ) as mocked_emit:
+            from app.core.transfer.batch import handle_strm_batch_requested
+
+            await handle_strm_batch_requested(
+                task_id="task-6",
+                archive_dir_id="cid-6",
+                archive_rel_path="剧集/国产剧集/示例剧/Season 1",
+                strm_rel_dir="剧集/国产剧集/示例剧/Season 1",
+                files=[{"sha": "A1", "name": "E01.mkv"}],
+            )
+
+        mocked_manifest.assert_awaited_once_with(
+            dir_id="cid-6",
+            output_dir="strm_output/剧集/国产剧集/示例剧/Season 1",
+            base_url="http://example.com",
+            recursive=True,
+            root_output_dir="strm_output",
+            preserve_existing_structure=True,
+        )
+        mocked_emit.assert_awaited_once_with(
+            "strm.batch.rewrite.requested",
+            task_id="task-6",
+            archive_dir_id="cid-6",
+            archive_rel_path="剧集/国产剧集/示例剧/Season 1",
+            files=[{"sha": "A1", "name": "E01.mkv"}],
+            manifest_stats={"scanned": 2, "changed": True},
+        )
+
+    async def test_handle_strm_batch_rewrite_requested_runs_strm_refresh_then_emits_completed(self):
+        config = SimpleNamespace(strm=SimpleNamespace(base_url="http://example.com", output_dir="strm_output"))
+
+        with patch("app.core.transfer.batch.get_config", return_value=config), patch(
+            "app.core.transfer.batch.generator_115.sync_strm_files_from_manifest",
+            AsyncMock(return_value={"updated": 2, "files": ["a.strm"], "skipped": 1, "failed": 0}),
+        ) as mocked_strm, patch(
+            "app.core.transfer.batch.event_bus.emit",
+            AsyncMock(),
+        ) as mocked_emit:
+            await handle_strm_batch_rewrite_requested(
+                task_id="task-7",
+                archive_dir_id="cid-7",
+                archive_rel_path="剧集/国产剧集/示例剧/Season 1",
+                files=[{"sha": "A1", "name": "E01.mkv"}],
+                manifest_stats={"scanned": 2, "changed": True},
+            )
+
+        mocked_strm.assert_awaited_once_with(
+            dir_id="cid-7",
+            output_dir="strm_output/剧集/国产剧集/示例剧/Season 1",
+            root_output_dir="strm_output",
+            base_url="http://example.com",
+            archive_root="剧集/国产剧集/示例剧",
+        )
+        mocked_emit.assert_awaited_once_with(
+            "strm.batch.completed",
+            task_id="task-7",
+            archive_dir_id="cid-7",
+            archive_rel_path="剧集/国产剧集/示例剧/Season 1",
+            files=[{"sha": "A1", "name": "E01.mkv"}],
+            manifest_stats={"scanned": 2, "changed": True},
+            strm_stats={"updated": 2, "files": ["a.strm"], "skipped": 1, "failed": 0},
+        )
 
 
 class StrmBatchPathTests(unittest.IsolatedAsyncioTestCase):

@@ -2,9 +2,15 @@ import asyncio
 
 from loguru import logger
 
+import uuid
+
 from app.config import get_config
 from app.core.cloud115.client import client_115
+from app.core.cloud115.strm import generator_115
 from app.core.notify.manager import notify_manager
+from app.core.transfer.classifier import classify
+from app.core.transfer.placement import derive_series_scope_path
+from app.core.transfer.receive_target import infer_archive_rel_path, prepare_receive_target
 from app.database import get_db_conn
 
 
@@ -32,12 +38,11 @@ async def process_resource_transfer(resource: dict, *, source: str = "telegram")
     if link_data.get("type") != "115":
         return {"status": "skipped", "reason": "unsupported_disk_type", "resource": link_data, "source": source}
 
-    monitor_cfg = get_config().monitor.telegram
-    transfer_cfg = get_config().transfer
-    archive_dir_id = monitor_cfg.archive_dir_id
-    target_dir_id = link_data.get("series_folder_id") or transfer_cfg.temp_dir_id or monitor_cfg.target_dir_id
-    if not target_dir_id or target_dir_id == "0":
-        target_dir_id = get_config().cloud115.target_dir_id
+    config = get_config()
+    monitor_cfg = config.monitor.telegram
+    transfer_cfg = config.transfer
+    archive_dir_id = transfer_cfg.archive_dir_id
+    target_dir_id = link_data.get("series_folder_id") or archive_dir_id
 
     share_url = link_data.get("url")
     receive_code = link_data.get("password", "")
@@ -46,18 +51,33 @@ async def process_resource_transfer(resource: dict, *, source: str = "telegram")
     if db_id:
         await _update_tg_status(db_id, "queued")
 
-    if not target_dir_id or target_dir_id == "0":
-        await _update_tg_status(db_id, "failed")
-        return {"status": "failed", "error": "target_dir_id 未配置", "resource": link_data, "source": source}
-
     if not client_115.client:
         await _update_tg_status(db_id, "failed")
         return {"status": "failed", "error": "115 client not initialized", "resource": link_data, "source": source}
+    if not archive_dir_id or archive_dir_id == "0":
+        await _update_tg_status(db_id, "failed")
+        return {"status": "failed", "error": "archive_dir_id 未配置", "resource": link_data, "source": source}
 
     try:
         async with transfer_semaphore:
             logger.info(f"Processing Telegram 115 link: {share_url} source={source}")
             filter_rules = None if link_data.get("ignore_filters") else monitor_cfg.filter_rules
+            receive_target = None
+            if not link_data.get("series_folder_id") and archive_dir_id and archive_dir_id != "0":
+                receive_target = await prepare_receive_target(
+                    share_url=share_url,
+                    receive_code=receive_code,
+                    archive_dir_id=archive_dir_id,
+                    fallback_dir_id=archive_dir_id,
+                    classifier=classify,
+                )
+                if receive_target.target_dir_id:
+                    target_dir_id = receive_target.target_dir_id
+
+            if not target_dir_id or target_dir_id == "0":
+                await _update_tg_status(db_id, "failed")
+                return {"status": "failed", "error": "target_dir_id 未配置", "resource": link_data, "source": source}
+
             transfer_res = await client_115.share_receive(
                 share_url,
                 receive_code,
@@ -80,8 +100,25 @@ async def process_resource_transfer(resource: dict, *, source: str = "telegram")
             }
 
         logger.info(f"Successfully transferred {share_url}")
-        if monitor_cfg.auto_organize and archive_dir_id and archive_dir_id != "0":
-            await _auto_organize(target_dir_id, archive_dir_id)
+        share_files = transfer_res.get("share_files") or []
+        archive_rel_path = receive_target.archive_rel_path if receive_target else ""
+        if not archive_rel_path and link_data.get("series_folder_id") and share_files:
+            archive_rel_path = await infer_archive_rel_path(share_files, classifier=classify)
+        if share_files and archive_rel_path:
+            await generator_115.generate_strm_for_folder(
+                target_dir_id,
+                share_files,
+                archive_rel_path,
+                config.strm.output_dir,
+                task_id=str(uuid.uuid4()),
+            )
+            await generator_115.sync_strm_files_from_manifest(
+                dir_id=target_dir_id,
+                output_dir=config.strm.output_dir,
+                root_output_dir=config.strm.output_dir,
+                base_url=getattr(config.strm, "base_url", "") or "",
+                archive_root=derive_series_scope_path(archive_rel_path),
+            )
 
         await _notify_transfer_success(share_url, receive_code)
         await _update_tg_status(db_id, "success")
@@ -129,60 +166,3 @@ async def _update_tg_status(db_id, status: str):
         await db.execute("UPDATE tg_resources SET status = ? WHERE id = ?", (status, db_id))
         await db.commit()
 
-
-async def _auto_organize(source_dir_id: str, archive_dir_id: str):
-    try:
-        files_res = await client_115.list_files(source_dir_id, limit=100)
-        if files_res.get("error"):
-            logger.error("Failed to list files for auto-organize.")
-            return
-
-        for item in files_res.get("items", []):
-            if item.get("is_dir"):
-                sub_res = await client_115.list_files(item["cid"], limit=100)
-                sub_items = sub_res.get("items", []) if not sub_res.get("error") else []
-                for sub_item in sub_items:
-                    if not sub_item.get("is_dir"):
-                        await _process_single_file(sub_item, archive_dir_id)
-            else:
-                await _process_single_file(item, archive_dir_id)
-    except Exception as exc:
-        logger.error(f"Error during auto_organize: {exc}")
-
-
-async def _process_single_file(file_item: dict, base_archive_id: str):
-    from app.core.media.organizer import organizer
-
-    file_name = file_item.get("n", "")
-    file_id = file_item.get("fid", "")
-    try:
-        category, region, target_folder, target_name, _ = await organizer.get_organized_path(file_name)
-    except Exception as exc:
-        logger.error(f"Failed to organize file {file_name}: {exc}")
-        return
-
-    current_pid = base_archive_id
-    path_parts = [category, region] + target_folder.split("/")
-    for part in path_parts:
-        if not part:
-            continue
-        mkdir_res = await client_115.create_folder(current_pid, part)
-        if "id" in mkdir_res:
-            current_pid = mkdir_res["id"]
-            continue
-        dirs_res = await client_115.list_dirs(current_pid)
-        for directory in dirs_res.get("dirs", []):
-            if directory.get("n") == part:
-                current_pid = directory.get("cid")
-                break
-        else:
-            logger.error(f"Failed to create or find folder {part}")
-            return
-
-    move_ok = await client_115.move_files([file_id], current_pid)
-    if not move_ok:
-        logger.error(f"Failed to move file {file_name} to {current_pid}")
-        return
-    if target_name != file_name:
-        await client_115.rename_file(file_id, target_name)
-    logger.info(f"Organized file {file_name} -> {target_folder}/{target_name}")

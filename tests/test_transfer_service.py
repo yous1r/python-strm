@@ -1,9 +1,16 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from app.services.transfer_service import TransferServiceError, overwrite_task_strm, rewrite_archive_strm
+from app.core.transfer.placement import derive_series_scope_path
+from app.services.transfer_service import (
+    TransferServiceError,
+    overwrite_task_strm,
+    receive_share_task,
+    rewrite_archive_strm,
+)
 
 
 class _AsyncCursor:
@@ -105,6 +112,102 @@ class RewriteArchiveStrmTests(unittest.IsolatedAsyncioTestCase):
                 await rewrite_archive_strm("剧集/国产剧集")
 
         self.assertEqual(ctx.exception.status_code, 404)
+
+
+class ReceiveShareTaskTests(unittest.IsolatedAsyncioTestCase):
+    async def test_receive_share_task_precreates_archive_path_and_ignores_custom_target_dir(self):
+        config = SimpleNamespace(
+            transfer=SimpleNamespace(enabled=True, archive_dir_id="archive-root"),
+            strm=SimpleNamespace(output_dir="strm_output", base_url="http://localhost:8095"),
+        )
+        mocked_db = _AsyncDbContext(_AsyncDb(task_row=None, record_rows=[]))
+
+        with patch(
+            "app.services.transfer_service.get_config",
+            return_value=config,
+        ), patch(
+            "app.services.transfer_service.client_115.get_share_info",
+            AsyncMock(return_value={"state": True, "files": [{"name": "秘恋稽核中 (2026) S01E01.mkv", "sha": "ABC"}]}),
+        ), patch(
+            "app.services.transfer_service.classify",
+            AsyncMock(return_value=SimpleNamespace(
+                category="剧集",
+                subcategory="日韩剧集",
+                title="秘恋稽核中",
+                year="2026",
+                tmdb_id="297640",
+                season=1,
+                media_type="tv",
+            )),
+        ), patch(
+            "app.services.transfer_service.client_115.create_path",
+            AsyncMock(return_value={"id": "cid-123"}),
+        ) as mocked_create_path, patch(
+            "app.services.transfer_service.client_115.share_receive",
+            AsyncMock(return_value={"state": True, "share_files": [{"name": "秘恋稽核中 (2026) S01E01.mkv", "sha": "ABC"}]}),
+        ) as mocked_receive, patch(
+            "app.services.transfer_service.get_db_conn",
+            return_value=mocked_db,
+        ), patch(
+            "app.services.transfer_service.generator_115.generate_strm_for_folder",
+            AsyncMock(return_value=["strm_output/a.strm"]),
+        ) as mocked_generate_strm, patch(
+            "app.services.transfer_service.generator_115.sync_strm_files_from_manifest",
+            AsyncMock(return_value={"scanned": 3, "updated": 2, "skipped": 1, "failed": 0}),
+        ) as mocked_sync_strm:
+            result = await receive_share_task("https://115.com/s/demo", "", target_dir_id="manual-dir")
+
+        self.assertEqual(result["status"], "success")
+        mocked_create_path.assert_awaited_once_with(
+            "archive-root",
+            "剧集/日韩剧集/秘恋稽核中 (2026) {tmdb-297640}/Season 1",
+        )
+        mocked_receive.assert_awaited_once_with(
+            "https://115.com/s/demo",
+            "",
+            target_dir_id="cid-123",
+            filter_rules=None,
+        )
+        mocked_generate_strm.assert_awaited_once_with(
+            "cid-123",
+            [{"name": "秘恋稽核中 (2026) S01E01.mkv", "sha": "ABC"}],
+            "剧集/日韩剧集/秘恋稽核中 (2026) {tmdb-297640}/Season 1",
+            "strm_output",
+            task_id=unittest.mock.ANY,
+        )
+        mocked_sync_strm.assert_awaited_once_with(
+            dir_id="cid-123",
+            output_dir="strm_output",
+            root_output_dir="strm_output",
+            base_url="http://localhost:8095",
+            archive_root="剧集/日韩剧集/秘恋稽核中 (2026) {tmdb-297640}",
+        )
+        self.assertEqual(result["strm_updated_count"], 2)
+
+    async def test_receive_share_task_without_archive_dir_raises_instead_of_using_temp_dir(self):
+        config = SimpleNamespace(
+            transfer=SimpleNamespace(enabled=True, archive_dir_id=""),
+        )
+
+        with patch("app.services.transfer_service.get_config", return_value=config):
+            with self.assertRaises(TransferServiceError) as ctx:
+                await receive_share_task("https://115.com/s/demo", "")
+
+        self.assertEqual(str(ctx.exception), "未配置归档目录 (archive_dir_id)")
+
+
+class SeriesScopePathTests(unittest.TestCase):
+    def test_derive_series_scope_path_trims_trailing_season_segment(self):
+        self.assertEqual(
+            derive_series_scope_path("剧集/日韩剧集/秘恋稽核中 (2026) {tmdb-297640}/Season 1"),
+            "剧集/日韩剧集/秘恋稽核中 (2026) {tmdb-297640}",
+        )
+
+    def test_derive_series_scope_path_keeps_non_season_path(self):
+        self.assertEqual(
+            derive_series_scope_path("电影/国产电影/一部电影 (2024) {tmdb-1}"),
+            "电影/国产电影/一部电影 (2024) {tmdb-1}",
+        )
 
 
 if __name__ == "__main__":

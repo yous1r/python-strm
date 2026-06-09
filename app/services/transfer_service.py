@@ -4,6 +4,9 @@ from typing import Iterable, Optional
 from app.config import get_config
 from app.core.cloud115.client import client_115
 from app.core.cloud115.strm import generator_115
+from app.core.transfer.classifier import classify
+from app.core.transfer.placement import derive_series_scope_path
+from app.core.transfer.receive_target import prepare_receive_target
 from app.core.transfer.strm_manifest import list_records_for_rewrite
 from app.events import (
     EVENT_ROLLBACK_START,
@@ -27,15 +30,32 @@ async def receive_share_task(
     target_dir_id: str = "",
     filter_rules: Optional[Iterable[str]] = None,
 ) -> dict[str, object]:
-    """接收 115 分享链接并触发转存整理事件。"""
-    transfer_cfg = get_config().transfer
+    """接收 115 分享链接并触发转存整理事件。
+
+    非 debug 入口固定以 transfer.archive_dir_id 为根目录，target_dir_id 参数仅保留兼容性。
+    """
+    config = get_config()
+    transfer_cfg = config.transfer
 
     if not transfer_cfg.enabled:
         raise TransferServiceError("转存整理管道未启用")
 
-    target_dir = target_dir_id or transfer_cfg.temp_dir_id
+    archive_dir_id = getattr(transfer_cfg, "archive_dir_id", "")
+    if not archive_dir_id or archive_dir_id == "0":
+        raise TransferServiceError("未配置归档目录 (archive_dir_id)")
+
+    strm_cfg = config.strm
+
+    receive_target = await prepare_receive_target(
+        share_url=share_url,
+        receive_code=receive_code,
+        archive_dir_id=archive_dir_id,
+        fallback_dir_id=archive_dir_id,
+        classifier=classify,
+    )
+    target_dir = receive_target.target_dir_id
     if not target_dir:
-        raise TransferServiceError("未配置临时目录 (temp_dir_id)")
+        raise TransferServiceError("无法确定转存目标目录")
 
     result = await client_115.share_receive(
         share_url,
@@ -46,9 +66,40 @@ async def receive_share_task(
     if not result.get("state"):
         raise TransferServiceError(result.get("error", "转存失败"))
 
+    share_files = list(result.get("share_files") or receive_target.share_files)
+    task_id = str(uuid.uuid4())
+
+    if receive_target.archive_rel_path:
+        generated = await generator_115.generate_strm_for_folder(
+            target_dir,
+            share_files,
+            receive_target.archive_rel_path,
+            strm_cfg.output_dir,
+            task_id=task_id,
+        )
+        series_scope = derive_series_scope_path(receive_target.archive_rel_path)
+        strm_stats = await generator_115.sync_strm_files_from_manifest(
+            dir_id=target_dir,
+            output_dir=strm_cfg.output_dir,
+            root_output_dir=strm_cfg.output_dir,
+            base_url=getattr(strm_cfg, "base_url", "") or "",
+            archive_root=series_scope,
+        )
+        return {
+            "status": "success",
+            "task_id": task_id,
+            "msg": (
+                f"转存已完成，新增 {len(generated)} 个 STRM 文件，"
+                f"并批量更新 {int(strm_stats.get('updated', 0) or 0)} 个 STRM 文件"
+            ),
+            "target_dir_id": target_dir,
+            "archive_rel_path": receive_target.archive_rel_path,
+            "share_files": share_files,
+            "strm_updated_count": int(strm_stats.get("updated", 0) or 0),
+        }
+
     inbox_dir_id = transfer_cfg.inbox_dir_id
     files = await _list_regular_files(inbox_dir_id, limit=50)
-    task_id = str(uuid.uuid4())
 
     spawn_task(
         event_bus.emit(

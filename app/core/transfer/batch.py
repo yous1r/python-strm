@@ -1,17 +1,24 @@
 import asyncio
+import os
 import re
 
 from loguru import logger
 
 from app.config import get_config
 from app.core.cloud115.client import client_115
+from app.core.cloud115.db_sync import sync_directory
 from app.core.cloud115.strm import generator_115
 from app.core.media.parser import parse_filename
 from app.core.notify.manager import notify_manager
 from app.core.transfer.classifier import build_archive_path, classify
+from app.core.transfer.placement import derive_series_scope_path
 from app.database import get_db_conn
 from app.events import (
+    EVENT_STRM_BATCH_COMPLETED,
     EVENT_STRM_BATCH_REQUESTED,
+    EVENT_STRM_BATCH_REWRITE_REQUESTED,
+    EVENT_TRANSFER_BATCH_DB_SYNC_COMPLETED,
+    EVENT_TRANSFER_BATCH_DB_SYNC_REQUESTED,
     EVENT_TRANSFER_BATCH_DONE,
     EVENT_TRANSFER_BATCH_ITEM_DONE,
     EVENT_TRANSFER_BATCH_ITEM_FAILED,
@@ -84,6 +91,7 @@ async def handle_batch_requested(task_id: str, rows: list, base_title: str = "",
         "title": batch_title,
         "episode_count": episode_count,
         "series_folder_id": series_folder_id,
+        "target_dir_id": series_folder_id or get_config().transfer.archive_dir_id,
         "series_path_str": series_path_str,
         "share_files": [],
         "success_count": 0,
@@ -111,11 +119,20 @@ async def handle_batch_prepared(
     series_path_str: str = "",
     **kwargs,
 ):
-    monitor_cfg = get_config().monitor.telegram
-    transfer_cfg = get_config().transfer
-    target_dir_id = series_folder_id or transfer_cfg.temp_dir_id or monitor_cfg.target_dir_id
+    target_dir_id = series_folder_id or get_config().transfer.archive_dir_id
+
     if not target_dir_id or target_dir_id == "0":
-        target_dir_id = get_config().cloud115.target_dir_id
+        error_message = "未配置归档目录 (archive_dir_id)"
+        for row in rows:
+            await event_bus.emit(
+                EVENT_TRANSFER_BATCH_ITEM_FAILED,
+                task_id=task_id,
+                db_id=row.get("id"),
+                share_url=row.get("link", ""),
+                error_message=error_message,
+                episode_count=episode_count,
+            )
+        return
 
     async with _batch_semaphore:
         for index, row in enumerate(rows):
@@ -200,18 +217,17 @@ async def handle_batch_done(task_id: str, batch_state: dict, **kwargs):
     try:
         await _finalize_transfer_task(task_id, batch_state)
 
-        share_files = batch_state.get("share_files", [])
-        archive_dir_id = batch_state.get("series_folder_id", "")
+        archive_dir_id = batch_state.get("target_dir_id") or batch_state.get("series_folder_id", "")
         archive_rel_path = batch_state.get("series_path_str", "")
-        if share_files and archive_dir_id:
+        if batch_state.get("success_count", 0) > 0 and archive_dir_id:
             await event_bus.emit(
-                EVENT_STRM_BATCH_REQUESTED,
+                EVENT_TRANSFER_BATCH_DB_SYNC_REQUESTED,
                 task_id=task_id,
-                cloud_type="115",
                 archive_dir_id=archive_dir_id,
                 archive_rel_path=archive_rel_path,
                 strm_rel_dir=archive_rel_path,
-                files=share_files,
+                batch_title=batch_state.get("title") or task_id,
+                files=batch_state.get("share_files", []),
             )
 
         await _notify_batch_summary(task_id, batch_state)
@@ -219,21 +235,132 @@ async def handle_batch_done(task_id: str, batch_state: dict, **kwargs):
         _batch_states.pop(task_id, None)
 
 
+async def handle_batch_db_sync_requested(
+    task_id: str,
+    archive_dir_id: str,
+    archive_rel_path: str = "",
+    strm_rel_dir: str = "",
+    batch_title: str = "",
+    files: list | None = None,
+    **kwargs,
+):
+    if not archive_dir_id:
+        logger.warning(f"[Batch] {task_id}: archive_dir_id 为空，跳过批次 db_sync")
+        return
+
+    dir_name = archive_rel_path or batch_title or archive_dir_id
+    count = await sync_directory(archive_dir_id, dir_name, recursive=True)
+    await event_bus.emit(
+        EVENT_TRANSFER_BATCH_DB_SYNC_COMPLETED,
+        task_id=task_id,
+        archive_dir_id=archive_dir_id,
+        archive_rel_path=archive_rel_path,
+        strm_rel_dir=strm_rel_dir or archive_rel_path,
+        batch_title=batch_title,
+        files=files or [],
+        count=count,
+    )
+
+
 async def handle_strm_batch_requested(
     task_id: str,
     archive_dir_id: str,
     files: list,
     strm_rel_dir: str = "",
+    archive_rel_path: str = "",
     folder_cid: str = "",
     share_files: list | None = None,
     strm_subdir: str = "",
     **kwargs,
 ):
+    config = get_config()
     target_dir_id = archive_dir_id or folder_cid
-    target_files = files or share_files or []
-    target_subdir = strm_rel_dir or strm_subdir
-    generated = await generator_115.generate_strm_for_folder(target_dir_id, target_files, target_subdir)
-    logger.info(f"[Batch] {task_id}: 生成 STRM {len(generated)} 个")
+    target_subdir = strm_rel_dir or archive_rel_path or strm_subdir
+    if not target_dir_id:
+        logger.warning(f"[Batch] {task_id}: 未找到目标目录，跳过 STRM 刷新")
+        return
+
+    output_dir = os.path.join(config.strm.output_dir, target_subdir) if target_subdir else config.strm.output_dir
+    manifest_stats = await generator_115.sync_manifest_records(
+        dir_id=target_dir_id,
+        output_dir=output_dir,
+        base_url=config.strm.base_url,
+        recursive=True,
+        root_output_dir=config.strm.output_dir,
+        preserve_existing_structure=True,
+    )
+    await event_bus.emit(
+        EVENT_STRM_BATCH_REWRITE_REQUESTED,
+        task_id=task_id,
+        archive_dir_id=target_dir_id,
+        archive_rel_path=target_subdir,
+        files=files or share_files or [],
+        manifest_stats=manifest_stats,
+    )
+    logger.info(
+        f"[Batch] {task_id}: manifest 刷新完成 scanned={manifest_stats.get('scanned', 0)} "
+        f"manifest_changed={manifest_stats.get('changed', False)}"
+    )
+
+
+async def handle_strm_batch_rewrite_requested(
+    task_id: str,
+    archive_dir_id: str,
+    files: list,
+    archive_rel_path: str = "",
+    manifest_stats: dict | None = None,
+    **kwargs,
+):
+    config = get_config()
+    target_dir_id = archive_dir_id
+    target_subdir = archive_rel_path
+    if not target_dir_id:
+        logger.warning(f"[Batch] {task_id}: 未找到目标目录，跳过 STRM 重写")
+        return
+
+    output_dir = os.path.join(config.strm.output_dir, target_subdir) if target_subdir else config.strm.output_dir
+    series_scope = derive_series_scope_path(target_subdir)
+    strm_stats = await generator_115.sync_strm_files_from_manifest(
+        dir_id=target_dir_id,
+        output_dir=output_dir,
+        root_output_dir=config.strm.output_dir,
+        base_url=config.strm.base_url,
+        archive_root=series_scope,
+    )
+    await event_bus.emit(
+        EVENT_STRM_BATCH_COMPLETED,
+        task_id=task_id,
+        archive_dir_id=target_dir_id,
+        archive_rel_path=target_subdir,
+        files=files or [],
+        manifest_stats=manifest_stats or {},
+        strm_stats=strm_stats,
+    )
+    logger.info(
+        f"[Batch] {task_id}: db_sync 后 STRM 重写完成 updated={strm_stats.get('updated', 0)} "
+        f"skipped={strm_stats.get('skipped', 0)} failed={strm_stats.get('failed', 0)}"
+    )
+
+
+async def handle_batch_db_sync_completed(
+    task_id: str,
+    archive_dir_id: str,
+    archive_rel_path: str = "",
+    strm_rel_dir: str = "",
+    files: list | None = None,
+    count: int = 0,
+    **kwargs,
+):
+    logger.info(f"[Batch] {task_id}: db_sync 完成，archive_dir_id={archive_dir_id}, changed={count}")
+    await event_bus.emit(
+        EVENT_STRM_BATCH_REQUESTED,
+        task_id=task_id,
+        cloud_type="115",
+        archive_dir_id=archive_dir_id,
+        archive_rel_path=archive_rel_path,
+        strm_rel_dir=strm_rel_dir or archive_rel_path,
+        files=files or [],
+    )
 
 
 async def _finalize_transfer_task(task_id: str, batch_state: dict):
@@ -254,7 +381,7 @@ async def _finalize_transfer_task(task_id: str, batch_state: dict):
                 status,
                 batch_state.get("success_count", 0),
                 batch_state.get("episode_count", 0),
-                batch_state.get("series_folder_id") or "library_batch",
+                batch_state.get("target_dir_id") or batch_state.get("series_folder_id") or "library_batch",
                 error_detail,
                 task_id,
             ),
@@ -309,5 +436,8 @@ def init_batch_transfer():
     event_bus.subscribe(EVENT_TRANSFER_BATCH_ITEM_DONE, handle_batch_item_done)
     event_bus.subscribe(EVENT_TRANSFER_BATCH_ITEM_FAILED, handle_batch_item_failed)
     event_bus.subscribe(EVENT_TRANSFER_BATCH_DONE, handle_batch_done)
+    event_bus.subscribe(EVENT_TRANSFER_BATCH_DB_SYNC_REQUESTED, handle_batch_db_sync_requested)
+    event_bus.subscribe(EVENT_TRANSFER_BATCH_DB_SYNC_COMPLETED, handle_batch_db_sync_completed)
     event_bus.subscribe(EVENT_STRM_BATCH_REQUESTED, handle_strm_batch_requested)
+    event_bus.subscribe(EVENT_STRM_BATCH_REWRITE_REQUESTED, handle_strm_batch_rewrite_requested)
     logger.info("[Transfer] Batch transfer 已注册")

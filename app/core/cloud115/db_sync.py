@@ -75,12 +75,9 @@ async def sync_all_configured() -> dict:
             source="sync_all_configured",
         )
 
-    # 2. 同步 transfer 管道中的 temp_dir 和 archive_dir
+    # 2. 同步 transfer 管道中的 archive_dir
     transfer_cfg = config.transfer
     if transfer_cfg.enabled:
-        if transfer_cfg.temp_dir_id and transfer_cfg.temp_dir_id != "0":
-            count = await sync_directory(transfer_cfg.temp_dir_id, "temp_dir")
-            results["temp_dir"] = count
         if transfer_cfg.archive_dir_id and transfer_cfg.archive_dir_id != "0":
             count = await sync_directory(transfer_cfg.archive_dir_id, "archive_dir")
             results["archive_dir"] = count
@@ -193,28 +190,29 @@ async def handle_cloud115_db_sync_completed(
     count: int = 0,
     **kwargs,
 ):
-    """115 本地目录树同步完成后，补齐对应 sync_dir 的 STRM 与 manifest。"""
+    """115 本地目录树同步完成后，按全局输出根目录批量刷新全部 STRM。"""
     from app.core.cloud115.strm import generator_115
 
     config = get_config()
-    output_name = dir_name or dir_id
-    output_dir = os.path.join(config.strm.output_dir, output_name)
+    output_root = config.strm.output_dir
+    base_url = getattr(config.strm, "base_url", "") or ""
 
     logger.info(
-        f"[DBSync] 目录同步完成后开始刷新 STRM: {output_name} (cid={dir_id}, changed={count})"
+        f"[DBSync] 目录同步完成后开始全量刷新 STRM: root={output_root} (trigger={dir_name or dir_id}, changed={count})"
     )
 
-    generated = await generator_115.batch_generate(
+    strm_stats = await generator_115.sync_strm_files_from_manifest(
         dir_id=dir_id,
-        output_dir=output_dir,
-        base_url=config.strm.base_url,
-        recursive=recursive,
-        root_output_dir=config.strm.output_dir,
-        force=False,
+        output_dir=output_root,
+        root_output_dir=output_root,
+        base_url=base_url,
+        archive_root="",
     )
 
     logger.info(
-        f"[DBSync] STRM 刷新完成: {output_name}, generated={len(generated)}"
+        "[DBSync] STRM 全量刷新完成: "
+        f"scanned={strm_stats.get('scanned', 0)} updated={strm_stats.get('updated', 0)} "
+        f"skipped={strm_stats.get('skipped', 0)} failed={strm_stats.get('failed', 0)}"
     )
 
 

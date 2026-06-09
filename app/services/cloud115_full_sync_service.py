@@ -68,7 +68,7 @@ class Cloud115FullSyncService:
             "task_id": task_id,
             "status": task["status"],
             "current_stage": task["current_stage"],
-            "message": "115 全链路验证任务已启动",
+            "message": "115 同步工作流已启动",
         }
 
     async def run_scheduled_full_sync(self) -> dict[str, object]:
@@ -102,17 +102,6 @@ class Cloud115FullSyncService:
 
         transfer_cfg = config.transfer
         if transfer_cfg.enabled:
-            if transfer_cfg.temp_dir_id and transfer_cfg.temp_dir_id != "0":
-                dirs.append(
-                    {
-                        "dir_id": str(transfer_cfg.temp_dir_id),
-                        "dir_name": "temp_dir",
-                        "recursive": True,
-                        "output_dir": "",
-                        "role": "temp_dir",
-                        "strm_enabled": False,
-                    }
-                )
             if transfer_cfg.archive_dir_id and transfer_cfg.archive_dir_id != "0":
                 dirs.append(
                     {
@@ -176,6 +165,110 @@ class Cloud115FullSyncService:
                 refresh_dirs.append(dict(item))
 
         return {"results": results, "dirs": refresh_dirs, "has_changes": bool(refresh_dirs)}
+
+    def _select_strm_workflow_dirs(self, dirs: list[dict[str, object]]) -> list[dict[str, object]]:
+        """选择需要执行 STRM 工作流的目录，不再依赖本次 db_sync 是否有变更。"""
+
+        workflow_dirs: list[dict[str, object]] = []
+        for item in dirs:
+            if not item.get("strm_enabled") or not item.get("output_dir"):
+                continue
+            workflow_dirs.append(item)
+        return workflow_dirs
+
+    async def _run_manifest_and_strm_for_dir(
+        self,
+        item: dict[str, object],
+        *,
+        base_url: str,
+        root_output_dir: str,
+    ) -> dict[str, object]:
+        manifest_stats = await generator_115.sync_manifest_records(
+            dir_id=str(item["dir_id"]),
+            output_dir=str(item["output_dir"]),
+            base_url=base_url,
+            recursive=bool(item.get("recursive", True)),
+            root_output_dir=root_output_dir,
+        )
+        strm_stats = await generator_115.sync_strm_files_from_manifest(
+            dir_id=str(item["dir_id"]),
+            output_dir=str(item["output_dir"]),
+            root_output_dir=root_output_dir,
+            base_url=base_url,
+        )
+        return {
+            "dir": dict(item),
+            "manifest_stats": manifest_stats,
+            "strm_stats": strm_stats,
+        }
+
+    async def run_manifest_and_strm_refresh_step(self, dirs: list[dict[str, object]]) -> dict[str, object]:
+        config = get_config()
+        workflow_dirs = self._select_strm_workflow_dirs(dirs)
+        if not workflow_dirs:
+            return {
+                "manifest_results": [],
+                "strm_results": [],
+                "dirs": [],
+                "has_changes": False,
+            }
+
+        raw_results = await asyncio.gather(
+            *[
+                self._run_manifest_and_strm_for_dir(
+                    item,
+                    base_url=config.strm.base_url,
+                    root_output_dir=config.strm.output_dir,
+                )
+                for item in workflow_dirs
+            ]
+        )
+
+        manifest_results: list[dict[str, object]] = []
+        strm_results: list[dict[str, object]] = []
+        changed_dirs: list[dict[str, object]] = []
+
+        for result in raw_results:
+            item = result["dir"]
+            manifest_stats = result["manifest_stats"]
+            strm_stats = result["strm_stats"]
+            changed = bool(manifest_stats.get("changed"))
+
+            manifest_results.append(
+                {
+                    "dir_id": str(item["dir_id"]),
+                    "dir_name": str(item.get("dir_name") or item["dir_id"]),
+                    "output_dir": str(item["output_dir"]),
+                    "scanned_records": int(manifest_stats.get("scanned", 0) or 0),
+                    "created_records": int(manifest_stats.get("created", 0) or 0),
+                    "updated_records": int(manifest_stats.get("updated", 0) or 0),
+                    "unchanged_records": int(manifest_stats.get("unchanged", 0) or 0),
+                    "cleaned_records": int(manifest_stats.get("deleted_records", 0) or 0),
+                    "deleted_strm_files": int(manifest_stats.get("deleted_files", 0) or 0),
+                    "changed": changed,
+                }
+            )
+            strm_results.append(
+                {
+                    "dir_id": str(item["dir_id"]),
+                    "dir_name": str(item.get("dir_name") or item["dir_id"]),
+                    "output_dir": str(item["output_dir"]),
+                    "generated_count": int(strm_stats.get("updated", 0) or 0),
+                    "generated_files": list(strm_stats.get("files", []) or []),
+                    "scanned_count": int(strm_stats.get("scanned", 0) or 0),
+                    "skipped_count": int(strm_stats.get("skipped", 0) or 0),
+                    "failed_count": int(strm_stats.get("failed", 0) or 0),
+                }
+            )
+            if changed:
+                changed_dirs.append(dict(item))
+
+        return {
+            "manifest_results": manifest_results,
+            "strm_results": strm_results,
+            "dirs": workflow_dirs,
+            "has_changes": bool(changed_dirs),
+        }
 
     def _select_changed_strm_dirs(self, dirs: list[dict[str, object]]) -> list[dict[str, object]]:
         """仅对发生实际变更的 STRM 目录执行后续刷新。"""
@@ -242,10 +335,10 @@ class Cloud115FullSyncService:
         return result
 
     async def handle_full_sync_requested(self, task_id: str, source: str = "debug", **kwargs):
-        await self._update_task(task_id, current_stage="db_sync")
+        current_stage = "db_sync"
+        await self._update_task(task_id, current_stage=current_stage)
         try:
             db_sync_results = await self.run_db_sync_step()
-            changed_strm_dirs = self._select_changed_strm_dirs(db_sync_results)
             await self._update_task(
                 task_id,
                 dirs=db_sync_results,
@@ -255,14 +348,14 @@ class Cloud115FullSyncService:
                 task_id,
                 db_sync_rows=sum(int(item.get("count", 0)) for item in db_sync_results),
             )
-
-            if not changed_strm_dirs:
+            workflow_dirs = self._select_strm_workflow_dirs(db_sync_results)
+            if not workflow_dirs:
                 await self._update_task(
                     task_id,
                     status="completed",
                     current_stage="completed",
                     finished_at=self._now(),
-                    skip_reason="db_sync 未检测到需要刷新的 115 目录变更，已跳过 manifest/STRM 步骤",
+                    skip_reason="未配置可刷新的 115 STRM 目录，已跳过 STRM 工作流",
                 )
                 await event_bus.emit(
                     EVENT_CLOUD115_FULL_SYNC_COMPLETED,
@@ -275,42 +368,29 @@ class Cloud115FullSyncService:
                 EVENT_CLOUD115_FULL_SYNC_DB_SYNC_FINISHED,
                 task_id=task_id,
                 source=source,
-                dirs=changed_strm_dirs,
+                dirs=workflow_dirs,
             )
         except Exception as exc:
-            await self._mark_failed(task_id, "db_sync", exc)
+            await self._mark_failed(task_id, current_stage, exc)
 
     async def handle_db_sync_finished(self, task_id: str, dirs: list[dict[str, object]], source: str = "debug", **kwargs):
         await self._update_task(task_id, current_stage="manifest_refresh")
         try:
             manifest_data = await self.run_manifest_refresh_step(dirs)
             manifest_results = manifest_data["results"]
-            refresh_dirs = manifest_data["dirs"]
             await self._update_task(task_id, manifest_results=manifest_results)
             await self._update_stats(
                 task_id,
                 cleaned_records=sum(int(item.get("cleaned_records", 0)) for item in manifest_results),
                 deleted_strm_files=sum(int(item.get("deleted_strm_files", 0)) for item in manifest_results),
             )
-            if not refresh_dirs:
-                await self._update_task(
-                    task_id,
-                    status="completed",
-                    current_stage="completed",
-                    finished_at=self._now(),
-                    skip_reason="strm_records 比对后未发现差异，已跳过 STRM/media_item_links 刷新",
-                )
-                await event_bus.emit(
-                    EVENT_CLOUD115_FULL_SYNC_COMPLETED,
-                    task_id=task_id,
-                    source=source,
-                )
-                return
             await event_bus.emit(
                 EVENT_CLOUD115_FULL_SYNC_MANIFEST_REFRESH_FINISHED,
                 task_id=task_id,
                 source=source,
-                dirs=refresh_dirs,
+                dirs=dirs,
+                manifest_results=manifest_results,
+                has_changes=bool(manifest_data.get("has_changes")),
             )
         except Exception as exc:
             await self._mark_failed(task_id, "manifest_refresh", exc)
@@ -322,39 +402,36 @@ class Cloud115FullSyncService:
         source: str = "debug",
         **kwargs,
     ):
-        await self._update_task(task_id, current_stage="parallel_refresh")
+        await self._update_task(task_id, current_stage="strm_refresh")
         try:
-            strm_results, media_link_result = await asyncio.gather(
-                self.run_strm_refresh_step(dirs),
-                self.run_media_links_refresh_step(dirs),
-            )
-            media_link_results = media_link_result.get("results", []) or []
+            strm_results = await self.run_strm_refresh_step(dirs)
             await self._update_task(
                 task_id,
                 strm_results=strm_results,
-                media_link_results=media_link_results,
-                skip_reason=(media_link_result.get("reason") or "") if media_link_result.get("status") == "skipped" else "",
             )
             await self._update_stats(
                 task_id,
                 generated_strm_files=sum(int(item.get("generated_count", 0)) for item in strm_results),
-                media_links_scanned=sum(int(item.get("scanned", 0)) for item in media_link_results),
-                media_links_linked=sum(int(item.get("linked", 0)) for item in media_link_results),
-                media_links_skipped=sum(int(item.get("skipped", 0)) for item in media_link_results),
-                media_links_failed=sum(int(item.get("failed", 0)) for item in media_link_results),
             )
             await event_bus.emit(
-                EVENT_CLOUD115_FULL_SYNC_MEDIA_LINKS_REFRESH_FINISHED,
+                EVENT_CLOUD115_FULL_SYNC_STRM_REFRESH_FINISHED,
                 task_id=task_id,
                 source=source,
+                dirs=dirs,
             )
         except Exception as exc:
-            await self._mark_failed(task_id, "parallel_refresh", exc)
+            await self._mark_failed(task_id, "strm_refresh", exc)
 
-    async def handle_strm_refresh_finished(self, task_id: str, source: str = "debug", **kwargs):
+    async def handle_strm_refresh_finished(
+        self,
+        task_id: str,
+        source: str = "debug",
+        dirs: list[dict[str, object]] | None = None,
+        **kwargs,
+    ):
         await self._update_task(task_id, current_stage="media_links_refresh")
         try:
-            media_link_result = await self.run_media_links_refresh_step()
+            media_link_result = await self.run_media_links_refresh_step(dirs)
             media_link_results = media_link_result.get("results", []) or []
             await self._update_task(
                 task_id,
@@ -453,4 +530,4 @@ def init_cloud115_full_sync_events():
         EVENT_CLOUD115_FULL_SYNC_MEDIA_LINKS_REFRESH_FINISHED,
         cloud115_full_sync_service.handle_media_links_refresh_finished,
     )
-    logger.info("[Cloud115FullSync] 已注册 115 全链路验证事件处理器")
+    logger.info("[Cloud115FullSync] 已注册 115 同步工作流处理器")

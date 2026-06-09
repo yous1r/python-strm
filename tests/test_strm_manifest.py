@@ -593,6 +593,56 @@ class StrmGeneratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["unchanged"], 0)
         self.assertEqual(recorded[0]["source_file_name"], "Episode 01.mkv")
 
+    async def test_sync_manifest_records_preserves_scope_when_requested_even_if_organize_enabled(self):
+        from app.core.cloud115.strm import StrmGenerator115
+
+        generator = StrmGenerator115()
+        responses = {
+            "root": [
+                {"id": "f-1", "parent_id": "root", "name": "Episode 01.mkv", "is_dir": False, "size": 1, "pickcode": "pc-1", "sha": ""},
+            ]
+        }
+
+        def fake_list_local_files(dir_id, recursive=False):
+            return responses[dir_id]
+
+        with (
+            patch("app.core.cloud115.strm.list_local_files", side_effect=fake_list_local_files),
+            patch.object(generator, "_load_existing_records_by_file_ids", AsyncMock(return_value={})),
+            patch.object(generator, "_record_manifest", AsyncMock()) as record_mock,
+            patch("app.core.cloud115.strm.is_video_file", return_value=True),
+            patch(
+                "app.core.cloud115.strm.get_config",
+                return_value=type(
+                    "Config",
+                    (),
+                    {
+                        "strm": type("Strm", (), {"clean_invalid": False})(),
+                        "organize": type("Organize", (), {"enabled": True})(),
+                    },
+                )(),
+            ),
+        ):
+            result = await generator.sync_manifest_records(
+                dir_id="root",
+                output_dir="/tmp/电影/国产电影/一部未完成的电影 (2024) {tmdb-878607}",
+                base_url="http://localhost:8095",
+                recursive=False,
+                root_output_dir="/tmp",
+                preserve_existing_structure=True,
+            )
+
+        self.assertEqual(result["created"], 1)
+        recorded_kwargs = record_mock.await_args.kwargs
+        self.assertEqual(
+            recorded_kwargs["archive_rel_path"],
+            "电影/国产电影/一部未完成的电影 (2024) {tmdb-878607}",
+        )
+        self.assertEqual(
+            recorded_kwargs["strm_rel_path"],
+            "电影/国产电影/一部未完成的电影 (2024) {tmdb-878607}/Episode 01.strm",
+        )
+
     async def test_sync_strm_files_from_manifest_skips_unchanged_content(self):
         from app.core.cloud115.strm import StrmGenerator115
 

@@ -15,7 +15,6 @@ logger = setup_logger()
 
 from app.core.monitor.telegram import telegram_monitor
 from app.core.monitor.handler import init_handlers
-from app.core.cloud115.db_sync import init_db_sync_events
 from app.services.cloud115_full_sync_service import (
     cloud115_full_sync_service,
     init_cloud115_full_sync_events,
@@ -36,17 +35,16 @@ async def lifespan(app: FastAPI):
     start_scheduler()
     
     init_handlers()
-    init_db_sync_events()
     init_cloud115_full_sync_events()
     init_transfer_pipeline()
 
     config = get_config()
     
     # 注册核心自动化同步任务
-    interval_mins = config.monitor.poll_interval if getattr(config.monitor, 'poll_interval', None) else 60
-    add_job(sync_engine.run_sync_task, "interval", minutes=interval_mins, id="auto_sync", replace_existing=True)
+    # interval_mins = config.monitor.poll_interval if getattr(config.monitor, 'poll_interval', None) else 60
+    # add_job(sync_engine.run_sync_task, "interval", minutes=interval_mins, id="auto_sync", replace_existing=True)
 
-    # 注册 115 全链路同步任务（每 2 小时）
+    # 注册 115 同步工作流任务（每 2 小时）
     add_job(
         cloud115_full_sync_service.run_scheduled_full_sync,
         "interval",
@@ -54,7 +52,7 @@ async def lifespan(app: FastAPI):
         id="db_sync",
         replace_existing=True,
     )
-    logger.info("Registered 115 full sync job (every 2h)")
+    logger.info("Registered 115 sync workflow job (every 2h)")
 
     telegram_background_sync_service.configure_scheduled_sync_job()
 

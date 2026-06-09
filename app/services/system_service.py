@@ -28,7 +28,7 @@ def trigger_db_sync_task() -> dict[str, str]:
     from app.services.cloud115_full_sync_service import cloud115_full_sync_service
 
     spawn_task(cloud115_full_sync_service.start_full_sync(source="system"), name="db_sync_manual")
-    return {"status": "success", "message": "115 全链路同步任务已触发，稍后可在调试页查看结果"}
+    return {"status": "success", "message": "115 同步工作流已触发，稍后可在调试页查看结果"}
 
 
 def trigger_emby_preheat_task(

@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import os
+import re
 
 from app.core.media.parser import parse_filename
 
@@ -15,6 +16,9 @@ class ArchivePlacement:
     strm_rel_dir: str
     target_file_name: str
     strm_file_name: str
+
+
+_SEASON_SEGMENT_RE = re.compile(r"^Season\s+\d+$", re.IGNORECASE)
 
 
 def build_archive_placement(result: ClassifyResult, file_name: str) -> ArchivePlacement:
@@ -39,7 +43,22 @@ def build_archive_placement(result: ClassifyResult, file_name: str) -> ArchivePl
     )
 
 
+def derive_series_scope_path(archive_rel_path: str) -> str:
+    """将季级归档路径折叠到剧级根目录，用于整剧 STRM 批量更新。"""
+
+    normalized = str(archive_rel_path or "").replace("\\", "/").strip("/")
+    if not normalized:
+        return ""
+
+    parts = [part for part in normalized.split("/") if part]
+    if parts and _SEASON_SEGMENT_RE.fullmatch(parts[-1]):
+        parts = parts[:-1]
+
+    return "/".join(parts)
+
+
 __all__ = [
     "ArchivePlacement",
     "build_archive_placement",
+    "derive_series_scope_path",
 ]

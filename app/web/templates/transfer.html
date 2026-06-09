@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block subtitle %}统一配置媒体入库、转存中转、整理归档与分类规则{% endblock %}
+{% block subtitle %}统一配置媒体入库、整理归档与分类规则{% endblock %}
 
 {% block content %}
 <style>
@@ -24,6 +24,34 @@
 .preview-item { padding: 0.5rem 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; align-items: center; gap: 0.75rem; }
 .preview-item i.fa-rotate-left { color: var(--warning); }
 .category-rule-row { display: grid; grid-template-columns: minmax(160px, 220px) 1fr auto; gap: 0.75rem; align-items: start; padding: 0.75rem; border: 1px solid var(--border); border-radius: 0.75rem; background: rgba(0,0,0,0.15); margin-bottom: 0.75rem; }
+/* .category-subcategories {
+    min-height: 7.5rem;
+    max-height: 9.5rem;
+    resize: none;
+    overflow-y: auto;
+    line-height: 1.65;
+    padding-right: 0.75rem;
+    background: var(--field-bg);
+    scrollbar-width: thin;
+    scrollbar-color: var(--input-scrollbar-thumb-solid) var(--input-scrollbar-track);
+}
+.category-subcategories::-webkit-scrollbar {
+    width: 10px;
+}
+.category-subcategories::-webkit-scrollbar-track {
+    margin: 0.5rem 0;
+    border-radius: 999px;
+    background: var(--input-scrollbar-track);
+}
+.category-subcategories::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: var(--input-scrollbar-thumb);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+.category-subcategories:hover::-webkit-scrollbar-thumb {
+    background: var(--input-scrollbar-thumb-hover);
+} */
 </style>
 
 <!-- Transfer Config Panel -->
@@ -35,17 +63,10 @@
         </label>
     </div>
     <p style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.9rem;">
-        这里是转存目录的主配置入口。Telegram 自动转存默认沿用下方中转目录和归档根目录。
+        这里是转存目录的主配置入口。115 与 Telegram 自动转存都会按下方分类规则预创建最终目录，并直接写入归档根目录。
     </p>
     <div id="configFields" style="display: none;">
         <div class="form-row" style="margin-bottom: 0.75rem;">
-            <div style="flex: 1; min-width: 200px;">
-                <label class="form-label">统一转存中转目录</label>
-                <div style="display: flex; gap: 0.5rem;">
-                    <input type="text" class="form-control" id="cfg_temp_dir" placeholder="转存后暂存目录" readonly>
-                    <button type="button" class="btn btn-secondary" onclick="openDirPickerFor('cfg_temp_dir')" style="white-space: nowrap;">选择</button>
-                </div>
-            </div>
             <div style="flex: 1; min-width: 200px;">
                 <label class="form-label">统一整理归档根目录</label>
                 <div style="display: flex; gap: 0.5rem;">
@@ -61,9 +82,6 @@
             </div>
         </div>
         <div style="display: flex; gap: 1.5rem; margin-bottom: 1rem;">
-            <label style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.9rem; cursor: pointer;">
-                <input type="checkbox" id="cfg_auto_organize" checked> 转存后自动整理
-            </label>
             <label style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.9rem; cursor: pointer;">
                 <input type="checkbox" id="cfg_auto_strm" checked> 整理后生成 STRM
             </label>
@@ -91,7 +109,7 @@
     </div>
     <div id="categoryRulesList"></div>
     <p style="margin: 0.75rem 0 0; color: var(--text-secondary); font-size: 0.85rem;">
-        子分类每行一个；留空时该主分类不再拆分地区子目录。点击“使用后端默认”会保存为空列表，由后端按内置默认规则分类。
+        子分类每行一个；推荐使用 `地区=目录名`，例如 `日韩=日韩剧集`。旧格式仍兼容，但显式映射会直接作为后端分类依据。留空时该主分类不再拆分地区子目录。
     </p>
 </div>
 
@@ -187,9 +205,9 @@ let currentStatusFilter = null;
 let currentTaskDetail = null;
 let currentCategories = [];
 const DEFAULT_TRANSFER_CATEGORIES = [
-    {name: '电影', subcategories: ['国产电影', '欧美电影', '日韩电影', '其他']},
-    {name: '剧集', subcategories: ['国产剧集', '欧美剧集', '日韩剧集', '其他']},
-    {name: '动漫', subcategories: ['国产动漫', '日韩动漫', '欧美动漫', '其他']},
+    {name: '电影', subcategories: ['国产=国产电影', '欧美=欧美电影', '日韩=日韩电影', '其他=其他']},
+    {name: '剧集', subcategories: ['国产=国产剧集', '欧美=欧美剧集', '日韩=日韩剧集', '其他=其他']},
+    {name: '动漫', subcategories: ['国产=国产动漫', '日韩=日韩动漫', '欧美=欧美动漫', '其他=其他']},
     {name: '纪录片', subcategories: []},
     {name: '综艺', subcategories: []},
 ];
@@ -212,10 +230,8 @@ async function loadTransferConfig() {
         if (!cfg.transfer) return;
         const t = cfg.transfer;
         document.getElementById('cfg_enabled').checked = t.enabled;
-        document.getElementById('cfg_temp_dir').value = t.temp_dir_id || '';
         document.getElementById('cfg_archive_dir').value = t.archive_dir_id || '';
         document.getElementById('cfg_inbox_dir').value = t.inbox_dir_id || '0';
-        document.getElementById('cfg_auto_organize').checked = t.auto_organize !== false;
         document.getElementById('cfg_auto_strm').checked = t.auto_strm !== false;
         currentCategories = Array.isArray(t.categories) ? t.categories : DEFAULT_TRANSFER_CATEGORIES.map(c => ({...c, subcategories: [...c.subcategories]}));
         renderCategoryRules();
@@ -246,7 +262,7 @@ function renderCategoryRules() {
             </div>
             <div>
                 <label class="form-label">子分类目录</label>
-                <textarea class="form-control category-subcategories" data-index="${idx}" rows="3" placeholder="国产剧集&#10;欧美剧集">${escapeHtml((cat.subcategories || []).join('\n'))}</textarea>
+                <textarea class="form-control category-subcategories" data-index="${idx}" rows="4" placeholder="国产=国产剧集&#10;欧美=欧美剧集&#10;日韩=日韩剧集">${escapeHtml((cat.subcategories || []).join('\n'))}</textarea>
             </div>
             <button type="button" class="btn btn-secondary" style="color: var(--error); padding: 0.75rem;" onclick="removeCategoryRule(${idx})"><i class="fa-solid fa-trash"></i></button>
         </div>
@@ -296,10 +312,9 @@ async function saveTransferConfig() {
     const payload = {
         transfer: {
             enabled: document.getElementById('cfg_enabled').checked,
-            temp_dir_id: document.getElementById('cfg_temp_dir').value,
             archive_dir_id: document.getElementById('cfg_archive_dir').value,
             inbox_dir_id: document.getElementById('cfg_inbox_dir').value || '0',
-            auto_organize: document.getElementById('cfg_auto_organize').checked,
+            auto_organize: false,
             auto_strm: document.getElementById('cfg_auto_strm').checked,
             categories: collectCategoryRules()
         }

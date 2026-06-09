@@ -4,6 +4,8 @@
     --bg-primary: #0f1115;
     --bg-secondary: #1a1d24;
     --bg-panel: rgba(26, 29, 36, 0.7);
+    --field-bg: linear-gradient(180deg, rgba(12, 18, 28, 0.9), rgba(20, 27, 38, 0.82));
+    --field-bg-strong: rgba(18, 24, 36, 0.98);
     --text-primary: #f8fafc;
     --text-secondary: #94a3b8;
     --accent-primary: #3b82f6;
@@ -18,12 +20,18 @@
     --sidebar-scrollbar-thumb-hover: linear-gradient(180deg, rgba(59,130,246,0.5), rgba(139,92,246,0.34));
     --sidebar-scrollbar-border: rgba(255,255,255,0.08);
     --sidebar-scrollbar-shadow: rgba(15, 23, 42, 0.35);
+    --input-scrollbar-track: rgba(255,255,255,0.05);
+    --input-scrollbar-thumb: linear-gradient(180deg, rgba(59,130,246,0.5), rgba(14,165,233,0.35));
+    --input-scrollbar-thumb-hover: linear-gradient(180deg, rgba(59,130,246,0.68), rgba(14,165,233,0.5));
+    --input-scrollbar-thumb-solid: rgba(59,130,246,0.52);
 }
 
 :root[data-theme="light"] {
     --bg-primary: #f1f5f9;
     --bg-secondary: #ffffff;
     --bg-panel: rgba(255, 255, 255, 0.8);
+    --field-bg: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(241,245,249,0.95));
+    --field-bg-strong: rgba(255, 255, 255, 0.99);
     --text-primary: #0f1115;
     --text-secondary: #475569;
     --border: rgba(0, 0, 0, 0.1);
@@ -33,6 +41,10 @@
     --sidebar-scrollbar-thumb-hover: linear-gradient(180deg, rgba(59,130,246,0.52), rgba(14,165,233,0.34));
     --sidebar-scrollbar-border: rgba(255,255,255,0.45);
     --sidebar-scrollbar-shadow: rgba(148, 163, 184, 0.22);
+    --input-scrollbar-track: rgba(148,163,184,0.16);
+    --input-scrollbar-thumb: linear-gradient(180deg, rgba(59,130,246,0.45), rgba(14,165,233,0.3));
+    --input-scrollbar-thumb-hover: linear-gradient(180deg, rgba(59,130,246,0.58), rgba(14,165,233,0.42));
+    --input-scrollbar-thumb-solid: rgba(59,130,246,0.42);
 }
 
 * {
@@ -247,7 +259,7 @@ h1, h2, h3, h4, h5, h6 {
 .form-control {
     width: 100%;
     padding: 0.875rem 1rem;
-    background: rgba(0, 0, 0, 0.2);
+    background: var(--field-bg);
     border: 1px solid var(--border);
     border-radius: 0.75rem;
     color: var(--text-primary);
@@ -260,6 +272,75 @@ h1, h2, h3, h4, h5, h6 {
     border-color: var(--accent-primary);
     box-shadow: 0 0 0 3px var(--accent-glow);
 }
+
+select.form-control {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background: var(--field-bg);
+    background-color: var(--field-bg-strong);
+    background-image: linear-gradient(180deg, transparent, transparent), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none'%3E%3Cpath d='M5 7.5 10 12.5 15 7.5' stroke='%2394a3b8' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat, no-repeat;
+    background-position: 0 0, right 0.9rem center;
+    background-size: auto, 1rem;
+    padding-right: 2.75rem;
+}
+
+select.form-control option,
+select.form-control optgroup {
+    background: var(--field-bg-strong);
+    color: var(--text-primary);
+}
+
+.textarea.form-control {
+    min-height: 7.5rem;
+    max-height: 9.5rem;
+    resize: none;
+    overflow-y: auto;
+    line-height: 1.65;
+    padding-right: 0.75rem;
+    background: var(--field-bg);
+    scrollbar-width: thin;
+    scrollbar-color: var(--input-scrollbar-thumb-solid) var(--input-scrollbar-track);
+}
+.textarea.form-control::-webkit-scrollbar {
+    width: 10px;
+}
+.textarea.form-control::-webkit-scrollbar-track {
+    margin: 0.5rem 0;
+    border-radius: 999px;
+    background: var(--input-scrollbar-track);
+}
+.textarea.form-control::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: var(--input-scrollbar-thumb);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+.textarea.form-control:hover::-webkit-scrollbar-thumb {
+    background: var(--input-scrollbar-thumb-hover);
+}
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 50px;
+  height: 24px;
+}
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider {
+  position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+  background-color: rgba(255,255,255,0.1); transition: .4s;
+}
+.slider:before {
+  position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px;
+  background-color: var(--text-primary); transition: .4s;
+}
+input:checked + .slider { background-color: var(--success); }
+input:focus + .slider { box-shadow: 0 0 1px var(--success); }
+input:checked + .slider:before { transform: translateX(26px); }
+.slider.round { border-radius: 24px; }
+.slider.round:before { border-radius: 50%; }
 
 /* Grid Layouts */
 .grid-2 {

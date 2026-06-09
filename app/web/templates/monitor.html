@@ -64,36 +64,7 @@
         </div>
         <div style="margin: 1rem 0; padding: 0.85rem 1rem; border: 1px solid var(--border); border-radius: 0.75rem; color: var(--text-secondary); background: rgba(255,255,255,0.03); font-size: 0.9rem;">
             <i class="fa-solid fa-circle-info"></i>
-            Telegram 转存默认使用“媒体库引擎 -> 转存管道”中的统一转存中转目录和统一整理归档根目录。
-        </div>
-        <details class="form-group" style="border: 1px solid var(--border); border-radius: 0.75rem; padding: 1rem; background: rgba(0,0,0,0.12);">
-            <summary style="cursor: pointer; color: var(--text-primary); font-weight: 600;">高级覆盖配置</summary>
-            <p style="color: var(--text-secondary); margin: 0.75rem 0 1rem; font-size: 0.9rem;">仅当 Telegram 需要独立于转存管道使用另一套目录时填写。</p>
-            <div class="form-group">
-                <label class="form-label">覆盖默认中转目录（可选）</label>
-                <div style="display: flex; gap: 0.5rem;">
-                    <input type="text" id="mon_tg_target_dir_id" class="form-control" placeholder="为空或 0 时沿用转存管道" readonly>
-                    <button type="button" class="btn btn-secondary" onclick="window.openDirectoryPicker(id => document.getElementById('mon_tg_target_dir_id').value = id, '115')" style="white-space: nowrap; padding: 0.5rem 1rem;">
-                        <i class="fa-solid fa-folder-open"></i> 选择目录
-                    </button>
-                </div>
-            </div>
-            <div class="form-group" style="margin-bottom: 0;">
-                <label class="form-label">覆盖默认归档根目录（可选）</label>
-                <div style="display: flex; gap: 0.5rem;">
-                    <input type="text" id="mon_tg_archive_dir_id" class="form-control" placeholder="为空或 0 时沿用转存管道" readonly>
-                    <button type="button" class="btn btn-secondary" onclick="window.openDirectoryPicker(id => document.getElementById('mon_tg_archive_dir_id').value = id, '115')" style="white-space: nowrap; padding: 0.5rem 1rem;">
-                        <i class="fa-solid fa-folder-open"></i> 选择目录
-                    </button>
-                </div>
-            </div>
-        </details>
-        <div class="form-group" style="display: flex; align-items: center; gap: 1rem; margin-top: 1rem;">
-            <label class="form-label" style="margin-bottom: 0;">自动整理转存的文件</label>
-            <label class="switch">
-                <input type="checkbox" id="mon_tg_auto_organize">
-                <span class="slider round"></span>
-            </label>
+            Telegram 自动转存统一使用“媒体库引擎 -> 转存管道”中的归档根目录。除 debug 页面外，不再支持为 Telegram 单独覆盖 `target_dir_id` 或 `archive_dir_id`。
         </div>
         <div class="form-group" style="display: flex; align-items: center; gap: 1rem; margin-top: 1rem;">
             <label class="form-label" style="margin-bottom: 0;">转存整理后自动触发全局 STRM 生成</label>
@@ -358,9 +329,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('mon_tg_keywords').value = (config.monitor.telegram.keywords || []).join('\n');
             document.getElementById('mon_tg_startup_sync').value = config.monitor.telegram.startup_sync || 'latest';
             document.getElementById('mon_tg_filter_rules').value = (config.monitor.telegram.filter_rules || []).join('\n');
-            document.getElementById('mon_tg_target_dir_id').value = config.monitor.telegram.target_dir_id || '0';
-            document.getElementById('mon_tg_archive_dir_id').value = config.monitor.telegram.archive_dir_id || '0';
-            document.getElementById('mon_tg_auto_organize').checked = config.monitor.telegram.auto_organize;
             document.getElementById('mon_tg_auto_strm').checked = config.monitor.telegram.auto_strm;
             document.getElementById('mon_tg_scheduled_sync_enabled').checked = config.monitor.telegram.scheduled_sync_enabled ?? true;
             document.getElementById('mon_tg_scheduled_sync_interval_minutes').value = config.monitor.telegram.scheduled_sync_interval_minutes ?? 5;
@@ -398,9 +366,9 @@ async function saveMonitorConfig() {
                 keywords: tgKeywords,
                 startup_sync: document.getElementById('mon_tg_startup_sync').value,
                 filter_rules: tgFilterRules,
-                target_dir_id: document.getElementById('mon_tg_target_dir_id').value,
-                archive_dir_id: document.getElementById('mon_tg_archive_dir_id').value,
-                auto_organize: document.getElementById('mon_tg_auto_organize').checked,
+                target_dir_id: '0',
+                archive_dir_id: '0',
+                auto_organize: false,
                 auto_strm: document.getElementById('mon_tg_auto_strm').checked,
                 scheduled_sync_enabled: document.getElementById('mon_tg_scheduled_sync_enabled').checked,
                 scheduled_sync_interval_minutes: parseInt(document.getElementById('mon_tg_scheduled_sync_interval_minutes').value, 10) || 5,

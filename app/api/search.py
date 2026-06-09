@@ -2,16 +2,18 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 from loguru import logger
+from app.config import get_config
 from app.core.search.pansou import pansou_client
 from app.core.cloud115.client import client_115
 from app.core.sync.engine import sync_engine
+from app.services.transfer_service import TransferServiceError, receive_share_task
 import asyncio
 
 router = APIRouter(prefix="/search", tags=["search"])
 
 class TransferRequest(BaseModel):
     url: str # 磁力链 或 115 分享链接
-    target_dir_id: str
+    target_dir_id: str = ""
     receive_code: Optional[str] = ""
     cloud_type: Optional[str] = "115"
     link_type: Optional[str] = ""
@@ -125,29 +127,31 @@ async def transfer_resource(req: TransferRequest, background_tasks: BackgroundTa
     url = req.url
     cloud_type = req.cloud_type
     link_type = req.link_type.lower() if req.link_type else ""
+
+    if req.target_dir_id and req.target_dir_id != "0":
+        raise HTTPException(status_code=400, detail="仅 debug 接口支持自定义 target_dir_id")
+
+    archive_dir_id = get_config().transfer.archive_dir_id
+    if not archive_dir_id or archive_dir_id == "0":
+        raise HTTPException(status_code=400, detail="未配置归档目录 (archive_dir_id)")
     
     if cloud_type == "115":
         if link_type == "115" or "115.com/s/" in url or "anxia.com/s/" in url or "115cdn.com/s/" in url or "share_code=" in url:
-            # 115 分享链接转存
-            res = await client_115.share_receive(url, req.receive_code, req.target_dir_id)
-            if res.get("state"):
-                logger.success(f"Successfully received share link {url}")
-                # 分享转存是瞬间完成的，直接触发后台洗版
-                background_tasks.add_task(sync_engine.run_sync_task)
-                return {"status": "success", "msg": "转存成功，正在后台执行洗版入库"}
-            else:
-                raise HTTPException(status_code=400, detail=res.get("error", "转存失败"))
+            try:
+                return await receive_share_task(url, req.receive_code)
+            except TransferServiceError as exc:
+                raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
                 
         elif link_type in ["magnet", "torrent", "bt"] or url.startswith("magnet:?") or url.startswith("http"):
             # 磁力链或种子下载
-            res = await client_115.offline_add_url(url, req.target_dir_id)
+            res = await client_115.offline_add_url(url, archive_dir_id)
             if res.get("state"):
                 info_hash = res.get("info_hash")
                 name = res.get("name", "Unknown")
                 logger.info(f"Successfully added offline task {name} ({info_hash})")
                 # 开启后台轮询
                 if info_hash:
-                    background_tasks.add_task(poll_offline_task, info_hash, req.target_dir_id)
+                    background_tasks.add_task(poll_offline_task, info_hash, archive_dir_id)
                 return {"status": "success", "msg": f"已推送到离线下载: {name}"}
             else:
                 raise HTTPException(status_code=400, detail=res.get("error", "添加离线任务失败"))

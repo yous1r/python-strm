@@ -46,6 +46,9 @@ _ROLLBACK_SPEC.loader.exec_module(rollback_module)
 from app.events import (
     EVENT_ROLLBACK_START,
     EVENT_STRM_BATCH_REQUESTED,
+    EVENT_STRM_BATCH_REWRITE_REQUESTED,
+    EVENT_TRANSFER_BATCH_DB_SYNC_COMPLETED,
+    EVENT_TRANSFER_BATCH_DB_SYNC_REQUESTED,
     EVENT_TRANSFER_BATCH_DONE,
     EVENT_TRANSFER_BATCH_ITEM_DONE,
     EVENT_TRANSFER_BATCH_ITEM_FAILED,
@@ -213,7 +216,10 @@ class BatchEventConstantTests(unittest.TestCase):
         self.assertEqual(EVENT_TRANSFER_BATCH_ITEM_DONE, "transfer_batch_item_done")
         self.assertEqual(EVENT_TRANSFER_BATCH_ITEM_FAILED, "transfer_batch_item_failed")
         self.assertEqual(EVENT_TRANSFER_BATCH_DONE, "transfer_batch_done")
+        self.assertEqual(EVENT_TRANSFER_BATCH_DB_SYNC_REQUESTED, "transfer_batch_db_sync_requested")
+        self.assertEqual(EVENT_TRANSFER_BATCH_DB_SYNC_COMPLETED, "transfer_batch_db_sync_completed")
         self.assertEqual(EVENT_STRM_BATCH_REQUESTED, "strm.batch.requested")
+        self.assertEqual(EVENT_STRM_BATCH_REWRITE_REQUESTED, "strm.batch.rewrite.requested")
 
 
 class StrmBatchPayloadTests(unittest.TestCase):

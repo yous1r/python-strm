@@ -71,12 +71,9 @@
         <button type="button" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 1.2rem;" onclick="closeTransferModal()"><i class="fa-solid fa-times"></i></button>
       </div>
       <div style="padding: 1.5rem;">
-        <p style="margin-bottom: 1rem; color: var(--text-secondary);">选择目标目录：</p>
-        <div style="display: flex; gap: 0.5rem; margin-bottom: 1.5rem;">
-            <input type="text" id="targetDirSelect" class="form-control" placeholder="点击右侧按钮选择..." readonly>
-            <button type="button" class="btn btn-secondary" onclick="window.openDirectoryPicker(id => document.getElementById('targetDirSelect').value = id, currentTransferCloudType)" style="white-space: nowrap; padding: 0.5rem 1rem;">
-                <i class="fa-solid fa-folder-open"></i> 选择目录
-            </button>
+        <div style="margin-bottom: 1.5rem; padding: 0.85rem 1rem; border: 1px solid var(--border); border-radius: 0.75rem; color: var(--text-secondary); background: rgba(255,255,255,0.03); font-size: 0.9rem; line-height: 1.6;">
+            <i class="fa-solid fa-circle-info"></i>
+            除 debug 页面外，这里的转存任务都会自动写入“媒体库引擎 → 转存管道”中配置的归档根目录，不支持单次自定义 `target_dir_id`。
         </div>
         
         <div id="receiveCodeContainer" style="display: none; margin-bottom: 1.5rem;">
@@ -327,14 +324,8 @@
     
     async function submitTransfer() {
         const url = document.getElementById('transferUrlInput').value;
-        const dirId = document.getElementById('targetDirSelect').value;
         const receiveCode = document.getElementById('receiveCodeInput').value;
         const btn = document.getElementById('confirmTransferBtn');
-        
-        if (!dirId) {
-            showNotification('请选择目标目录', 'warning');
-            return;
-        }
         
         btn.disabled = true;
         const oldText = btn.innerHTML;
@@ -345,7 +336,6 @@
             let endpoint = '/api/v1/search/transfer';
             let payload = {
                 url: url,
-                target_dir_id: dirId,
                 receive_code: receiveCode,
                 cloud_type: currentTransferCloudType,
                 link_type: currentTransferLinkType
@@ -355,8 +345,7 @@
                 endpoint = '/api/v1/transfer/receive';
                 payload = {
                     share_url: url,
-                    receive_code: receiveCode,
-                    target_dir_id: dirId || ''
+                    receive_code: receiveCode
                 };
             }
             

@@ -38,11 +38,13 @@ def _raise_transfer_http_error(exc: TransferServiceError) -> None:
 @router.post("/receive")
 async def receive_share(req: ReceiveRequest):
     """接收 115 分享链接，后台执行转存+移动+整理"""
+    if req.target_dir_id and req.target_dir_id != "0":
+        raise HTTPException(status_code=400, detail="仅 debug 接口支持自定义 target_dir_id")
     try:
         return await receive_share_task(
             req.share_url,
             req.receive_code,
-            req.target_dir_id,
+            "",
             req.filter_rules,
         )
     except TransferServiceError as exc:

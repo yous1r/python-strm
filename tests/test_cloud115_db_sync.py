@@ -59,20 +59,35 @@ class Cloud115DbSyncEventTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch("app.core.cloud115.db_sync.get_config", return_value=config),
             patch(
-                "app.core.cloud115.strm.generator_115.batch_generate",
-                new=AsyncMock(return_value=["a.strm", "b.strm"]),
-            ) as batch_generate,
+                "app.core.cloud115.strm.generator_115.sync_strm_files_from_manifest",
+                new=AsyncMock(return_value={"scanned": 5, "updated": 2, "skipped": 3, "failed": 0}),
+            ) as sync_strm,
         ):
             await handle_cloud115_db_sync_completed(dir_id="300", dir_name="综艺", count=0)
 
-        batch_generate.assert_awaited_once_with(
+        sync_strm.assert_awaited_once_with(
             dir_id="300",
-            output_dir="strm_output/综艺",
-            base_url="http://localhost:8095",
-            recursive=True,
+            output_dir="strm_output",
             root_output_dir="strm_output",
-            force=False,
+            base_url="http://localhost:8095",
+            archive_root="",
         )
+
+    async def test_sync_all_configured_only_includes_archive_dir_for_transfer_pipeline(self):
+        config = SimpleNamespace(
+            cloud115=SimpleNamespace(sync_dirs=[]),
+            transfer=SimpleNamespace(enabled=True, archive_dir_id="archive-root", temp_dir_id="legacy-temp"),
+        )
+
+        with (
+            patch("app.core.cloud115.db_sync.get_config", return_value=config),
+            patch("app.core.cloud115.db_sync.sync_directory", side_effect=[7]) as mocked_sync,
+            patch("app.core.cloud115.db_sync.event_bus.emit", AsyncMock()),
+        ):
+            result = await sync_all_configured()
+
+        self.assertEqual(result, {"archive_dir": 7})
+        mocked_sync.assert_awaited_once_with("archive-root", "archive_dir")
 
 
 if __name__ == "__main__":

@@ -391,12 +391,13 @@ class StrmGenerator115:
         archive_dir_id: str,
         current_output_dir: str,
         root_output_dir: str,
+        preserve_existing_structure: bool = False,
     ) -> dict:
         prepared = await self._prepare_strm_target(
             file_name,
             current_output_dir,
             root_output_dir,
-            skip_organize=False,
+            skip_organize=preserve_existing_structure,
         )
         abs_strm_path = str(Path(str(prepared["strm_path"])).resolve())
         root_output_path = Path(root_output_dir).resolve()
@@ -473,12 +474,13 @@ class StrmGenerator115:
         base_url: str,
         recursive: bool = True,
         root_output_dir: str | None = None,
+        preserve_existing_structure: bool = False,
     ) -> dict[str, object]:
         if root_output_dir is None:
             root_output_dir = output_dir
 
         config = get_config()
-        organize_enabled = bool(config.organize.enabled)
+        organize_enabled = bool(config.organize.enabled) and not preserve_existing_structure
         stats = {
             "scanned": 0,
             "created": 0,
@@ -558,6 +560,7 @@ class StrmGenerator115:
                             archive_dir_id=current_dir_id,
                             current_output_dir=current_output_dir,
                             root_output_dir=root_output_dir,
+                            preserve_existing_structure=preserve_existing_structure,
                         )
                         desired.update(
                             self._build_manifest_source_signature(
@@ -622,12 +625,17 @@ class StrmGenerator115:
         output_dir: str,
         root_output_dir: str | None,
         base_url: str = "",
+        archive_root: str | None = None,
     ) -> dict[str, object]:
-        records = await self.list_manifest_records_for_scope(
-            dir_id=dir_id,
-            output_dir=output_dir,
-            root_output_dir=root_output_dir,
-        )
+        if archive_root is not None:
+            records = await list_records_for_rewrite(archive_root)
+        else:
+            records = await self.list_manifest_records_for_scope(
+                dir_id=dir_id,
+                output_dir=output_dir,
+                root_output_dir=root_output_dir,
+            )
+
         config = get_config()
         target_base_url = base_url or config.strm.base_url
 
@@ -945,12 +953,16 @@ class StrmGenerator115:
             if s:
                 sha_to_name[s] = sf.get("name", "")
 
+        logger.info(f"[generate_strm_for_folder] folder_cid: {folder_cid}, share_files: {share_files}")
+
         generated = []
         for item in self._list_all_local_items(folder_cid):
             fid = item.get("fid", "")
             fname = item.get("n", "")
             pc = item.get("pc", "")
             sha_val = item.get("sha", item.get("sha1", "")).upper() if hasattr(item, 'get') else ""
+
+            logger.info(f"[_list_all_local] item: {item}")
 
             if not pc or not fname:
                 continue
@@ -967,6 +979,8 @@ class StrmGenerator115:
                     placement = build_archive_placement(classify_result, matched_name)
                     strm_rel_path = f"{placement.strm_rel_dir}/{placement.strm_file_name}"
 
+            # logger.info(f"[generate_strm] strm_path: {strm_path}")
+
             strm_path = await self.generate_strm(
                 pc,
                 matched_name,
@@ -975,6 +989,9 @@ class StrmGenerator115:
                 base_url,
                 skip_organize=bool(strm_subdir),
             )
+
+            logger.info(f"[generate_strm] strm_path: {strm_path}")
+
             if strm_path:
                 generated.append(strm_path)
                 if strm_subdir and strm_rel_path:
