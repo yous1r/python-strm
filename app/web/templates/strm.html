@@ -14,7 +14,7 @@
             </div>
             <div class="form-group">
                 <label class="form-label">播放中转 Base URL</label>
-                <input type="text" id="strm_base_url" class="form-control" placeholder="http://192.168.1.10:8095">
+                <input type="text" id="strm_base_url" class="form-control" placeholder="http://127.0.0.1:8095">
                 <p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.25rem;">生成的 STRM 文件内部指向该地址进行网盘代理分发。</p>
             </div>
             
@@ -47,14 +47,14 @@
     </div>
 
     <!-- 右侧：手动触发 -->
-    <div class="glass-panel animate-fade-in delay-2">
+    <!-- <div class="glass-panel animate-fade-in delay-2">
         <h2 style="margin-bottom: 1.5rem;"><i class="fa-solid fa-bolt"></i> 批量生成工具</h2>
     <form id="strmForm">
         <div class="form-group">
             <label class="form-label">网盘类型</label>
             <select id="cloudType" class="form-control">
                 <option value="115">115 网盘</option>
-                <!-- <option value="123">123 网盘</option> -->
+                <option value="123">123 网盘</option>
             </select>
         </div>
         <div class="form-group">
@@ -75,18 +75,18 @@
         <button type="button" class="btn btn-primary" onclick="generateSTRM()" id="genBtn">
             <i class="fa-solid fa-play"></i> 开始生成
         </button>
-    </form>
+    </form> -->
     
     <!-- Directory Picker HTML has been moved to base.html -->
     
-    <div id="genResult" style="margin-top: 1.5rem; display: none;">
+    <!-- <div id="genResult" style="margin-top: 1.5rem; display: none;">
         <h3 style="margin-bottom: 0.5rem;">生成结果</h3>
         <p id="genCount" style="color: var(--success); margin-bottom: 1rem;"></p>
         <div style="background: rgba(0,0,0,0.3); padding: 1rem; border-radius: 0.5rem; font-family: monospace; font-size: 0.85rem; max-height: 200px; overflow-y: auto;">
             <ul id="genList" style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.25rem;">
             </ul>
         </div>
-    </div>
+    </div> -->
     </div>
 </div>
 

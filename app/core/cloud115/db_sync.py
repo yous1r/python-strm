@@ -76,11 +76,11 @@ async def sync_all_configured() -> dict:
         )
 
     # 2. 同步 transfer 管道中的 archive_dir
-    transfer_cfg = config.transfer
-    if transfer_cfg.enabled:
-        if transfer_cfg.archive_dir_id and transfer_cfg.archive_dir_id != "0":
-            count = await sync_directory(transfer_cfg.archive_dir_id, "archive_dir")
-            results["archive_dir"] = count
+    # transfer_cfg = config.transfer
+    # if transfer_cfg.enabled:
+    #     if transfer_cfg.archive_dir_id and transfer_cfg.archive_dir_id != "0":
+    #         count = await sync_directory(transfer_cfg.archive_dir_id, "archive_dir")
+    #         results["archive_dir"] = count
 
     return results
 

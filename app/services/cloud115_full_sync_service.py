@@ -25,6 +25,7 @@ class Cloud115FullSyncService:
     def __init__(self):
         self._tasks: dict[str, dict] = {}
         self._lock = asyncio.Lock()
+        self.cloud_type = "115"
 
     async def start_full_sync(self, source: str = "debug") -> dict[str, object]:
         task_id = str(uuid.uuid4())[:8]
@@ -94,25 +95,25 @@ class Cloud115FullSyncService:
                     "dir_id": str(sync_dir.dir_id),
                     "dir_name": sync_dir.name,
                     "recursive": True,
-                    "output_dir": os.path.join(config.strm.output_dir, sync_dir.name),
+                    "output_dir": os.path.join(config.strm.output_dir, self.cloud_type, sync_dir.name),
                     "role": "sync_dir",
                     "strm_enabled": True,
                 }
             )
 
-        transfer_cfg = config.transfer
-        if transfer_cfg.enabled:
-            if transfer_cfg.archive_dir_id and transfer_cfg.archive_dir_id != "0":
-                dirs.append(
-                    {
-                        "dir_id": str(transfer_cfg.archive_dir_id),
-                        "dir_name": "archive_dir",
-                        "recursive": True,
-                        "output_dir": "",
-                        "role": "archive_dir",
-                        "strm_enabled": False,
-                    }
-                )
+        # transfer_cfg = config.transfer
+        # if transfer_cfg.enabled:
+        #     if transfer_cfg.archive_dir_id and transfer_cfg.archive_dir_id != "0":
+        #         dirs.append(
+        #             {
+        #                 "dir_id": str(transfer_cfg.archive_dir_id),
+        #                 "dir_name": transfer_cfg.archive_dir_name,
+        #                 "recursive": True,
+        #                 "output_dir": "",
+        #                 "role": "archive_dir",
+        #                 "strm_enabled": False,
+        #             }
+        #         )
 
         return dirs
 
@@ -141,6 +142,7 @@ class Cloud115FullSyncService:
 
             manifest_stats = await generator_115.sync_manifest_records(
                 dir_id=str(item["dir_id"]),
+                dir_name=str(item['dir_name']),
                 output_dir=str(item["output_dir"]),
                 base_url=config.strm.base_url,
                 recursive=bool(item.get("recursive", True)),

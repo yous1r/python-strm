@@ -7,7 +7,7 @@
     <h2 style="margin-bottom: 1.5rem;"><i class="fa-solid fa-bell"></i> 消息推送通道设置</h2>
     
     <!-- WeCom -->
-    <div style="background: rgba(0,0,0,0.2); padding: 1.5rem; border-radius: 12px; margin-bottom: 1.5rem; border: 1px solid rgba(255,255,255,0.05);">
+    <!-- <div style="background: rgba(0,0,0,0.2); padding: 1.5rem; border-radius: 12px; margin-bottom: 1.5rem; border: 1px solid rgba(255,255,255,0.05);">
         <h3 style="margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between;">
             <span><i class="fa-brands fa-weixin"></i> 企业微信 (WeCom)</span>
             <div style="display: flex; align-items: center; gap: 1rem;">
@@ -32,35 +32,7 @@
             <label class="form-label">Agent ID (应用ID)</label>
             <input type="text" id="not_wecom_agent_id" class="form-control">
         </div>
-    </div>
-    
-    <!-- Telegram Bot -->
-    <div style="background: rgba(0,0,0,0.2); padding: 1.5rem; border-radius: 12px; margin-bottom: 1.5rem; border: 1px solid rgba(255,255,255,0.05);">
-        <h3 style="margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between;">
-            <span><i class="fa-brands fa-telegram"></i> Telegram Bot (推送通知)</span>
-            <div style="display: flex; align-items: center; gap: 1rem;">
-                <button type="button" class="btn btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.8rem;" onclick="testChannel('telegram', this)">
-                    <i class="fa-solid fa-paper-plane"></i> 测试
-                </button>
-                <label class="switch">
-                    <input type="checkbox" id="not_tg_enabled">
-                    <span class="slider round"></span>
-                </label>
-            </div>
-        </h3>
-        <div class="form-group">
-            <label class="form-label">Bot Token (来自 BotFather)</label>
-            <input type="password" id="not_tg_bot_token" class="form-control">
-        </div>
-        <div class="form-group">
-            <label class="form-label">Chat ID (接收人ID)</label>
-            <input type="text" id="not_tg_chat_id" class="form-control">
-        </div>
-        <div class="form-group">
-            <label class="form-label">Proxy 代理 (可选, 如 http://127.0.0.1:7890)</label>
-            <input type="text" id="not_tg_proxy" class="form-control" placeholder="http://127.0.0.1:7890">
-        </div>
-    </div>
+    </div> -->
     
     <!-- Bark -->
     <div style="background: rgba(0,0,0,0.2); padding: 1.5rem; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05);">
@@ -112,6 +84,35 @@
             </div>
         </div>
     </div>
+
+    <!-- Telegram Bot -->
+    <div style="background: rgba(0,0,0,0.2); padding: 1.5rem; border-radius: 12px; margin-bottom: 1.5rem; border: 1px solid rgba(255,255,255,0.05);">
+        <h3 style="margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between;">
+            <span><i class="fa-brands fa-telegram"></i> Telegram Bot (推送通知)</span>
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                <button type="button" class="btn btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.8rem;" onclick="testChannel('telegram', this)">
+                    <i class="fa-solid fa-paper-plane"></i> 测试
+                </button>
+                <label class="switch">
+                    <input type="checkbox" id="not_tg_enabled">
+                    <span class="slider round"></span>
+                </label>
+            </div>
+        </h3>
+        <div class="form-group">
+            <label class="form-label">Bot Token (来自 BotFather)</label>
+            <input type="password" id="not_tg_bot_token" class="form-control">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Chat ID (接收人ID)</label>
+            <input type="text" id="not_tg_chat_id" class="form-control">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Proxy 代理 (可选, 如 http://127.0.0.1:7890)</label>
+            <input type="text" id="not_tg_proxy" class="form-control" placeholder="http://127.0.0.1:7890">
+        </div>
+    </div>
+
 </div>
 
 <div style="max-width: 800px; display: flex; justify-content: flex-end;">

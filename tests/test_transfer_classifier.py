@@ -265,7 +265,7 @@ class BatchPrepareTests(unittest.IsolatedAsyncioTestCase):
             )
 
         mocked_emit.assert_awaited_once_with(
-            "strm.batch.requested",
+            "strm_batch_requested",
             task_id="task-5",
             cloud_type="115",
             archive_dir_id="cid-5",
@@ -303,7 +303,7 @@ class BatchPrepareTests(unittest.IsolatedAsyncioTestCase):
             preserve_existing_structure=True,
         )
         mocked_emit.assert_awaited_once_with(
-            "strm.batch.rewrite.requested",
+            "strm_batch_rewrite_requested",
             task_id="task-6",
             archive_dir_id="cid-6",
             archive_rel_path="剧集/国产剧集/示例剧/Season 1",
@@ -337,7 +337,7 @@ class BatchPrepareTests(unittest.IsolatedAsyncioTestCase):
             archive_root="剧集/国产剧集/示例剧",
         )
         mocked_emit.assert_awaited_once_with(
-            "strm.batch.completed",
+            "strm_batch_completed",
             task_id="task-7",
             archive_dir_id="cid-7",
             archive_rel_path="剧集/国产剧集/示例剧/Season 1",

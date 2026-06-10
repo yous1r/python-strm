@@ -8,6 +8,7 @@ from loguru import logger
 from app.config import get_config
 from app.core.cloud115.client import client_115
 from app.core.cloud115.db_sync import list_local_files
+from app.core.media.parser import parse_filename
 from app.core.transfer.classifier import classify
 from app.core.transfer.placement import build_archive_placement
 from app.core.transfer.strm_manifest import build_manifest_record, list_records_for_rewrite
@@ -183,7 +184,7 @@ class StrmGenerator115:
             strm_content += f"|User-Agent={config.cloud115.play_ua}"
         return strm_content
 
-    def _derive_scope_prefix(self, output_dir: str, root_output_dir: str | None = None) -> str:
+    def _derive_scope_prefix(self, output_dir: str, dir_name: str, root_output_dir: str | None = None) -> str:
         """推导当前批次对应的 manifest 相对目录前缀。"""
 
         output_path = Path(output_dir).resolve()
@@ -292,6 +293,7 @@ class StrmGenerator115:
         self,
         *,
         dir_id: str,
+        dir_name: str,
         output_dir: str,
         root_output_dir: str | None,
     ) -> dict[str, int]:
@@ -304,7 +306,7 @@ class StrmGenerator115:
             if not item.get("is_dir") and item.get("id") is not None
         }
         alive_dir_ids = [str(dir_id)] + [str(item["id"]) for item in local_items if item.get("is_dir")]
-        scope_prefix = self._derive_scope_prefix(output_dir, root_output_dir)
+        scope_prefix = self._derive_scope_prefix(output_dir, dir_name, root_output_dir)
 
         records = await self._load_cleanup_candidates(
             dir_id=dir_id,
@@ -358,19 +360,18 @@ class StrmGenerator115:
         *,
         skip_organize: bool = False,
     ) -> dict[str, object]:
-        config = get_config()
+        # config = get_config()
 
-        if config.organize.enabled and not skip_organize:
-            category, region, target_folder, target_name, tmdb_data = await organizer.get_organized_path(file_name)
-            target_dir = os.path.join(root_dir, category, region, target_folder)
-            base_name = os.path.splitext(target_name)[0]
-            media_type = "movie" if category == "电影" else "episode"
-        else:
-            target_dir = current_dir
-            target_name = file_name
-            tmdb_data = None
-            base_name = os.path.splitext(file_name)[0]
-            media_type = ""
+        # if config.organize.enabled and not skip_organize:
+        #     target_dir = os.path.join(root_dir, category, region, target_folder)
+        #     base_name = os.path.splitext(target_name)[0]
+        #     media_type = "movie" if category == "电影" else "episode"
+        # else:
+        _category, _region, _target_folder, target_name, tmdb_data = await organizer.get_organized_path(file_name)
+        target_dir = current_dir
+        target_name = file_name
+        base_name = os.path.splitext(file_name)[0]
+        media_type = parse_filename(filename=file_name).media_type
 
         strm_filename = f"{base_name}.strm"
         strm_path = os.path.join(target_dir, strm_filename)
@@ -470,6 +471,7 @@ class StrmGenerator115:
         self,
         *,
         dir_id: str,
+        dir_name: str,
         output_dir: str,
         base_url: str,
         recursive: bool = True,
@@ -493,6 +495,7 @@ class StrmGenerator115:
         if config.strm.clean_invalid:
             cleanup = await self._cleanup_invalid_strm_records(
                 dir_id=dir_id,
+                dir_name=dir_name,
                 output_dir=output_dir,
                 root_output_dir=root_output_dir,
             )

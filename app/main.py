@@ -34,9 +34,9 @@ async def lifespan(app: FastAPI):
     await init_db()
     start_scheduler()
     
-    init_handlers()
+    # init_handlers()
     init_cloud115_full_sync_events()
-    init_transfer_pipeline()
+    # init_transfer_pipeline()
 
     config = get_config()
     

@@ -65,7 +65,7 @@
     <p style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.9rem;">
         这里是转存目录的主配置入口。115 与 Telegram 自动转存都会按下方分类规则预创建最终目录，并直接写入归档根目录。
     </p>
-    <div id="configFields" style="display: none;">
+    <!-- <div id="configFields" style="display: none;">
         <div class="form-row" style="margin-bottom: 0.75rem;">
             <div style="flex: 1; min-width: 200px;">
                 <label class="form-label">统一整理归档根目录</label>
@@ -86,7 +86,7 @@
                 <input type="checkbox" id="cfg_auto_strm" checked> 整理后生成 STRM
             </label>
         </div>
-    </div>
+    </div> -->
     <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-top: 1rem;">
         <button class="btn btn-primary" onclick="saveTransferConfig()">
             <i class="fa-solid fa-floppy-disk"></i> 保存配置并热加载
@@ -128,7 +128,7 @@
 </div>
 
 <!-- Tasks List -->
-<div class="glass-panel animate-fade-in delay-3">
+<!-- <div class="glass-panel animate-fade-in delay-3">
     <h2 style="margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between;">
         <span><i class="fa-solid fa-list-check" style="color: var(--accent-primary); margin-right: 0.75rem;"></i>整理任务列表</span>
         <div style="display: flex; gap: 0.5rem;">
@@ -154,10 +154,10 @@
                 <tr><td colspan="5" style="text-align: center; padding: 3rem; color: var(--text-secondary);">加载中...</td></tr>
             </tbody>
         </table>
-    </div>
+    </div> -->
 
     <!-- Task Detail -->
-    <div id="taskDetail" style="display: none; border-top: 1px solid var(--border); margin-top: 0; padding: 1.5rem; background: rgba(0,0,0,0.15);">
+    <!-- <div id="taskDetail" style="display: none; border-top: 1px solid var(--border); margin-top: 0; padding: 1.5rem; background: rgba(0,0,0,0.15);">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
             <h3 style="margin: 0;">操作明细</h3>
             <div>
@@ -172,7 +172,7 @@
                 <tbody id="opsBody"></tbody>
             </table>
         </div>
-    </div>
+    </div> -->
 </div>
 
 <!-- Rollback Preview Modal -->

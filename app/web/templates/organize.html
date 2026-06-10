@@ -86,8 +86,8 @@ input:checked + .slider:before {
 </style>
 
 <div class="tabs">
-    <button class="tab-btn active" onclick="switchTab('global')"><i class="fa-solid fa-globe"></i> 全局与刮削配置</button>
-    <button class="tab-btn" onclick="switchTab('115org')"><i class="fa-solid fa-cloud"></i> 115 手动整理 (多对一)</button>
+    <button class="tab-btn active" onclick="switchTab('global')"><i class="fa-solid fa-globe"></i> 刮削配置</button>
+    <!-- <button class="tab-btn" onclick="switchTab('115org')"><i class="fa-solid fa-cloud"></i> 115 手动整理 (多对一)</button> -->
 </div>
 
 <!-- Tab: 全局配置 -->
@@ -130,7 +130,7 @@ input:checked + .slider:before {
         </div>
     </div>
 
-    <div class="glass-panel animate-fade-in delay-2" style="max-width: 800px; margin-bottom: 2rem;">
+    <!-- <div class="glass-panel animate-fade-in delay-2" style="max-width: 800px; margin-bottom: 2rem;">
         <h2 style="margin-bottom: 1rem;"><i class="fa-solid fa-sliders"></i> 整理偏好</h2>
         <p style="color: var(--text-secondary); margin-bottom: 1.5rem; font-size: 0.9rem;">
             分类规则已迁移到“媒体库引擎 -> 转存管道 -> 分类规则”，并直接写入真实生效的 <code>transfer.categories</code>。
@@ -147,10 +147,11 @@ input:checked + .slider:before {
                 <input type="checkbox" id="wash_larger"> 相同资源优先保留大体积
             </label>
         </div>
-    </div>
+    </div> -->
 </div>
 
 <!-- Tab: 115专属配置 -->
+<!--
 <div id="tab-115org" class="tab-pane">
     <div class="glass-panel animate-fade-in" style="max-width: 800px; margin-bottom: 2rem;">
         <h2 style="margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: space-between;">
@@ -172,7 +173,6 @@ input:checked + .slider:before {
                 </button>
             </label>
             <ul id="sourceDirsList" style="list-style: none; padding: 0; margin-top: 0.5rem; margin-bottom: 0;">
-                <!-- 动态渲染 -->
             </ul>
         </div>
 
@@ -204,6 +204,7 @@ input:checked + .slider:before {
         <i class="fa-solid fa-floppy-disk"></i> 保存所有配置并热加载
     </button>
 </div>
+-->
 {% endblock %}
 
 {% block scripts %}

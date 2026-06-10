@@ -8,13 +8,18 @@ class CategoryConfig(BaseModel):
     name: str = ""
     subcategories: List[str] = []
 
+class SyncDirConfig(BaseModel):
+    dir_id: str
+    name: str
+
 class TransferConfig(BaseModel):
     enabled: bool = False
-    inbox_dir_id: str = "0"
-    temp_dir_id: str = ""
-    archive_dir_id: str = ""
+    # temp_dir_id: str = ""
+    # archive_dir_id: str = ""
+    # archive_dir_name: str = "strm"
     auto_organize: bool = True
     auto_strm: bool = True
+    # archive_dir: SyncDirConfig = None
     categories: List[CategoryConfig] = []
 
     @staticmethod
@@ -23,8 +28,8 @@ class TransferConfig(BaseModel):
             CategoryConfig(name="电影", subcategories=["国产电影", "欧美电影", "日韩电影", "其他"]),
             CategoryConfig(name="剧集", subcategories=["国产剧集", "欧美剧集", "日韩剧集", "其他"]),
             CategoryConfig(name="动漫", subcategories=["国产动漫", "日韩动漫", "欧美动漫", "其他"]),
-            CategoryConfig(name="纪录片", subcategories=[]),
-            CategoryConfig(name="综艺", subcategories=[]),
+            CategoryConfig(name="纪录片", subcategories=["国产纪录片", "日韩纪录片", "欧美纪录片", "其他"]),
+            CategoryConfig(name="综艺", subcategories=["国产综艺", "日韩综艺", "欧美综艺", "其他"]),
         ]
 
 class ServerConfig(BaseModel):
@@ -33,11 +38,7 @@ class ServerConfig(BaseModel):
     debug: bool = False
 
 class DatabaseConfig(BaseModel):
-    path: str = "data/python_strm.db"
-
-class SyncDirConfig(BaseModel):
-    dir_id: str
-    name: str
+    path: str = "data/strm.db"
 
 class Cloud115Config(BaseModel):
     enabled: bool = False
@@ -81,7 +82,7 @@ class EmbyConfig(BaseModel):
     proxy: EmbyProxyConfig = EmbyProxyConfig()
 
 class StrmConfig(BaseModel):
-    output_dir: str = "strm_output"
+    output_dir: str = "strm"
     base_url: str = "http://localhost:8095"
     sync_metadata: bool = True
     clean_invalid: bool = True

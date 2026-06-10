@@ -289,7 +289,7 @@ class Cloud115FullSyncServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(task["current_stage"], "db_sync")
         self.assertEqual(task["stats"]["db_sync_rows"], 0)
         emit_mock.assert_awaited_once_with(
-            "cloud115.db_sync.finished",
+            "cloud115_db_sync_finished",
             task_id="task-1",
             source="debug",
             dirs=[db_sync_results[0]],
@@ -382,7 +382,7 @@ class Cloud115FullSyncServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(task)
         self.assertEqual(task["current_stage"], "manifest_refresh")
         emit_mock.assert_awaited_once_with(
-            "cloud115.manifest_refresh.finished",
+            "cloud115_manifest_refresh_finished",
             task_id="task-1",
             source="debug",
             dirs=[{"dir_id": "100", "dir_name": "影视", "output_dir": "strm_output/影视", "strm_enabled": True}],
@@ -447,7 +447,7 @@ class Cloud115FullSyncServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(task["strm_results"], strm_results)
         self.assertEqual(task["stats"]["generated_strm_files"], 2)
         emit_mock.assert_awaited_once_with(
-            "cloud115.strm_refresh.finished",
+            "cloud115_strm_refresh_finished",
             task_id="task-1",
             source="debug",
             dirs=[{"dir_id": "100", "dir_name": "影视", "output_dir": "strm_output/影视", "strm_enabled": True}],
@@ -510,7 +510,7 @@ class Cloud115FullSyncServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(task["stats"]["media_links_linked"], 4)
         media_mock.assert_awaited_once_with(dirs)
         emit_mock.assert_awaited_once_with(
-            "cloud115.media_links_refresh.finished",
+            "cloud115_media_links_refresh_finished",
             task_id="task-1",
             source="debug",
         )

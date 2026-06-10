@@ -1,24 +1,29 @@
-node_modules
+.antigravitycli
+.cursor
+.vscode
+
+.specstory
+.cline
 
 .agents
 .claude
-.antigravitycli
-.cursor/skills
-.specstory
-.vscode
 
 strm_output
 strm_output_bak
 strm
 data
-__pycache__/
 
+node_modules
+
+archive
+archive_bak
+
+__pycache__/
+build
 cache
 
 config.yaml
 config.yaml.bak
 config.yaml.*.bak
 
-archive
-archive_bak
 

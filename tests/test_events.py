@@ -25,24 +25,6 @@ class _DummyClient115:
         return True
 
 
-sys.modules.setdefault(
-    "app.core.cloud115.client",
-    types.SimpleNamespace(client_115=_DummyClient115()),
-)
-sys.modules.setdefault(
-    "app.database",
-    types.SimpleNamespace(get_db_conn=lambda: None),
-)
-
-
-_ROLLBACK_SPEC = importlib.util.spec_from_file_location(
-    "test_rollback_module",
-    Path(__file__).resolve().parents[1] / "app" / "core" / "transfer" / "rollback.py",
-)
-rollback_module = importlib.util.module_from_spec(_ROLLBACK_SPEC)
-assert _ROLLBACK_SPEC and _ROLLBACK_SPEC.loader
-_ROLLBACK_SPEC.loader.exec_module(rollback_module)
-
 from app.events import (
     EVENT_ROLLBACK_START,
     EVENT_STRM_BATCH_REQUESTED,
@@ -183,8 +165,24 @@ class EventBusBehaviorTests(unittest.IsolatedAsyncioTestCase):
 
         event_bus.subscribe(EVENT_ROLLBACK_START, on_start)
 
-        with patch.object(rollback_module, "get_db_conn", return_value=_FakeDbConnection()):
-            await rollback_module.rollback_task("task-1")
+        rollback_spec = importlib.util.spec_from_file_location(
+            "test_rollback_module",
+            Path(__file__).resolve().parents[1] / "app" / "core" / "transfer" / "rollback.py",
+        )
+        rollback_module = importlib.util.module_from_spec(rollback_spec)
+        assert rollback_spec and rollback_spec.loader
+
+        with patch.dict(
+            sys.modules,
+            {
+                "app.core.cloud115.client": types.SimpleNamespace(client_115=_DummyClient115()),
+                "app.database": types.SimpleNamespace(get_db_conn=lambda: None),
+            },
+        ):
+            rollback_spec.loader.exec_module(rollback_module)
+
+            with patch.object(rollback_module, "get_db_conn", return_value=_FakeDbConnection()):
+                await rollback_module.rollback_task("task-1")
 
         self.assertEqual(observed, [])
 
@@ -218,8 +216,8 @@ class BatchEventConstantTests(unittest.TestCase):
         self.assertEqual(EVENT_TRANSFER_BATCH_DONE, "transfer_batch_done")
         self.assertEqual(EVENT_TRANSFER_BATCH_DB_SYNC_REQUESTED, "transfer_batch_db_sync_requested")
         self.assertEqual(EVENT_TRANSFER_BATCH_DB_SYNC_COMPLETED, "transfer_batch_db_sync_completed")
-        self.assertEqual(EVENT_STRM_BATCH_REQUESTED, "strm.batch.requested")
-        self.assertEqual(EVENT_STRM_BATCH_REWRITE_REQUESTED, "strm.batch.rewrite.requested")
+        self.assertEqual(EVENT_STRM_BATCH_REQUESTED, "strm_batch_requested")
+        self.assertEqual(EVENT_STRM_BATCH_REWRITE_REQUESTED, "strm_batch_rewrite_requested")
 
 
 class StrmBatchPayloadTests(unittest.TestCase):
@@ -234,7 +232,7 @@ class StrmBatchPayloadTests(unittest.TestCase):
         }
 
         self.assertEqual(payload["archive_dir_id"], "cid-9")
-        self.assertEqual(EVENT_STRM_BATCH_REQUESTED, "strm.batch.requested")
+        self.assertEqual(EVENT_STRM_BATCH_REQUESTED, "strm_batch_requested")
 
 
 class EventBusBatchFlowTests(unittest.IsolatedAsyncioTestCase):
