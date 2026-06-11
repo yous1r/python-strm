@@ -171,32 +171,60 @@ input:checked + .slider:before {
 </style>
 
 <script>
+function getElement(id) {
+    return document.getElementById(id);
+}
+
+function setInputValue(id, value = '') {
+    const el = getElement(id);
+    if (el) el.value = value;
+}
+
+function setCheckedValue(id, value = false) {
+    const el = getElement(id);
+    if (el) el.checked = Boolean(value);
+}
+
+function getInputValue(id, fallback = '') {
+    const el = getElement(id);
+    return el ? el.value : fallback;
+}
+
+function getCheckedValue(id, fallback = false) {
+    const el = getElement(id);
+    return el ? el.checked : fallback;
+}
+
 // 页面加载时自动获取配置
 document.addEventListener('DOMContentLoaded', async () => {
     try {
         const res = await fetch('/api/v1/system/config');
         if (res.ok) {
             const config = await res.json();
+            const notifyConfig = config.notify || {};
+            const wecomConfig = notifyConfig.wecom || {};
+            const telegramConfig = notifyConfig.telegram || {};
+            const barkConfig = notifyConfig.bark || {};
             
             // 填充 Notify WeCom
-            document.getElementById('not_wecom_enabled').checked = config.notify.wecom.enabled;
-            document.getElementById('not_wecom_corp_id').value = config.notify.wecom.corp_id;
-            document.getElementById('not_wecom_corp_secret').value = config.notify.wecom.corp_secret;
-            document.getElementById('not_wecom_agent_id').value = config.notify.wecom.agent_id;
+            setCheckedValue('not_wecom_enabled', wecomConfig.enabled);
+            setInputValue('not_wecom_corp_id', wecomConfig.corp_id);
+            setInputValue('not_wecom_corp_secret', wecomConfig.corp_secret);
+            setInputValue('not_wecom_agent_id', wecomConfig.agent_id);
             
             // 填充 Notify Telegram
-            document.getElementById('not_tg_enabled').checked = config.notify.telegram.enabled;
-            document.getElementById('not_tg_bot_token').value = config.notify.telegram.bot_token;
-            document.getElementById('not_tg_chat_id').value = config.notify.telegram.chat_id;
-            document.getElementById('not_tg_proxy').value = config.notify.telegram.proxy || '';
+            setCheckedValue('not_tg_enabled', telegramConfig.enabled);
+            setInputValue('not_tg_bot_token', telegramConfig.bot_token);
+            setInputValue('not_tg_chat_id', telegramConfig.chat_id);
+            setInputValue('not_tg_proxy', telegramConfig.proxy || '');
             
             // 填充 Notify Bark
-            document.getElementById('not_bark_enabled').checked = config.notify.bark.enabled;
-            document.getElementById('not_bark_server').value = config.notify.bark.server;
-            document.getElementById('not_bark_device_key').value = config.notify.bark.device_key;
-            document.getElementById('not_bark_enc_key').value = config.notify.bark.encryption_key || '';
-            document.getElementById('not_bark_enc_iv').value = config.notify.bark.encryption_iv || '';
-            document.getElementById('not_bark_enc_algo').value = config.notify.bark.encryption_algorithm || 'AES-128-CBC';
+            setCheckedValue('not_bark_enabled', barkConfig.enabled);
+            setInputValue('not_bark_server', barkConfig.server);
+            setInputValue('not_bark_device_key', barkConfig.device_key);
+            setInputValue('not_bark_enc_key', barkConfig.encryption_key || '');
+            setInputValue('not_bark_enc_iv', barkConfig.encryption_iv || '');
+            setInputValue('not_bark_enc_algo', barkConfig.encryption_algorithm || 'AES-128-CBC');
         }
     } catch (e) {
         console.error('Failed to load config', e);
@@ -213,24 +241,24 @@ async function saveNotifyConfig(silent = false) {
     const payload = {
         notify: {
             wecom: {
-                enabled: document.getElementById('not_wecom_enabled').checked,
-                corp_id: document.getElementById('not_wecom_corp_id').value,
-                corp_secret: document.getElementById('not_wecom_corp_secret').value,
-                agent_id: document.getElementById('not_wecom_agent_id').value
+                enabled: getCheckedValue('not_wecom_enabled', false),
+                corp_id: getInputValue('not_wecom_corp_id', ''),
+                corp_secret: getInputValue('not_wecom_corp_secret', ''),
+                agent_id: getInputValue('not_wecom_agent_id', '')
             },
             telegram: {
-                enabled: document.getElementById('not_tg_enabled').checked,
-                bot_token: document.getElementById('not_tg_bot_token').value,
-                chat_id: document.getElementById('not_tg_chat_id').value,
-                proxy: document.getElementById('not_tg_proxy').value
+                enabled: getCheckedValue('not_tg_enabled', false),
+                bot_token: getInputValue('not_tg_bot_token', ''),
+                chat_id: getInputValue('not_tg_chat_id', ''),
+                proxy: getInputValue('not_tg_proxy', '')
             },
             bark: {
-                enabled: document.getElementById('not_bark_enabled').checked,
-                server: document.getElementById('not_bark_server').value,
-                device_key: document.getElementById('not_bark_device_key').value,
-                encryption_key: document.getElementById('not_bark_enc_key').value,
-                encryption_iv: document.getElementById('not_bark_enc_iv').value,
-                encryption_algorithm: document.getElementById('not_bark_enc_algo').value
+                enabled: getCheckedValue('not_bark_enabled', false),
+                server: getInputValue('not_bark_server', ''),
+                device_key: getInputValue('not_bark_device_key', ''),
+                encryption_key: getInputValue('not_bark_enc_key', ''),
+                encryption_iv: getInputValue('not_bark_enc_iv', ''),
+                encryption_algorithm: getInputValue('not_bark_enc_algo', 'AES-128-CBC')
             }
         }
     };

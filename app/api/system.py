@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Request, HTTPException
 from app.config import get_config, update_config
 from app.events import task_tracker
 from pydantic import BaseModel
@@ -14,11 +14,12 @@ from app.services.telegram_service import (
     TelegramValidationError,
     get_monitor_status,
     restart_monitor,
-    scrape_monitor_history,
-    sync_configured_channels,
-    sync_single_channel,
     test_monitor_connection,
     validate_monitor_request,
+)
+from app.services.telegram_history_sync_service import (
+    TelegramHistorySyncRequest,
+    telegram_history_sync_service,
 )
 
 class TelegramTestRequest(BaseModel):
@@ -35,6 +36,13 @@ class TelegramScrapeRequest(BaseModel):
     proxy: str = ""
     channels: List[str] = []
     keywords: List[str] = []
+    mode: str = "relative_range"
+    relative_value: int = 6
+    relative_unit: str = "months"
+    date_start: str = ""
+    date_end: str = ""
+    chunk_days: int = 7
+    emit_events: bool = False
 
 
 class TelegramSyncChannelRequest(TelegramScrapeRequest):
@@ -113,9 +121,28 @@ async def test_telegram_monitor(req: TelegramTestRequest):
     except Exception as e:
         return {"status": "error", "message": f"测试失败: {str(e)}"}
 
+def _build_history_sync_request(req: TelegramScrapeRequest, *, source: str) -> TelegramHistorySyncRequest:
+    return TelegramHistorySyncRequest(
+        api_id=req.api_id,
+        api_hash=req.api_hash,
+        bot_token=req.bot_token,
+        proxy=req.proxy,
+        channels=req.channels,
+        keywords=req.keywords,
+        mode=req.mode,
+        relative_value=req.relative_value,
+        relative_unit=req.relative_unit,
+        date_start=req.date_start,
+        date_end=req.date_end,
+        chunk_days=req.chunk_days,
+        emit_events=req.emit_events,
+        source=source,
+    )
+
+
 @router.post("/scrape-monitor/telegram")
-async def scrape_telegram_monitor(req: TelegramScrapeRequest, background_tasks: BackgroundTasks):
-    """手动触发：根据关键字抓取频道的历史消息并提取链接排队转存"""
+async def scrape_telegram_monitor(req: TelegramScrapeRequest):
+    """兼容旧入口：投递 Telegram 历史同步任务。"""
     try:
         validate_monitor_request(
             req.api_id,
@@ -126,16 +153,10 @@ async def scrape_telegram_monitor(req: TelegramScrapeRequest, background_tasks: 
     except TelegramValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    background_tasks.add_task(
-        scrape_monitor_history,
-        req.api_id,
-        req.api_hash,
-        req.bot_token,
-        req.proxy,
-        req.channels,
-        req.keywords,
+    return telegram_history_sync_service.queue_history_sync_request(
+        _build_history_sync_request(req, source="manual"),
+        name="telegram_history_sync:manual",
     )
-    return {"status": "success", "message": "全量历史消息抓取任务已加入后台！\n匹配到的资源链接将自动进入排队系统，并按照防封控频率（间隔 3 秒）依次转存。您可以去主日志查看实时抓取和转存进度。"}
 
 
 @router.get("/telegram/status")
@@ -152,15 +173,26 @@ async def restart_telegram_monitor():
 @router.post("/telegram/sync")
 async def sync_telegram_monitor(req: TelegramScrapeRequest):
     try:
-        return await sync_configured_channels(
+        return telegram_history_sync_service.queue_history_sync_request(
+            _build_history_sync_request(req, source="manual"),
+            name="telegram_history_sync:manual",
+        )
+    except TelegramValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/telegram/history-sync")
+async def history_sync_telegram_monitor(req: TelegramScrapeRequest):
+    try:
+        validate_monitor_request(
             req.api_id,
             req.api_hash,
-            bot_token=req.bot_token,
-            proxy=req.proxy,
-            channels=req.channels,
-            keywords=req.keywords,
-            emit_events=True,
-            startup_mode="incremental",
+            req.channels,
+            empty_channels_message="未配置任何监听频道，无法抓取",
+        )
+        return telegram_history_sync_service.queue_history_sync_request(
+            _build_history_sync_request(req, source="manual"),
+            name="telegram_history_sync:manual",
         )
     except TelegramValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -169,14 +201,26 @@ async def sync_telegram_monitor(req: TelegramScrapeRequest):
 @router.post("/telegram/sync-channel")
 async def sync_telegram_monitor_channel(req: TelegramSyncChannelRequest):
     try:
-        return await sync_single_channel(
-            req.api_id,
-            req.api_hash,
-            bot_token=req.bot_token,
-            proxy=req.proxy,
-            channels=req.channels,
-            keywords=req.keywords,
-            channel_ref=req.channel_ref,
+        return telegram_history_sync_service.queue_history_sync_request(
+            _build_history_sync_request(
+                TelegramScrapeRequest(
+                    api_id=req.api_id,
+                    api_hash=req.api_hash,
+                    bot_token=req.bot_token,
+                    proxy=req.proxy,
+                    channels=[req.channel_ref],
+                    keywords=req.keywords,
+                    mode=req.mode,
+                    relative_value=req.relative_value,
+                    relative_unit=req.relative_unit,
+                    date_start=req.date_start,
+                    date_end=req.date_end,
+                    chunk_days=req.chunk_days,
+                    emit_events=req.emit_events,
+                ),
+                source="manual",
+            ),
+            name=f"telegram_history_sync:channel:{req.channel_ref}",
         )
     except TelegramValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

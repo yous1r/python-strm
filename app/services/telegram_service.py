@@ -8,6 +8,7 @@ from app.core.monitor.telegram import telegram_monitor
 from app.core.monitor.telegram_runtime import (
     build_telegram_client,
     extract_message_text,
+    extract_message_torrent_files,
     parse_channel_reference,
     parse_channels,
 )
@@ -229,6 +230,7 @@ async def sync_configured_channels(
     startup_mode: str = "incremental",
     limit: int | None = None,
 ) -> dict[str, object]:
+    """抓取历史消息"""
     normalized_channels = validate_monitor_request(
         api_id,
         api_hash,
@@ -288,6 +290,7 @@ async def _acquire_client(
 
 async def _dispatch_scraped_message(channel: int | str, message, *, emit_events: bool = True) -> list[dict]:
     text = extract_message_text(message)
+    torrent_files = extract_message_torrent_files(message)
     message_channel_id = getattr(message, "chat_id", None)
     persisted_channel_id = str(message_channel_id) if message_channel_id is not None else str(channel)
     resources = await telegram_monitor.ingest_message(
@@ -295,6 +298,7 @@ async def _dispatch_scraped_message(channel: int | str, message, *, emit_events:
         message_id=message.id,
         channel_id=persisted_channel_id,
         msg_date=str(message.date),
+        torrent_files=torrent_files,
     )
 
     if emit_events:

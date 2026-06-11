@@ -111,11 +111,12 @@ async def test_dispatch_scraped_message_prefers_message_chat_id(monkeypatch):
         date = None
         chat_id = -1009876543210
 
-    async def fake_ingest_message(text, message_id=None, channel_id=None, msg_date=None):
+    async def fake_ingest_message(text, message_id=None, channel_id=None, msg_date=None, torrent_files=None):
         captured["text"] = text
         captured["message_id"] = message_id
         captured["channel_id"] = channel_id
         captured["msg_date"] = msg_date
+        captured["torrent_files"] = torrent_files
         return []
 
     monkeypatch.setattr("app.services.telegram_service.telegram_monitor.ingest_message", fake_ingest_message)
@@ -125,6 +126,7 @@ async def test_dispatch_scraped_message_prefers_message_chat_id(monkeypatch):
     assert resources == []
     assert captured["message_id"] == 9
     assert captured["channel_id"] == "-1009876543210"
+    assert captured["torrent_files"] == []
 
 
 @pytest.mark.asyncio

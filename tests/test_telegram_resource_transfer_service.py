@@ -3,6 +3,51 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.services.telegram_resource_transfer_service import normalize_resource_payload
+
+
+def test_normalize_resource_payload_filters_promo_urls_and_falls_back_to_real_share_link():
+    payload = normalize_resource_payload(
+        {
+            "id": 7,
+            "link": "https://tgstat.ru/channel/@demo",
+            "disk_type": "url",
+            "password": "",
+            "resource_links": [
+                {"url": "https://tgstat.ru/channel/@demo", "raw_url": "https://tgstat.ru/channel/@demo", "type": "url", "password": ""},
+                {"url": "https://115.com/s/abc", "raw_url": "https://115.com/s/abc?password=9x8y", "type": "115", "password": "9x8y"},
+                {"url": "https://example.com/jump", "raw_url": "https://example.com/jump", "type": "url", "password": ""},
+            ],
+            "magnet_links": ["magnet:?xt=urn:btih:FACEB00C"],
+        }
+    )
+
+    assert payload["type"] == "115"
+    assert payload["disk_type"] == "115"
+    assert payload["url"] == "https://115.com/s/abc"
+    assert payload["password"] == "9x8y"
+    assert payload["url_links"] == ["https://115.com/s/abc?password=9x8y"]
+    assert payload["resource_count"] == 1
+
+
+def test_normalize_resource_payload_clears_invalid_plain_url_when_no_real_resource_exists():
+    payload = normalize_resource_payload(
+        {
+            "id": 8,
+            "link": "https://example.com/promo",
+            "disk_type": "url",
+            "password": "abcd",
+            "resource_links": [{"url": "https://example.com/promo", "raw_url": "https://example.com/promo", "type": "url", "password": "abcd"}],
+        }
+    )
+
+    assert payload["type"] == "url"
+    assert payload["url"] == ""
+    assert payload["link"] == ""
+    assert payload["password"] == ""
+    assert payload["resource_links"] == []
+    assert payload["resource_count"] == 0
+
 
 @pytest.mark.asyncio
 async def test_process_resource_transfer_uses_series_folder_id_without_falling_back_to_temp_dir(monkeypatch):

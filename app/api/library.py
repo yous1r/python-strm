@@ -8,6 +8,7 @@ from loguru import logger
 
 from app.database import get_db_conn, insert_tg_resource
 from app.core.monitor.telegram import telegram_monitor
+from app.services.telegram_resource_transfer_service import normalize_resource_payload
 
 
 
@@ -15,11 +16,13 @@ router = APIRouter(prefix="/library", tags=["Resource Library"])
 
 @router.get("/tg_resources")
 async def get_tg_resources(page: int = 1, page_size: int = 20, search: str = ""):
+    page = max(page, 1)
+    page_size = min(max(page_size, 1), 100)
     offset = (page - 1) * page_size
     params = []
     
-    # 获取唯一的 base_title 列表（带分页）
-    base_query = "SELECT base_title, MAX(poster_url) as poster_url, MAX(overview) as overview, MAX(cast_text) as cast_text, COUNT(*) as ep_count, MAX(msg_date) as last_updated FROM tg_resources"
+    # 首页只返回分组摘要，避免把每个资源分组下的所有剧集一次性查询并渲染到 DOM。
+    base_query = "SELECT base_title, MAX(poster_url) as poster_url, MAX(overview) as overview, COUNT(*) as ep_count, MAX(msg_date) as last_updated FROM tg_resources"
     if search:
         base_query += " WHERE title LIKE ? OR raw_text LIKE ?"
         params.extend([f"%{search}%", f"%{search}%"])
@@ -41,19 +44,55 @@ async def get_tg_resources(page: int = 1, page_size: int = 20, search: str = "")
         cursor = await db.execute(base_query, params)
         groups = await cursor.fetchall()
         
-        # 针对每个 group 拉取对应的所有剧集
-        for group in groups:
-            b_title = group['base_title']
-            cursor = await db.execute("SELECT * FROM tg_resources WHERE base_title = ? ORDER BY msg_date DESC", (b_title,))
-            group['episodes'] = await cursor.fetchall()
-            
-    return {"status": "success", "data": groups, "total": total, "page": page, "page_size": page_size}
+    has_more = page * page_size < total
+    return {
+        "status": "success",
+        "data": groups,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "has_more": has_more,
+    }
+
+@router.get("/tg_resources/episodes")
+async def get_tg_resource_episodes(base_title: str):
+    """按需加载某个资源分组下的全部剧集/资源条目。"""
+    async with get_db_conn() as db:
+        db.row_factory = dict_factory
+        cursor = await db.execute(
+            """
+            SELECT base_title, MAX(poster_url) as poster_url, MAX(overview) as overview,
+                   COUNT(*) as ep_count, MAX(msg_date) as last_updated
+            FROM tg_resources
+            WHERE base_title = ?
+            GROUP BY base_title
+            """,
+            (base_title,)
+        )
+        group = await cursor.fetchone()
+        if not group:
+            raise HTTPException(404, "资源不存在")
+
+        cursor = await db.execute(
+            "SELECT * FROM tg_resources WHERE base_title = ? ORDER BY msg_date DESC, id DESC",
+            (base_title,)
+        )
+        episodes = await cursor.fetchall()
+
+    return {"status": "success", "data": group, "episodes": episodes}
 
 def dict_factory(cursor, row):
     d = {}
     for idx, col in enumerate(cursor.description):
         d[col[0]] = row[idx]
     return d
+
+
+def _normalize_transfer_rows(rows: list[dict]) -> tuple[list[dict], int]:
+    normalized_rows = [normalize_resource_payload(dict(row)) for row in rows]
+    transferable_rows = [row for row in normalized_rows if row.get("type") == "115" and row.get("url")]
+    skipped_count = len(normalized_rows) - len(transferable_rows)
+    return transferable_rows, skipped_count
 
 @router.post("/upload_json")
 async def upload_tg_json(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
@@ -98,9 +137,9 @@ async def upload_tg_json(background_tasks: BackgroundTasks, file: UploadFile = F
                                 # 把隐藏的超链接暴露在纯文本里，让后续的 extract_links 能正则捕获到
                                 if part.get('href'):
                                     raw_text += f" {part['href']} "
-                    
-                    links = telegram_monitor.extract_links(raw_text)
-                    if not links:
+
+                    resource_summary = telegram_monitor.summarize_resources(raw_text)
+                    if not resource_summary:
                         continue
                     
                     title = extract_title_from_text(raw_text)
@@ -110,22 +149,26 @@ async def upload_tg_json(background_tasks: BackgroundTasks, file: UploadFile = F
                     guessed = guessit(title)
                     base_title = guessed.get("title") or title
                     poster_url = None
-                
-                    for link_data in links:
-                        resource = {
-                            "message_id": msg_id,
-                            "channel_id": ch_id,
-                            "title": title,
-                            "raw_text": raw_text,
-                            "link": link_data["url"],
-                            "password": link_data["password"],
-                            "disk_type": link_data["type"],
-                            "msg_date": msg_date,
-                            "status": "pending",
-                            "base_title": base_title,
-                            "poster_url": poster_url
-                        }
-                        await insert_tg_resource(db, resource)
+
+                    resource = {
+                        "message_id": msg_id,
+                        "channel_id": ch_id,
+                        "title": title,
+                        "raw_text": raw_text,
+                        "link": resource_summary["link"],
+                        "password": resource_summary["password"],
+                        "disk_type": resource_summary["disk_type"],
+                        "msg_date": msg_date,
+                        "status": "pending",
+                        "base_title": base_title,
+                        "poster_url": poster_url,
+                        "resource_links": json.dumps(resource_summary["resource_links"], ensure_ascii=False),
+                        "url_links": json.dumps(resource_summary["url_links"], ensure_ascii=False),
+                        "magnet_links": json.dumps(resource_summary["magnet_links"], ensure_ascii=False),
+                        "torrent_files": json.dumps(resource_summary["torrent_files"], ensure_ascii=False),
+                        "resource_count": resource_summary["resource_count"],
+                    }
+                    await insert_tg_resource(db, resource)
                     
                     # 避免长事务锁表
                     if i > 0 and i % 200 == 0:
@@ -148,14 +191,18 @@ async def manual_transfer(res_id: int):
         row = await cursor.fetchone()
         if not row:
             raise HTTPException(404, "资源不存在")
+
+        normalized_row = normalize_resource_payload(dict(row))
+        if normalized_row.get("type") != "115" or not normalized_row.get("url"):
+            raise HTTPException(400, "当前资源缺少可转存的 115 网盘链接")
             
         await db.execute("UPDATE tg_resources SET status = 'queued' WHERE id = ?", (res_id,))
         await db.commit()
         
     link_data = {
-        "url": row["link"],
-        "password": row["password"],
-        "type": row["disk_type"],
+        "url": normalized_row["url"],
+        "password": normalized_row["password"],
+        "type": normalized_row["type"],
         "db_id": res_id,  # 传入 db_id 以便转存成功后更新状态
         "ignore_filters": True
     }
@@ -171,9 +218,13 @@ async def transfer_batch(base_title: str = Form(...)):
         db.row_factory = dict_factory
         cursor = await db.execute("SELECT * FROM tg_resources WHERE base_title = ? AND status IN ('pending', 'failed')", (base_title,))
         rows = await cursor.fetchall()
+        rows, skipped_count = _normalize_transfer_rows(rows)
         
         if not rows:
-            return {"status": "success", "message": "没有需要转存的剧集"}
+            message = "没有可转存的 115 网盘剧集"
+            if skipped_count:
+                message += f"，已跳过 {skipped_count} 条无效或非 115 链接"
+            return {"status": "success", "message": message}
             
         # 先批量更新状态
         ids = [r['id'] for r in rows]
@@ -200,7 +251,10 @@ async def transfer_batch(base_title: str = Form(...)):
         name=f"batch_transfer:{task_id}",
     )
         
-    return {"status": "success", "task_id": task_id, "message": f"已将 {len(rows)} 个资源加入转存队列"}
+    message = f"已将 {len(rows)} 个资源加入转存队列"
+    if skipped_count:
+        message += f"，已跳过 {skipped_count} 条无效或非 115 链接"
+    return {"status": "success", "task_id": task_id, "message": message}
 
 class TransferSelectedRequest(BaseModel):
     ids: List[int]
@@ -234,9 +288,14 @@ async def transfer_selected(req: TransferSelectedRequest):
             rows = await cursor.fetchall()
         else:
             return {"status": "error", "message": "未指定资源"}
+
+        rows, skipped_count = _normalize_transfer_rows(rows)
         
         if not rows:
-            return {"status": "success", "message": "所选资源均已转存，无需重复操作"}
+            message = "所选资源中没有可转存的 115 网盘链接"
+            if skipped_count:
+                message += f"，已跳过 {skipped_count} 条无效或非 115 链接"
+            return {"status": "success", "message": message}
 
         # 更新状态
         actual_ids = [r['id'] for r in rows]
@@ -268,7 +327,10 @@ async def transfer_selected(req: TransferSelectedRequest):
     return {
         "status": "success",
         "task_id": task_id,
-        "message": f"已将 {len(rows)} 集 ({req.base_title}) 加入转存队列"
+        "message": (
+            f"已将 {len(rows)} 集 ({req.base_title}) 加入转存队列"
+            + (f"，已跳过 {skipped_count} 条无效或非 115 链接" if skipped_count else "")
+        )
     }
 
 @router.post("/migrate_legacy")

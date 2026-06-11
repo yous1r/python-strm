@@ -1,6 +1,6 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from app.config import AppConfig, MonitorConfig, TelegramConfig
 
@@ -24,9 +24,13 @@ class StartupBootstrapTests(unittest.IsolatedAsyncioTestCase):
             calls.append("db")
             return {"status": "ok"}
 
-        async def fake_telegram_sync(*args, **kwargs):
-            calls.append(("telegram", kwargs.get("startup_mode")))
-            return {"status": "ok"}
+        def fake_build_request_for_startup():
+            calls.append("telegram:build")
+            return SimpleNamespace(source="startup")
+
+        def fake_queue_history_sync_request(request, *, name):
+            calls.append(("telegram:queue", name, request.source))
+            return {"status": "success", "queued": True, "task_id": "tg-1"}
 
         async def fake_sync_task(force=False):
             calls.append(("strm", force))
@@ -52,17 +56,19 @@ class StartupBootstrapTests(unittest.IsolatedAsyncioTestCase):
 
         with patch("app.services.startup_bootstrap_service.get_config", lambda: config), \
              patch("app.services.startup_bootstrap_service.sync_all_configured", fake_db_sync), \
-             patch("app.services.startup_bootstrap_service.sync_configured_channels", fake_telegram_sync), \
+             patch("app.services.startup_bootstrap_service.telegram_history_sync_service.build_request_for_startup", fake_build_request_for_startup), \
+             patch("app.services.startup_bootstrap_service.telegram_history_sync_service.queue_history_sync_request", fake_queue_history_sync_request), \
              patch("app.services.startup_bootstrap_service.sync_engine.run_sync_task", fake_sync_task):
             result = await run_startup_pipeline()
 
         self.assertEqual(result["status"], "success")
-        self.assertEqual(calls, ["db", ("telegram", "incremental"), ("strm", False)])
+        self.assertEqual(calls, ["db", "telegram:build", ("telegram:queue", "telegram_history_sync:startup", "startup"), ("strm", False)])
 
     async def test_run_startup_pipeline_skips_disabled_telegram_step(self):
         from app.services.startup_bootstrap_service import run_startup_pipeline
 
-        telegram_sync = AsyncMock()
+        build_request_mock = Mock()
+        queue_request_mock = Mock()
         strm_sync = AsyncMock(return_value={"status": "ok"})
 
         config = AppConfig(
@@ -84,12 +90,14 @@ class StartupBootstrapTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch("app.services.startup_bootstrap_service.get_config", lambda: config), \
-             patch("app.services.startup_bootstrap_service.sync_configured_channels", telegram_sync), \
+             patch("app.services.startup_bootstrap_service.telegram_history_sync_service.build_request_for_startup", build_request_mock), \
+             patch("app.services.startup_bootstrap_service.telegram_history_sync_service.queue_history_sync_request", queue_request_mock), \
              patch("app.services.startup_bootstrap_service.sync_engine.run_sync_task", strm_sync):
             result = await run_startup_pipeline()
 
         self.assertEqual(result["status"], "success")
-        telegram_sync.assert_not_awaited()
+        build_request_mock.assert_not_called()
+        queue_request_mock.assert_not_called()
         strm_sync.assert_awaited_once_with(force=False)
 
 

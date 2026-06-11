@@ -88,10 +88,10 @@
         </div>
     </div> -->
     <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-top: 1rem;">
-        <button class="btn btn-primary" onclick="saveTransferConfig()">
-            <i class="fa-solid fa-floppy-disk"></i> 保存配置并热加载
+        <button class="btn btn-primary" id="saveTransferBtn" onclick="saveTransferConfig()">
+            <i class="fa-solid fa-floppy-disk"></i> 保存本页全部配置并热加载
         </button>
-        <span style="color: var(--text-secondary); font-size: 0.8rem;">关闭管道后也需要点击保存才会生效。日常转存操作请前往 <a href="/library" style="color: var(--accent-primary);">资源图鉴</a></span>
+        <span style="color: var(--text-secondary); font-size: 0.8rem;">该按钮会统一保存当前页面的管道开关与分类规则。关闭管道后也需要点击保存才会生效。日常转存操作请前往 <a href="/library" style="color: var(--accent-primary);">资源图鉴</a></span>
     </div>
 </div>
 
@@ -204,6 +204,36 @@ let currentTaskId = null;
 let currentStatusFilter = null;
 let currentTaskDetail = null;
 let currentCategories = [];
+
+function getElement(id) {
+    return document.getElementById(id);
+}
+
+function setInputValue(id, value = '') {
+    const el = getElement(id);
+    if (el) el.value = value;
+}
+
+function setCheckedValue(id, value = false) {
+    const el = getElement(id);
+    if (el) el.checked = Boolean(value);
+}
+
+function getInputValue(id, fallback = '') {
+    const el = getElement(id);
+    return el ? el.value : fallback;
+}
+
+function getCheckedValue(id, fallback = false) {
+    const el = getElement(id);
+    return el ? el.checked : fallback;
+}
+
+function setDisplayValue(id, value) {
+    const el = getElement(id);
+    if (el) el.style.display = value;
+}
+
 const DEFAULT_TRANSFER_CATEGORIES = [
     {name: '电影', subcategories: ['国产=国产电影', '欧美=欧美电影', '日韩=日韩电影', '其他=其他']},
     {name: '剧集', subcategories: ['国产=国产剧集', '欧美=欧美剧集', '日韩=日韩剧集', '其他=其他']},
@@ -229,22 +259,24 @@ async function loadTransferConfig() {
         const cfg = await res.json();
         if (!cfg.transfer) return;
         const t = cfg.transfer;
-        document.getElementById('cfg_enabled').checked = t.enabled;
-        document.getElementById('cfg_archive_dir').value = t.archive_dir_id || '';
-        document.getElementById('cfg_inbox_dir').value = t.inbox_dir_id || '0';
-        document.getElementById('cfg_auto_strm').checked = t.auto_strm !== false;
+        setCheckedValue('cfg_enabled', t.enabled);
+        setInputValue('cfg_archive_dir', t.archive_dir_id || '');
+        setInputValue('cfg_inbox_dir', t.inbox_dir_id || '0');
+        setCheckedValue('cfg_auto_strm', t.auto_strm !== false);
         currentCategories = Array.isArray(t.categories) ? t.categories : DEFAULT_TRANSFER_CATEGORIES.map(c => ({...c, subcategories: [...c.subcategories]}));
         renderCategoryRules();
-        document.getElementById('configFields').style.display = t.enabled ? 'block' : 'none';
+        setDisplayValue('configFields', t.enabled ? 'block' : 'none');
     } catch(e) {}
 }
 
 function toggleConfig() {
-    document.getElementById('configFields').style.display = document.getElementById('cfg_enabled').checked ? 'block' : 'none';
+    setDisplayValue('configFields', getCheckedValue('cfg_enabled', false) ? 'block' : 'none');
 }
 
 function openDirPickerFor(fieldId) {
-    window.openDirectoryPicker((id) => { document.getElementById(fieldId).value = id; }, '115');
+    window.openDirectoryPicker((id) => {
+        setInputValue(fieldId, id);
+    }, '115');
 }
 
 function renderCategoryRules() {
@@ -309,13 +341,20 @@ function clearCategoryRules() {
 }
 
 async function saveTransferConfig() {
+    const btn = getElement('saveTransferBtn');
+    const originalHtml = btn ? btn.innerHTML : '';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 保存中...';
+    }
+
     const payload = {
         transfer: {
-            enabled: document.getElementById('cfg_enabled').checked,
-            archive_dir_id: document.getElementById('cfg_archive_dir').value,
-            inbox_dir_id: document.getElementById('cfg_inbox_dir').value || '0',
+            enabled: getCheckedValue('cfg_enabled', false),
+            archive_dir_id: getInputValue('cfg_archive_dir', ''),
+            inbox_dir_id: getInputValue('cfg_inbox_dir', '0') || '0',
             auto_organize: false,
-            auto_strm: document.getElementById('cfg_auto_strm').checked,
+            auto_strm: getCheckedValue('cfg_auto_strm', true),
             categories: collectCategoryRules()
         }
     };
@@ -327,12 +366,29 @@ async function saveTransferConfig() {
         });
         if (res.ok) {
             showToast('配置已保存并热加载', 'success');
+            if (btn) {
+                btn.innerHTML = '<i class="fa-solid fa-check"></i> 保存成功！已热加载';
+                btn.style.background = 'var(--success)';
+                setTimeout(() => {
+                    btn.disabled = false;
+                    btn.innerHTML = originalHtml;
+                    btn.style.background = '';
+                }, 2000);
+            }
         } else {
             const err = await res.json();
             showToast('保存失败: ' + (err.detail || '未知错误'), 'error');
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
         }
     } catch(e) {
         showToast('网络错误: ' + e.message, 'error');
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        }
     }
 }
 

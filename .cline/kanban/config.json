@@ -13,6 +13,17 @@
   ]
 }
 
+// curl -X POST https://rawchat.cn/codex/v1/response \
+//   -H "Authorization: Bearer sk-9Q8fE57yxSsOB6XSDyPC4VpcEHjYi3VL" \
+//   -H "Content-Type: application/json" \
+//   -d '{
+//     "model": "gpt-5.4",
+//     "messages": [
+//       {"role": "user", "content": "你好，请用一句话输出：测试成功。"}
+//     ],
+//     "temperature": 0
+//   }'
+
 // curl -X POST http://10.24.0.142:8787/v1/chat/completions \
 //   -H "Authorization: Bearer sk-615bbb7e71b5ab6c83265efe7463f2116c7afc329e6c51a9829e6f49f169f50f" \
 //   -H "Content-Type: application/json" \

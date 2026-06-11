@@ -1,7 +1,12 @@
 from types import SimpleNamespace
 
 from app.config import TelegramConfig
-from app.core.monitor.telegram_runtime import extract_message_text, parse_channel_reference
+from app.core.monitor.telegram import TelegramMonitor
+from app.core.monitor.telegram_runtime import (
+    extract_message_text,
+    extract_message_torrent_files,
+    parse_channel_reference,
+)
 
 
 def test_telegram_config_defaults_for_monitor_runtime():
@@ -39,3 +44,58 @@ def test_extract_message_text_prefers_field_with_share_link():
     )
 
     assert "https://115cdn.com/s/sws6cdk3npm?password=8888#" in extract_message_text(message)
+
+
+def test_extract_message_text_merges_multiple_resource_inputs():
+    message = SimpleNamespace(
+        text="剧名A\nhttps://115.com/s/abc?password=1234\nmagnet:?xt=urn:btih:DEADBEEF",
+        raw_text="剧名A\nhttps://115.com/s/abc?password=1234\nmagnet:?xt=urn:btih:DEADBEEF",
+        message="剧名A",
+        entities=[SimpleNamespace(url="https://www.123pan.com/s/demo-demo.html?Pwd=qwer")],
+        buttons=[[SimpleNamespace(url="https://example.com/detail")]],
+        media=SimpleNamespace(webpage=SimpleNamespace(url="https://example.org/fallback")),
+    )
+
+    text = extract_message_text(message)
+    assert "https://115.com/s/abc?password=1234" in text
+    assert "magnet:?xt=urn:btih:DEADBEEF" in text
+    assert "https://www.123pan.com/s/demo-demo.html?Pwd=qwer" in text
+    assert "https://example.com/detail" in text
+    assert "https://example.org/fallback" in text
+
+
+def test_extract_message_torrent_files_supports_document_attributes():
+    message = SimpleNamespace(
+        file=None,
+        document=SimpleNamespace(
+            mime_type="application/x-bittorrent",
+            size=2048,
+            attributes=[SimpleNamespace(file_name="资源合集.torrent")],
+        ),
+    )
+
+    assert extract_message_torrent_files(message) == [
+        {"name": "资源合集.torrent", "mime_type": "application/x-bittorrent", "size": 2048}
+    ]
+
+
+def test_summarize_resources_filters_non_resource_urls_and_keeps_torrent_files():
+    monitor = TelegramMonitor()
+
+    summary = monitor.summarize_resources(
+        "剧名B https://115.com/s/abc?password=1234 https://www.123pan.com/s/demo-demo.html?Pwd=qwer magnet:?xt=urn:btih:FACEB00C https://example.com/ref?from=tg",
+        torrent_files=[{"name": "剧名B.torrent", "mime_type": "application/x-bittorrent", "size": 128}],
+    )
+
+    assert summary is not None
+    assert summary["link"] == "https://115.com/s/abc"
+    assert summary["disk_type"] == "115"
+    assert summary["password"] == "1234"
+    assert summary["resource_count"] == 4
+    assert summary["magnet_links"] == ["magnet:?xt=urn:btih:FACEB00C"]
+    assert summary["url_links"] == [
+        "https://115.com/s/abc?password=1234",
+        "https://www.123pan.com/s/demo-demo.html?Pwd=qwer",
+    ]
+    assert summary["torrent_files"][0]["name"] == "剧名B.torrent"
+    assert all(item["type"] != "url" for item in summary["resource_links"])

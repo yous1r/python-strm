@@ -1,4 +1,6 @@
 import asyncio
+import json
+import re
 
 from loguru import logger
 
@@ -16,6 +18,105 @@ from app.database import get_db_conn
 
 transfer_semaphore = asyncio.Semaphore(1)
 
+_SUPPORTED_LINK_PRIORITY = {"115": 0, "123": 1, "magnet": 2}
+
+
+def _clean_resource_url(url: str) -> str:
+    return (url or "").strip().rstrip('.,);!>')
+
+
+def _detect_resource_type(url: str) -> str:
+    normalized_url = _clean_resource_url(url)
+    if re.match(r'^https?://115(?:cdn)?\.com/s/\w+(?:\?[^\s"\'<>]+)?$', normalized_url, re.IGNORECASE):
+        return "115"
+    if re.match(r'^https?://(?:www\.)?123pan\.com/s/\w+-\w+\.html(?:\?[^\s"\'<>]+)?$', normalized_url, re.IGNORECASE):
+        return "123"
+    if normalized_url.lower().startswith("magnet:?"):
+        return "magnet"
+    return ""
+
+
+def _normalize_resource_link_item(item: dict | None) -> dict | None:
+    candidate = dict(item or {})
+    raw_candidates = [candidate.get("raw_url"), candidate.get("url"), candidate.get("link")]
+    normalized_raw_url = ""
+    resolved_type = ""
+
+    for raw_url in raw_candidates:
+        normalized = _clean_resource_url(raw_url)
+        detected_type = _detect_resource_type(normalized)
+        if detected_type:
+            normalized_raw_url = normalized
+            resolved_type = detected_type
+            break
+
+    if not resolved_type:
+        return None
+
+    clean_url = normalized_raw_url
+    password = str(candidate.get("password") or "")
+    if resolved_type == "115":
+        pwd_match = re.search(r'password=([a-zA-Z0-9]+)', normalized_raw_url)
+        if pwd_match:
+            password = pwd_match.group(1)
+        clean_url = normalized_raw_url.split('?', 1)[0]
+    elif resolved_type == "123":
+        pwd_match = re.search(r'Pwd=([a-zA-Z0-9]+)', normalized_raw_url, re.IGNORECASE)
+        if pwd_match:
+            password = pwd_match.group(1)
+        clean_url = normalized_raw_url.split('?', 1)[0]
+    else:
+        password = ""
+
+    return {
+        "url": clean_url,
+        "raw_url": normalized_raw_url,
+        "password": password,
+        "type": resolved_type,
+    }
+
+
+def _normalize_resource_links(resource_links: list[dict] | None) -> list[dict]:
+    normalized: list[dict] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in resource_links or []:
+        normalized_item = _normalize_resource_link_item(item)
+        if not normalized_item:
+            continue
+        key = (
+            normalized_item.get("type", ""),
+            normalized_item.get("url", ""),
+            normalized_item.get("raw_url", ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(normalized_item)
+    return normalized
+
+
+def _normalize_torrent_files(torrent_files: list[dict] | None) -> list[dict]:
+    normalized: list[dict] = []
+    seen: set[tuple[str, str, int | None]] = set()
+    for torrent_file in torrent_files or []:
+        item = {
+            "name": (torrent_file.get("name") or "unknown.torrent").strip(),
+            "mime_type": (torrent_file.get("mime_type") or "").strip().lower(),
+            "size": torrent_file.get("size"),
+        }
+        key = (item["name"], item["mime_type"], item["size"])
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(item)
+    return normalized
+
+
+def _pick_preferred_link(resource_links: list[dict]) -> dict | None:
+    if not resource_links:
+        return None
+    return min(resource_links, key=lambda item: _SUPPORTED_LINK_PRIORITY.get(item.get("type", ""), 999))
+
 
 def normalize_resource_payload(resource: dict | None) -> dict:
     payload = dict(resource or {})
@@ -29,6 +130,49 @@ def normalize_resource_payload(resource: dict | None) -> dict:
         payload["type"] = payload.get("disk_type")
     if not payload.get("disk_type") and payload.get("type"):
         payload["disk_type"] = payload.get("type")
+    for field in ("resource_links", "url_links", "magnet_links", "torrent_files"):
+        value = payload.get(field)
+        if isinstance(value, str) and value:
+            try:
+                payload[field] = json.loads(value)
+            except json.JSONDecodeError:
+                pass
+
+    resource_links = _normalize_resource_links(payload.get("resource_links"))
+    fallback_link = _normalize_resource_link_item(payload)
+    if fallback_link and not any(
+        item.get("type") == fallback_link.get("type") and item.get("url") == fallback_link.get("url")
+        for item in resource_links
+    ):
+        resource_links.append(fallback_link)
+
+    torrent_files = _normalize_torrent_files(payload.get("torrent_files"))
+    preferred_link = _pick_preferred_link(resource_links)
+
+    payload["resource_links"] = resource_links
+    payload["url_links"] = [item["raw_url"] for item in resource_links if item.get("type") in {"115", "123"}]
+    payload["magnet_links"] = [item["url"] for item in resource_links if item.get("type") == "magnet"]
+    payload["torrent_files"] = torrent_files
+
+    if preferred_link:
+        payload["url"] = preferred_link.get("url", "")
+        payload["link"] = preferred_link.get("url", "")
+        payload["password"] = preferred_link.get("password", "")
+        payload["type"] = preferred_link.get("type", "")
+        payload["disk_type"] = preferred_link.get("type", "")
+    elif torrent_files:
+        first_torrent = torrent_files[0]
+        payload["url"] = first_torrent.get("name", "unknown.torrent")
+        payload["link"] = payload["url"]
+        payload["password"] = ""
+        payload["type"] = "torrent"
+        payload["disk_type"] = "torrent"
+    elif not _detect_resource_type(payload.get("url") or payload.get("link") or ""):
+        payload["url"] = ""
+        payload["link"] = ""
+        payload["password"] = ""
+
+    payload["resource_count"] = len(resource_links) + len(torrent_files)
     payload.setdefault("status", "pending")
     return payload
 

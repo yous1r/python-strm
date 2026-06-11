@@ -93,8 +93,90 @@
 
 <script>
     let currentSearchResults = [];
+    const SEARCH_SETTINGS_STORAGE_KEY = 'resource-search-settings-v1';
+
+    function loadSearchSettings() {
+        try {
+            const raw = localStorage.getItem(SEARCH_SETTINGS_STORAGE_KEY);
+            if (!raw) return {};
+            const parsed = JSON.parse(raw);
+            return parsed && typeof parsed === 'object' ? parsed : {};
+        } catch (e) {
+            console.warn('Failed to load search settings from localStorage', e);
+            return {};
+        }
+    }
+
+    function saveSearchSettings(settings) {
+        try {
+            localStorage.setItem(SEARCH_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+        } catch (e) {
+            console.warn('Failed to save search settings to localStorage', e);
+        }
+    }
+
+    function collectSearchSettings() {
+        return {
+            keyword: document.getElementById('keyword')?.value || '',
+            sourceType: document.getElementById('sourceType')?.value || 'all',
+            linkTypeFilters: Array.from(document.querySelectorAll('.link-type-filter:checked')).map(cb => cb.value),
+            selectedPlugins: Array.from(document.querySelectorAll('.plugin-checkbox:checked')).map(cb => cb.value),
+            pluginPanelExpanded: document.getElementById('pluginListContainer')?.style.display === 'flex'
+        };
+    }
+
+    function persistSearchSettings() {
+        saveSearchSettings(collectSearchSettings());
+    }
+
+    function applyStoredBaseSettings() {
+        const settings = loadSearchSettings();
+        if (typeof settings.keyword === 'string') {
+            document.getElementById('keyword').value = settings.keyword;
+        }
+        if (typeof settings.sourceType === 'string' && settings.sourceType) {
+            document.getElementById('sourceType').value = settings.sourceType;
+        }
+        if (Array.isArray(settings.linkTypeFilters) && settings.linkTypeFilters.length > 0) {
+            document.querySelectorAll('.link-type-filter').forEach(cb => {
+                cb.checked = settings.linkTypeFilters.includes(cb.value);
+            });
+        }
+    }
+
+    function applyStoredPluginSettings() {
+        const settings = loadSearchSettings();
+        const pluginCheckboxes = Array.from(document.querySelectorAll('.plugin-checkbox'));
+        if (pluginCheckboxes.length === 0) return;
+
+        if (Array.isArray(settings.selectedPlugins)) {
+            const selectedSet = new Set(settings.selectedPlugins);
+            pluginCheckboxes.forEach(cb => {
+                cb.checked = selectedSet.has(cb.value);
+            });
+        }
+
+        pluginCheckboxes.forEach(cb => {
+            cb.addEventListener('change', persistSearchSettings);
+        });
+
+        if (settings.pluginPanelExpanded) {
+            const container = document.getElementById('pluginListContainer');
+            if (container && container.style.display === 'none') {
+                togglePluginContainer();
+            }
+        }
+    }
 
     document.addEventListener('DOMContentLoaded', async () => {
+        applyStoredBaseSettings();
+
+        document.getElementById('keyword').addEventListener('input', persistSearchSettings);
+        document.getElementById('sourceType').addEventListener('change', persistSearchSettings);
+        document.querySelectorAll('.link-type-filter').forEach(cb => {
+            cb.addEventListener('change', persistSearchSettings);
+        });
+
         try {
             const res = await fetch('/api/v1/search/plugins');
             const data = await res.json();
@@ -115,6 +197,8 @@
                     label.innerHTML = `<input type="checkbox" class="plugin-checkbox" value="${p.id}" checked> ${p.name}`;
                     container.appendChild(label);
                 });
+                applyStoredPluginSettings();
+                persistSearchSettings();
             }
         } catch (e) {
             console.error("Failed to load plugins:", e);
@@ -136,12 +220,14 @@
             icon.classList.remove('fa-chevron-up');
             icon.classList.add('fa-chevron-down');
         }
+        persistSearchSettings();
     }
 
     function selectAllPlugins(select) {
         document.querySelectorAll('.plugin-checkbox').forEach(cb => {
             cb.checked = select;
         });
+        persistSearchSettings();
     }
 
     async function savePluginConfig() {
@@ -189,6 +275,7 @@
         btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 搜索中';
         loading.style.display = 'block';
         container.innerHTML = '';
+        persistSearchSettings();
         
         try {
             // Collect selected plugins
@@ -221,6 +308,7 @@
         const container = document.getElementById('resultsContainer');
         container.innerHTML = '';
         const allowedTypes = Array.from(document.querySelectorAll('.link-type-filter:checked')).map(cb => cb.value);
+        persistSearchSettings();
 
         if (currentSearchResults.length > 0) {
             let displayedCount = 0;

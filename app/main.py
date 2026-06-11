@@ -1,31 +1,42 @@
+from contextlib import asynccontextmanager
+import os
+
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
-from contextlib import asynccontextmanager
-import os
 
 from app.config import get_config
-from app.database import init_db
-from app.utils.logger import setup_logger
-from app.utils.scheduler import start_scheduler, stop_scheduler, add_job
-
-# 初始化日志
-logger = setup_logger()
 
 from app.core.monitor.telegram import telegram_monitor
 from app.core.monitor.handler import init_handlers
+from app.core.sync.engine import sync_engine
+from app.core.emby.standalone_proxy import restart_standalone_proxy, stop_standalone_proxy
+from app.core.transfer import init_transfer_pipeline
+
+from app.database import init_db
+
+from app.events import spawn_task
+
+from app.services.telegram_background_service import telegram_background_sync_service
+from app.services.telegram_history_sync_service import init_telegram_history_sync_events
+from app.services.startup_bootstrap_service import run_startup_pipeline
 from app.services.cloud115_full_sync_service import (
     cloud115_full_sync_service,
     init_cloud115_full_sync_events,
 )
-from app.services.telegram_background_service import telegram_background_sync_service
-from app.core.sync.engine import sync_engine
 
-from app.core.emby.standalone_proxy import restart_standalone_proxy, stop_standalone_proxy
-from app.core.transfer import init_transfer_pipeline
-from app.events import spawn_task
-from app.services.startup_bootstrap_service import run_startup_pipeline
+from app.utils.logger import setup_logger
+from app.utils.scheduler import start_scheduler, stop_scheduler, add_job
+
+from app.api.debug import router as debug_router
+from app.api.library import router as library_router
+from app.api import cloud115, cloud123, strm, organize, search, web, system, transfer
+
+# 初始化日志
+logger = setup_logger()
+
+config = get_config()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -36,6 +47,7 @@ async def lifespan(app: FastAPI):
     
     # init_handlers()
     init_cloud115_full_sync_events()
+    init_telegram_history_sync_events()
     # init_transfer_pipeline()
 
     config = get_config()
@@ -59,18 +71,18 @@ async def lifespan(app: FastAPI):
     if config.monitor.startup_pipeline.enabled:
         spawn_task(run_startup_pipeline(), name="startup_pipeline")
 
-    if config.monitor.telegram.enabled:
-        spawn_task(telegram_monitor.start(), name="telegram_monitor")
-        
+    # 实时抓取telegram 频道消息
+    spawn_task(telegram_monitor.start(), name="telegram_monitor")
+
+    # 第三方客户端代理    
     spawn_task(restart_standalone_proxy(), name="standalone_proxy")
         
     yield
     # 关闭时执行
     logger.info("Shutting down Python-STRM application...")
     await stop_standalone_proxy()
+    await telegram_monitor.stop()
     stop_scheduler()
-    if config.monitor.telegram.enabled:
-        await telegram_monitor.stop()
 
 app = FastAPI(
     title="Python-STRM 影视管理平台",
@@ -81,8 +93,6 @@ app = FastAPI(
 
 # 挂载静态文件
 os.makedirs("app/web/static", exist_ok=True)
-from app.api import cloud115, cloud123, strm, organize, search, web, system, transfer
-from app.api.debug import router as debug_router
 
 app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
 
@@ -96,6 +106,11 @@ templates = Jinja2Templates(directory="app/web/templates")
 async def library_page(request: Request):
     return templates.TemplateResponse(request, "library.html", {"title": "资源图鉴"})
 
+
+@app.get("/library/detail", response_class=HTMLResponse)
+async def library_detail_page(request: Request):
+    return templates.TemplateResponse(request, "library_detail.html", {"title": "资源详情"})
+
 # 注册各类路由
 app.include_router(cloud115.router)
 app.include_router(cloud123.router)
@@ -103,11 +118,10 @@ app.include_router(strm.router)
 app.include_router(organize.router, prefix="/api/v1")
 app.include_router(search.router, prefix="/api/v1")
 app.include_router(system.router, prefix="/api/v1")
-from app.api.library import router as library_router
-app.include_router(library_router, prefix="/api/v1")
 app.include_router(transfer.router)
-app.include_router(debug_router)
 app.include_router(web.router)
+app.include_router(library_router, prefix="/api/v1")
+app.include_router(debug_router)
 
 if __name__ == "__main__":
     import uvicorn

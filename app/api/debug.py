@@ -10,6 +10,7 @@ from app.core.transfer.scope import init_scope, validate, expand_allowed_dirs
 from app.config import get_config
 from app.services.cloud115_full_sync_service import cloud115_full_sync_service
 from app.services.telegram_background_service import telegram_background_sync_service
+from app.services.telegram_history_sync_service import telegram_history_sync_service
 
 router = APIRouter(prefix="/api/v1/debug", tags=["调试"])
 
@@ -48,6 +49,18 @@ async def trigger_telegram_latest_transfer():
     result = await telegram_background_sync_service.run_scheduled_sync()
     return {
         "success": result.get("status") != "failed",
+        **result,
+    }
+
+
+@router.post("/telegram/history-sync")
+async def trigger_telegram_history_sync_debug():
+    result = telegram_history_sync_service.queue_history_sync_request(
+        telegram_history_sync_service.build_request_from_config(source="debug"),
+        name="telegram_history_sync:debug",
+    )
+    return {
+        "success": True,
         **result,
     }
 

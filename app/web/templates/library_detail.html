@@ -1,0 +1,346 @@
+{% extends "base.html" %}
+
+{% block subtitle %}资源详情与剧集列表{% endblock %}
+
+{% block content %}
+<div class="glass-panel animate-fade-in delay-1" style="margin-bottom: 2rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem;">
+        <div>
+            <a href="/library" style="display: inline-flex; align-items: center; gap: 0.5rem; color: var(--accent-primary); text-decoration: none; margin-bottom: 0.75rem;">
+                <i class="fa-solid fa-arrow-left"></i>
+                <span>返回资源图鉴</span>
+            </a>
+            <h2 id="detailTitle" style="margin: 0;">资源详情</h2>
+        </div>
+        <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
+            <button id="transferBatchBtn" class="btn btn-primary" onclick="transferBatch(this)" disabled>
+                <i class="fa-solid fa-layer-group"></i> 整剧转存
+            </button>
+            <button id="transferSelectedBtn" class="btn btn-secondary" onclick="transferSelected(this)" disabled>
+                <i class="fa-solid fa-check-double"></i> 转存选中
+            </button>
+        </div>
+    </div>
+
+    <div id="detailSummary" style="display: grid; grid-template-columns: 140px 1fr; gap: 1.25rem; align-items: start; margin-bottom: 1.5rem;">
+        <div style="width: 140px; height: 210px; border-radius: 14px; overflow: hidden; background: rgba(255,255,255,0.04); box-shadow: 0 6px 18px rgba(0,0,0,0.22);">
+            <img id="detailPoster" alt="资源海报" style="width: 100%; height: 100%; object-fit: cover; display: block;">
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 1rem; min-width: 0;">
+            <div style="display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center;">
+                <span id="detailCount" class="badge" style="background: rgba(255,255,255,0.1);">0 集</span>
+                <span id="selectedCount" style="color: var(--accent-primary); font-size: 0.9rem;">已选 0</span>
+            </div>
+            <p id="detailOverview" style="margin: 0; color: var(--text-secondary); line-height: 1.8;">正在加载简介...</p>
+        </div>
+    </div>
+
+    <div style="padding: 0.85rem 1rem; border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; background: rgba(255,255,255,0.03); display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem;">
+        <label style="font-size: 0.9rem; color: var(--text-secondary); cursor: pointer; display: inline-flex; align-items: center; gap: 0.5rem;">
+            <input type="checkbox" id="selectAllCheck" onchange="toggleSelectAll(this)">
+            全选可转存剧集
+        </label>
+        <span style="font-size: 0.85rem; color: var(--text-secondary);">剧集列表按滚动懒渲染，减少一次性创建过多 DOM</span>
+    </div>
+
+    <div id="episodesContainer" style="display: flex; flex-direction: column; gap: 0.75rem;"></div>
+    <div id="episodesLoadMoreTrigger" style="height: 1px;"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const POSTER_PLACEHOLDER = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNjAiIGhlaWdodD0iMjQ0Ij4KICA8cmVjdCB3aWR0aD0iMTYwIiBoZWlnaHQ9IjI0NCIgZmlsbD0iIzJkMzc0OCIvPgogIDx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmaWxsPSIjYTBhZWMwIiBmb250LWZhbWlseT0ic2Fucy1zZXJpZiIgZm9udC1zaXplPSIxNiI+Tm8gSW1hZ2U8L3RleHQ+Cjwvc3ZnPg==';
+const EPISODE_BATCH_SIZE = 30;
+
+let currentBaseTitle = '';
+let currentEpisodes = [];
+let renderedEpisodeCount = 0;
+let detailObserver = null;
+let selectedEpisodeIds = new Set();
+let selectAllActive = false;
+
+function escapeHtml(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function getThumbnailPoster(url, size = 'w185') {
+    if (!url) return POSTER_PLACEHOLDER;
+    if (url.includes('image.tmdb.org/t/p/')) {
+        return url.replace(/\/t\/p\/(w\d+|original)\//, `/t/p/${size}/`);
+    }
+    return url;
+}
+
+function getStatusMeta(status) {
+    if (status === 'success') return { text: '已存', color: '#10b981' };
+    if (status === 'queued') return { text: '排队', color: 'var(--accent-primary)' };
+    if (status === 'failed') return { text: '失败', color: '#ef4444' };
+    return { text: '待转', color: 'var(--text-secondary)' };
+}
+
+function disconnectDetailObserver() {
+    if (detailObserver) {
+        detailObserver.disconnect();
+        detailObserver = null;
+    }
+}
+
+function renderEpisodeRow(row) {
+    const meta = getStatusMeta(row.status);
+    const disabled = row.status === 'queued' || row.status === 'success';
+    const title = escapeHtml(row.title || '未命名资源');
+    const checked = !disabled && (selectAllActive || selectedEpisodeIds.has(row.id));
+    const updatedAt = escapeHtml(row.msg_date || '');
+    return `
+        <div class="glass-panel" style="padding: 0; overflow: hidden;">
+            <div style="padding: 0.95rem 1rem; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1rem; align-items: center; ${disabled ? 'opacity: 0.58;' : ''}">
+                <label style="display: flex; align-items: flex-start; gap: 0.75rem; min-width: 0; cursor: ${disabled ? 'not-allowed' : 'pointer'};">
+                    <input type="checkbox" class="ep-check" data-id="${row.id}" ${disabled ? 'disabled' : ''} ${checked ? 'checked' : ''} style="margin-top: 0.2rem;">
+                    <span style="display: flex; flex-direction: column; gap: 0.3rem; min-width: 0;">
+                        <span style="line-height: 1.65; word-break: break-word; color: var(--text-primary);">${title}</span>
+                        <span style="font-size: 0.78rem; color: var(--text-secondary);">更新时间：${updatedAt || '未知'}</span>
+                    </span>
+                </label>
+                <div style="display: flex; align-items: center; gap: 0.75rem; justify-content: flex-end; flex-wrap: wrap;">
+                    <span style="color: ${meta.color}; font-size: 0.85rem; white-space: nowrap;">${meta.text}</span>
+                    <button class="btn btn-secondary" style="padding: 0.35rem 0.65rem; font-size: 0.8rem; white-space: nowrap;" onclick="transferResource(${row.id}, this)" ${disabled ? 'disabled' : ''}>
+                    <i class="fa-solid fa-cloud-arrow-up"></i>
+                    <span>转存</span>
+                </button>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function renderNextEpisodeBatch() {
+    const container = document.getElementById('episodesContainer');
+    if (!container || renderedEpisodeCount >= currentEpisodes.length) {
+        disconnectDetailObserver();
+        return;
+    }
+
+    const slice = currentEpisodes.slice(renderedEpisodeCount, renderedEpisodeCount + EPISODE_BATCH_SIZE);
+    const fragment = document.createRange().createContextualFragment(slice.map(renderEpisodeRow).join(''));
+    container.appendChild(fragment);
+    renderedEpisodeCount += slice.length;
+
+    if (renderedEpisodeCount >= currentEpisodes.length) {
+        disconnectDetailObserver();
+    }
+}
+
+function setupEpisodeLazyRender() {
+    disconnectDetailObserver();
+    const trigger = document.getElementById('episodesLoadMoreTrigger');
+    if (!trigger || renderedEpisodeCount >= currentEpisodes.length) {
+        return;
+    }
+
+    detailObserver = new IntersectionObserver((entries) => {
+        if (entries.some(entry => entry.isIntersecting)) {
+            renderNextEpisodeBatch();
+        }
+    }, { rootMargin: '240px 0px' });
+
+    detailObserver.observe(trigger);
+}
+
+function updateSelectedCount() {
+    const availableIds = currentEpisodes
+        .filter(item => item.status !== 'queued' && item.status !== 'success')
+        .map(item => item.id);
+    const selectedCount = selectAllActive ? availableIds.length : selectedEpisodeIds.size;
+    document.getElementById('selectedCount').textContent = `已选 ${selectedCount}`;
+    document.getElementById('selectAllCheck').checked = availableIds.length > 0 && selectedCount === availableIds.length;
+}
+
+function toggleSelectAll(checkbox) {
+    selectAllActive = checkbox.checked;
+    const checks = document.querySelectorAll('.ep-check:not([disabled])');
+    checks.forEach(item => {
+        item.checked = checkbox.checked;
+        const id = Number(item.dataset.id);
+        if (checkbox.checked) {
+            selectedEpisodeIds.add(id);
+        } else {
+            selectedEpisodeIds.delete(id);
+        }
+    });
+
+    if (checkbox.checked) {
+        currentEpisodes.forEach(item => {
+            if (item.status !== 'queued' && item.status !== 'success') {
+                selectedEpisodeIds.add(item.id);
+            }
+        });
+    } else {
+        selectedEpisodeIds.clear();
+    }
+
+    updateSelectedCount();
+}
+
+document.addEventListener('change', (event) => {
+    if (event.target.classList.contains('ep-check')) {
+        const id = Number(event.target.dataset.id);
+        if (event.target.checked) {
+            selectedEpisodeIds.add(id);
+        } else {
+            selectedEpisodeIds.delete(id);
+            selectAllActive = false;
+        }
+        updateSelectedCount();
+    }
+});
+
+async function loadLibraryDetail() {
+    const params = new URLSearchParams(window.location.search);
+    currentBaseTitle = params.get('base_title') || '';
+
+    if (!currentBaseTitle) {
+        document.getElementById('episodesContainer').innerHTML = '<div style="padding: 2rem; text-align: center; color: #ef4444;">缺少资源名称，无法加载详情</div>';
+        return;
+    }
+
+    document.getElementById('detailTitle').textContent = currentBaseTitle;
+    document.getElementById('episodesContainer').innerHTML = '<div style="padding: 2rem; text-align: center;">加载中...</div>';
+
+    try {
+        const res = await fetch(`/api/v1/library/tg_resources/episodes?base_title=${encodeURIComponent(currentBaseTitle)}`);
+        const data = await res.json();
+
+        if (data.status !== 'success') {
+            throw new Error(data.message || '加载失败');
+        }
+
+        const group = data.data || {};
+        currentEpisodes = data.episodes || [];
+        renderedEpisodeCount = 0;
+        selectedEpisodeIds = new Set();
+        selectAllActive = false;
+
+        document.getElementById('detailTitle').textContent = group.base_title || currentBaseTitle;
+        document.getElementById('detailPoster').src = getThumbnailPoster(group.poster_url, 'w185');
+        document.getElementById('detailPoster').onerror = function () { this.src = POSTER_PLACEHOLDER; };
+        document.getElementById('detailCount').textContent = `${group.ep_count || currentEpisodes.length || 0} 集`;
+        document.getElementById('detailOverview').textContent = group.overview || '暂无内容简介';
+        document.getElementById('transferBatchBtn').disabled = currentEpisodes.length === 0;
+        document.getElementById('transferSelectedBtn').disabled = currentEpisodes.length === 0;
+
+        const container = document.getElementById('episodesContainer');
+        container.innerHTML = '';
+
+        if (currentEpisodes.length === 0) {
+            container.innerHTML = '<div style="padding: 2rem; text-align: center; color: var(--text-secondary);">暂无剧集数据</div>';
+            return;
+        }
+
+        renderNextEpisodeBatch();
+        setupEpisodeLazyRender();
+        updateSelectedCount();
+    } catch (error) {
+        document.getElementById('episodesContainer').innerHTML = `<div style="padding: 2rem; text-align: center; color: #ef4444;">${escapeHtml(error.message || '详情加载失败')}</div>`;
+    }
+}
+
+async function transferResource(id, btn) {
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>投递中</span>';
+
+    try {
+        const res = await fetch('/api/v1/library/transfer_selected', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: [id], base_title: currentBaseTitle })
+        });
+        const data = await res.json();
+
+        if (data.status === 'success') {
+            showToast('已加入转存队列', 'success');
+            setTimeout(loadLibraryDetail, 800);
+            return;
+        }
+
+        throw new Error(data.message || '转存失败');
+    } catch (error) {
+        showToast(error.message || '网络错误', 'error');
+        btn.disabled = false;
+        btn.innerHTML = original;
+    }
+}
+
+async function transferSelected(btn) {
+    const ids = Array.from(selectedEpisodeIds);
+    if (ids.length === 0) {
+        showToast('请先勾选需要转存的剧集', 'warning');
+        return;
+    }
+
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 投递中...';
+
+    try {
+        const res = await fetch('/api/v1/library/transfer_selected', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids, base_title: currentBaseTitle })
+        });
+        const data = await res.json();
+
+        if (data.status !== 'success') {
+            throw new Error(data.message || '转存失败');
+        }
+
+        showToast('已加入转存队列', 'success');
+        if (data.task_id) {
+            window.open(`/transfer?task=${data.task_id}`, '_blank');
+        }
+        setTimeout(loadLibraryDetail, 1000);
+    } catch (error) {
+        showToast(error.message || '网络错误', 'error');
+        btn.disabled = false;
+        btn.innerHTML = original;
+    }
+}
+
+async function transferBatch(btn) {
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 投递中...';
+
+    try {
+        const res = await fetch('/api/v1/library/transfer_selected', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: [], base_title: currentBaseTitle, transfer_all: true })
+        });
+        const data = await res.json();
+
+        if (data.status !== 'success') {
+            throw new Error(data.message || '转存失败');
+        }
+
+        showToast(data.message || '已加入转存队列', 'success');
+        if (data.task_id) {
+            window.open(`/transfer?task=${data.task_id}`, '_blank');
+        }
+        setTimeout(loadLibraryDetail, 1000);
+    } catch (error) {
+        showToast(error.message || '网络错误', 'error');
+        btn.disabled = false;
+        btn.innerHTML = original;
+    }
+}
+
+document.addEventListener('DOMContentLoaded', loadLibraryDetail);
+</script>
+{% endblock %}

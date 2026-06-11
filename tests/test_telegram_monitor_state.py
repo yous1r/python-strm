@@ -1,4 +1,5 @@
 import pytest
+import json
 
 from app.database import (
     get_db_conn,
@@ -27,11 +28,18 @@ async def test_insert_tg_resource_is_unique_per_channel_message_link(tmp_path):
         "link": "https://115.com/s/abc",
         "password": "",
         "disk_type": "115",
+        "resource_links": json.dumps([{"url": "https://115.com/s/abc", "type": "115", "password": ""}], ensure_ascii=False),
+        "url_links": json.dumps(["https://115.com/s/abc"], ensure_ascii=False),
+        "magnet_links": json.dumps([], ensure_ascii=False),
+        "torrent_files": json.dumps([], ensure_ascii=False),
+        "resource_count": 1,
     }
 
     async with get_db_conn() as db:
-        assert await insert_tg_resource(db, resource) is True
-        assert await insert_tg_resource(db, resource) is False
+        inserted = await insert_tg_resource(db, resource)
+        assert inserted is not None
+        assert inserted["resource_count"] == 1
+        assert await insert_tg_resource(db, resource) is None
         await db.commit()
 
 
@@ -52,16 +60,31 @@ async def test_insert_tg_resource_is_unique_per_channel_message_even_with_differ
         "link": "https://115.com/s/abc",
         "password": "",
         "disk_type": "115",
+        "resource_links": json.dumps([{"url": "https://115.com/s/abc", "type": "115", "password": ""}], ensure_ascii=False),
+        "url_links": json.dumps(["https://115.com/s/abc"], ensure_ascii=False),
+        "magnet_links": json.dumps([], ensure_ascii=False),
+        "torrent_files": json.dumps([], ensure_ascii=False),
+        "resource_count": 1,
     }
     second = {
         **first,
         "link": "https://www.123pan.com/s/demo-demo.html",
         "disk_type": "123",
+        "resource_links": json.dumps([
+            {"url": "https://115.com/s/abc", "type": "115", "password": ""},
+            {"url": "https://www.123pan.com/s/demo-demo.html", "type": "123", "password": ""},
+        ], ensure_ascii=False),
+        "url_links": json.dumps([
+            "https://115.com/s/abc",
+            "https://www.123pan.com/s/demo-demo.html",
+        ], ensure_ascii=False),
+        "resource_count": 2,
     }
 
     async with get_db_conn() as db:
-        assert await insert_tg_resource(db, first) is True
-        assert await insert_tg_resource(db, second) is False
+        inserted = await insert_tg_resource(db, first)
+        assert inserted is not None
+        assert await insert_tg_resource(db, second) is None
         await db.commit()
 
 

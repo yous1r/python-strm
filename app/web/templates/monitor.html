@@ -3,111 +3,166 @@
 {% block subtitle %}统一管理 Telegram 频道资源自动监控节点{% endblock %}
 
 {% block content %}
-<div class="glass-panel animate-fade-in delay-1" style="max-width: 800px; margin-bottom: 2rem;">
-    <h2 style="margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: space-between;">
-        <span style="display: flex; align-items: center; gap: 1rem;">
-            <i class="fa-solid fa-satellite-dish"></i> Telegram 监控节点设置
-            <button type="button" class="btn btn-secondary" style="padding: 0.3rem 0.8rem; font-size: 0.9rem;" onclick="testTgMonitor(this)">
-                <i class="fa-solid fa-plug-circle-check"></i> 测试连通性
-            </button>
-            <button type="button" class="btn btn-secondary" style="padding: 0.3rem 0.8rem; font-size: 0.9rem; color: var(--accent); border-color: var(--accent);" onclick="scrapeTgMonitor(this)">
-                <i class="fa-solid fa-clock-rotate-left"></i> 抓取历史消息
-            </button>
-        </span>
-        <label class="switch">
-            <input type="checkbox" id="mon_tg_enabled">
-            <span class="slider round"></span>
-        </label>
-    </h2>
-    <form id="monitorForm">
-        <div class="form-group">
-            <label class="form-label">API ID (来自 my.telegram.org)</label>
-            <input type="text" id="mon_tg_api_id" class="form-control" placeholder="1234567">
-        </div>
-        <div class="form-group">
-            <label class="form-label">API Hash</label>
-            <input type="password" id="mon_tg_api_hash" class="form-control" placeholder="xxxxxxxxxxxxxxxxxxxxxx">
-        </div>
-        <div class="form-group">
-            <label class="form-label">Bot Token (可选，若不填则作为 Userbot 运行，需进终端手动扫码登录)</label>
-            <input type="password" id="mon_tg_bot_token" class="form-control" placeholder="123456789:ABCdefGHIjklmNoPqrsTuvwxyZ">
-        </div>
-        <div class="form-group">
-            <label class="form-label">Proxy 代理 (可选, 如 http://127.0.0.1:7890)</label>
-            <input type="text" id="mon_tg_proxy" class="form-control" placeholder="http://127.0.0.1:7890">
-        </div>
-        <div class="form-group">
-            <label class="form-label">监听频道列表 (每行一个，支持直接粘贴完整的消息链接)</label>
-            <textarea id="mon_tg_channels" class="form-control" rows="3" placeholder="https://t.me/c/123456789/100&#10;https://t.me/share_channel_name&#10;-1001234567890"></textarea>
-        </div>
-        <div class="form-group">
-            <label class="form-label">消息关键字过滤 (可选，每行一个。Telegram消息包含任意关键字即处理)</label>
-            <textarea id="mon_tg_keywords" class="form-control" rows="3" placeholder="蓝光&#10;洗版"></textarea>
-        </div>
-        <div class="form-group">
-            <label class="form-label">启动时历史同步模式</label>
-            <select id="mon_tg_startup_sync" class="form-control">
-                <option value="disabled">禁用</option>
-                <option value="latest">仅抓取最近窗口</option>
-                <option value="incremental">按频道增量同步</option>
-            </select>
-            <div style="margin-top: 0.5rem; color: var(--text-secondary); font-size: 0.9rem;">
-                应用启动后是否自动补抓 Telegram 历史消息。推荐配合下方“启动编排”一起使用。
-            </div>
-        </div>
-        <div class="form-group">
-            <label class="form-label">资源匹配过滤规则 (可选，正则表达式，每行一个。仅转存115分享链接内文件名匹配的资源)</label>
-            <div style="display: flex; gap: 0.5rem; flex-direction: column;">
-                <textarea id="mon_tg_filter_rules" class="form-control" rows="3" placeholder="1080p&#10;.*S01.*"></textarea>
-                <button type="button" class="btn btn-outline" style="align-self: flex-start; padding: 0.3rem 0.6rem; font-size: 0.9rem;" onclick="openTmdbModal()"><i class="fa-solid fa-film"></i> TMDB 可视化配置正则</button>
-            </div>
-        </div>
-        <div style="margin: 1rem 0; padding: 0.85rem 1rem; border: 1px solid var(--border); border-radius: 0.75rem; color: var(--text-secondary); background: rgba(255,255,255,0.03); font-size: 0.9rem;">
-            <i class="fa-solid fa-circle-info"></i>
-            Telegram 自动转存统一使用“媒体库引擎 -> 转存管道”中的归档根目录。除 debug 页面外，不再支持为 Telegram 单独覆盖 `target_dir_id` 或 `archive_dir_id`。
-        </div>
-        <div class="form-group" style="display: flex; align-items: center; gap: 1rem; margin-top: 1rem;">
-            <label class="form-label" style="margin-bottom: 0;">转存整理后自动触发全局 STRM 生成</label>
-            <label class="switch">
-                <input type="checkbox" id="mon_tg_auto_strm">
-                <span class="slider round"></span>
-            </label>
-        </div>
+<div class="glass-panel animate-fade-in delay-1" style="max-width: 800px; margin-bottom: 1.5rem;">
+    <h2 style="margin-bottom: 0.75rem;"><i class="fa-solid fa-satellite-dish"></i> Telegram 监控与同步</h2>
+    <div style="color: var(--text-secondary); font-size: 0.95rem; line-height: 1.7;">
+        在同一页中统一管理实时监听、历史同步与启动编排配置。实时监听开关仅控制新消息监听，不影响历史同步和启动编排参数保存。
+    </div>
+</div>
 
-        <div style="margin: 2rem 0 1rem; padding-top: 1.5rem; border-top: 1px solid var(--border);">
-            <h3 style="margin-bottom: 1rem; display: flex; align-items: center; gap: 0.6rem;">
-                <i class="fa-solid fa-calendar-check"></i> Telegram 后台定时同步
-            </h3>
-            <div style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.95rem;">
-                定时抓取最近 Telegram 消息并批量转存。若未来指定分钟内已经排期执行 115 全链路同步，则跳过额外触发，避免重复运行。
+<div class="tabs" style="max-width: 800px; margin-bottom: 1.5rem;">
+    <button type="button" class="tab-btn active" onclick="switchMonitorTab(event, 'realtime')">
+        <i class="fa-solid fa-tower-broadcast"></i> 实时监听
+    </button>
+    <button type="button" class="tab-btn" onclick="switchMonitorTab(event, 'history')">
+        <i class="fa-solid fa-clock-rotate-left"></i> 历史同步
+    </button>
+    <button type="button" class="tab-btn" onclick="switchMonitorTab(event, 'startup')">
+        <i class="fa-solid fa-rocket"></i> 启动编排
+    </button>
+</div>
+
+<form id="monitorForm">
+    <div id="tab-realtime" class="tab-pane active">
+        <div class="glass-panel animate-fade-in" style="max-width: 800px; margin-bottom: 2rem;">
+            <h2 style="margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
+                <span><i class="fa-solid fa-tower-broadcast"></i> 实时监听</span>
+                <span style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+                    <button type="button" class="btn btn-secondary" onclick="testTgMonitor(this)">
+                        <i class="fa-solid fa-plug-circle-check"></i> 测试连通性
+                    </button>
+                    <span style="display: flex; align-items: center; gap: 0.75rem; color: var(--text-secondary); font-size: 0.95rem;">
+                        <span>启用实时监听</span>
+                        <label class="switch">
+                            <input type="checkbox" id="mon_tg_enabled">
+                            <span class="slider round"></span>
+                        </label>
+                    </span>
+                </span>
+            </h2>
+            <div style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.95rem; line-height: 1.7;">
+                配置 Telegram 实时监听接入信息、频道范围和资源过滤规则。这里的开关只控制实时监听服务本身。
+            </div>
+            <div class="form-group">
+                <label class="form-label">API ID (来自 my.telegram.org)</label>
+                <input type="text" id="mon_tg_api_id" class="form-control" placeholder="1234567">
+            </div>
+            <div class="form-group">
+                <label class="form-label">API Hash</label>
+                <input type="password" id="mon_tg_api_hash" class="form-control" placeholder="xxxxxxxxxxxxxxxxxxxxxx">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Bot Token (可选，若不填则作为 Userbot 运行，需进终端手动扫码登录)</label>
+                <input type="password" id="mon_tg_bot_token" class="form-control" placeholder="123456789:ABCdefGHIjklmNoPqrsTuvwxyZ">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Proxy 代理 (可选, 如 http://127.0.0.1:7890)</label>
+                <input type="text" id="mon_tg_proxy" class="form-control" placeholder="http://127.0.0.1:7890">
+            </div>
+            <div class="form-group">
+                <label class="form-label">监听频道列表 (每行一个，支持直接粘贴完整的消息链接)</label>
+                <textarea id="mon_tg_channels" class="form-control" rows="3" placeholder="https://t.me/c/123456789/100&#10;https://t.me/share_channel_name&#10;-1001234567890"></textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label">消息关键字过滤 (可选，每行一个。Telegram消息包含任意关键字即处理)</label>
+                <textarea id="mon_tg_keywords" class="form-control" rows="3" placeholder="蓝光&#10;洗版"></textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label">资源匹配过滤规则 (可选，正则表达式，每行一个。仅转存115分享链接内文件名匹配的资源)</label>
+                <div style="display: flex; gap: 0.5rem; flex-direction: column;">
+                    <textarea id="mon_tg_filter_rules" class="form-control" rows="3" placeholder="1080p&#10;.*S01.*"></textarea>
+                    <button type="button" class="btn btn-outline" style="align-self: flex-start; padding: 0.3rem 0.6rem; font-size: 0.9rem;" onclick="openTmdbModal()"><i class="fa-solid fa-film"></i> TMDB 可视化配置正则</button>
+                </div>
+            </div>
+            <div style="margin: 1rem 0; padding: 0.85rem 1rem; border: 1px solid var(--border); border-radius: 0.75rem; color: var(--text-secondary); background: rgba(255,255,255,0.03); font-size: 0.9rem;">
+                <i class="fa-solid fa-circle-info"></i>
+                Telegram 自动转存统一使用“媒体库引擎 -> 转存管道”中的归档根目录。除 debug 页面外，不再支持为 Telegram 单独覆盖 `target_dir_id` 或 `archive_dir_id`。
+            </div>
+            <div class="form-group" style="display: flex; align-items: center; gap: 1rem; margin-top: 1rem;">
+                <label class="form-label" style="margin-bottom: 0;">转存整理后自动触发全局 STRM 生成</label>
+                <label class="switch">
+                    <input type="checkbox" id="mon_tg_auto_strm">
+                    <span class="slider round"></span>
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <div id="tab-history" class="tab-pane">
+        <div class="glass-panel animate-fade-in" style="max-width: 800px; margin-bottom: 2rem;">
+            <h2 style="margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
+                <span><i class="fa-solid fa-clock-rotate-left"></i> 历史同步</span>
+                <button type="button" class="btn btn-secondary" style="color: var(--accent); border-color: var(--accent);" onclick="scrapeTgMonitor(this)">
+                    <i class="fa-solid fa-clock-rotate-left"></i> 立即历史同步
+                </button>
+            </h2>
+            <div style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.95rem; line-height: 1.7;">
+                历史同步统一支持全部历史、最近跨度和日期区间三种模式，并按时间窗口分片执行。任务会进入后台队列处理。
+            </div>
+            <div class="form-group">
+                <label class="form-label">同步范围模式</label>
+                <select id="mon_tg_history_mode" class="form-control">
+                    <option value="all">全部历史记录</option>
+                    <option value="relative_range">最近一段时间</option>
+                    <option value="date_range">指定日期区间</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">最近跨度数值</label>
+                <input type="number" id="mon_tg_history_relative_value" class="form-control" min="1" step="1" placeholder="6">
+            </div>
+            <div class="form-group">
+                <label class="form-label">最近跨度单位</label>
+                <select id="mon_tg_history_relative_unit" class="form-control">
+                    <option value="days">天</option>
+                    <option value="weeks">周</option>
+                    <option value="months">月</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">日期区间开始</label>
+                <input type="date" id="mon_tg_history_date_start" class="form-control">
+            </div>
+            <div class="form-group">
+                <label class="form-label">日期区间结束</label>
+                <input type="date" id="mon_tg_history_date_end" class="form-control">
+            </div>
+            <div class="form-group">
+                <label class="form-label">分片窗口天数</label>
+                <input type="number" id="mon_tg_history_chunk_days" class="form-control" min="1" step="1" placeholder="7">
+            </div>
+            <div class="form-group" style="display: flex; align-items: center; gap: 1rem; margin-top: 1rem;">
+                <label class="form-label" style="margin-bottom: 0;">历史同步发出资源事件</label>
+                <label class="switch">
+                    <input type="checkbox" id="mon_tg_history_emit_events">
+                    <span class="slider round"></span>
+                </label>
             </div>
             <div class="form-group" style="display: flex; align-items: center; gap: 1rem; margin-top: 1rem;">
                 <label class="form-label" style="margin-bottom: 0;">启用后台定时同步</label>
                 <label class="switch">
-                    <input type="checkbox" id="mon_tg_scheduled_sync_enabled">
+                    <input type="checkbox" id="mon_tg_history_scheduled_enabled">
                     <span class="slider round"></span>
                 </label>
             </div>
             <div class="form-group">
                 <label class="form-label">后台同步间隔（分钟）</label>
-                <input type="number" id="mon_tg_scheduled_sync_interval_minutes" class="form-control" min="1" step="1" placeholder="5">
+                <input type="number" id="mon_tg_history_scheduled_interval_minutes" class="form-control" min="1" step="1" placeholder="5">
             </div>
             <div class="form-group">
-                <label class="form-label">每轮抓取消息数量上限</label>
-                <input type="number" id="mon_tg_scheduled_sync_limit" class="form-control" min="1" step="1" placeholder="20">
-            </div>
-            <div class="form-group">
-                <label class="form-label">未来多少分钟内已排期 115 全链路同步则跳过追加触发</label>
-                <input type="number" id="mon_tg_full_sync_skip_if_scheduled_within_minutes" class="form-control" min="0" step="1" placeholder="20">
+                <label class="form-label">任务状态观察</label>
+                <div id="tgHistoryTaskHint" style="padding: 0.85rem 1rem; border: 1px solid var(--border); border-radius: 0.75rem; color: var(--text-secondary); background: rgba(255,255,255,0.03); font-size: 0.9rem;">
+                    历史同步会以后台任务方式执行，保存配置或点击“立即历史同步”后，可到系统任务列表观察执行状态。
+                </div>
             </div>
         </div>
+    </div>
 
-        <div style="margin: 2rem 0 1rem; padding-top: 1.5rem; border-top: 1px solid var(--border);">
-            <h3 style="margin-bottom: 1rem; display: flex; align-items: center; gap: 0.6rem;">
-                <i class="fa-solid fa-rocket"></i> 启动编排
-            </h3>
-            <div style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.95rem;">
-                控制服务启动后是否自动执行一次启动流水：115 本地目录缓存同步、Telegram 历史同步、STRM 增量同步。
+    <div id="tab-startup" class="tab-pane">
+        <div class="glass-panel animate-fade-in" style="max-width: 800px; margin-bottom: 2rem;">
+            <h2 style="margin-bottom: 1rem;"><i class="fa-solid fa-rocket"></i> 启动编排</h2>
+            <div style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.95rem; line-height: 1.7;">
+                控制服务启动后是否自动执行全局初始化流水，包括 115 本地缓存同步、Telegram 历史同步与 STRM 增量同步。
             </div>
             <div class="form-group" style="display: flex; align-items: center; gap: 1rem; margin-top: 1rem;">
                 <label class="form-label" style="margin-bottom: 0;">启用启动编排</label>
@@ -138,8 +193,8 @@
                 </label>
             </div>
         </div>
-    </form>
-</div>
+    </div>
+</form>
 
 <div style="max-width: 800px; display: flex; justify-content: flex-end;">
     <button class="btn btn-primary" style="padding: 0.75rem 2rem; font-size: 1.1rem; box-shadow: 0 0 15px rgba(99,102,241,0.4);" onclick="saveMonitorConfig()" id="saveBtn">
@@ -150,6 +205,41 @@
 
 {% block scripts %}
 <style>
+/* CSS Tabs */
+.tabs {
+  display: flex;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+  margin-bottom: 1.5rem;
+}
+.tab-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  padding: 0.75rem 1.25rem;
+  font-size: 1rem;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.3s ease;
+}
+.tab-btn:hover {
+  color: var(--text-primary);
+}
+.tab-btn.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+.tab-pane {
+  display: none;
+  animation: fadeIn 0.3s ease;
+}
+.tab-pane.active {
+  display: block;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 /* iOS Style Toggle Switch */
 .switch {
   position: relative;
@@ -224,6 +314,14 @@ input:checked + .slider:before {
 </div>
 
 <script>
+function switchMonitorTab(event, tabId) {
+    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+    document.querySelectorAll('.tab-pane').forEach(pane => pane.classList.remove('active'));
+
+    event.currentTarget.classList.add('active');
+    document.getElementById('tab-' + tabId).classList.add('active');
+}
+
 function openTmdbModal() {
     document.getElementById('tmdbModal').style.display = 'flex';
     document.getElementById('tmdbSearchKeyword').focus();
@@ -327,13 +425,18 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('mon_tg_proxy').value = config.monitor.telegram.proxy || '';
             document.getElementById('mon_tg_channels').value = (config.monitor.telegram.channels || []).join('\n');
             document.getElementById('mon_tg_keywords').value = (config.monitor.telegram.keywords || []).join('\n');
-            document.getElementById('mon_tg_startup_sync').value = config.monitor.telegram.startup_sync || 'latest';
             document.getElementById('mon_tg_filter_rules').value = (config.monitor.telegram.filter_rules || []).join('\n');
             document.getElementById('mon_tg_auto_strm').checked = config.monitor.telegram.auto_strm;
-            document.getElementById('mon_tg_scheduled_sync_enabled').checked = config.monitor.telegram.scheduled_sync_enabled ?? true;
-            document.getElementById('mon_tg_scheduled_sync_interval_minutes').value = config.monitor.telegram.scheduled_sync_interval_minutes ?? 5;
-            document.getElementById('mon_tg_scheduled_sync_limit').value = config.monitor.telegram.scheduled_sync_limit ?? 20;
-            document.getElementById('mon_tg_full_sync_skip_if_scheduled_within_minutes').value = config.monitor.telegram.full_sync_skip_if_scheduled_within_minutes ?? 20;
+            const tgHistorySync = config.monitor.telegram.history_sync || {};
+            document.getElementById('mon_tg_history_mode').value = tgHistorySync.mode || 'relative_range';
+            document.getElementById('mon_tg_history_relative_value').value = tgHistorySync.relative_value ?? 6;
+            document.getElementById('mon_tg_history_relative_unit').value = tgHistorySync.relative_unit || 'months';
+            document.getElementById('mon_tg_history_date_start').value = tgHistorySync.date_start || '';
+            document.getElementById('mon_tg_history_date_end').value = tgHistorySync.date_end || '';
+            document.getElementById('mon_tg_history_chunk_days').value = tgHistorySync.chunk_days ?? 7;
+            document.getElementById('mon_tg_history_emit_events').checked = tgHistorySync.emit_new_link_events ?? false;
+            document.getElementById('mon_tg_history_scheduled_enabled').checked = tgHistorySync.scheduled_enabled ?? true;
+            document.getElementById('mon_tg_history_scheduled_interval_minutes').value = tgHistorySync.scheduled_interval_minutes ?? 5;
             document.getElementById('mon_startup_pipeline_enabled').checked = config.monitor.startup_pipeline?.enabled || false;
             document.getElementById('mon_startup_run_db_sync').checked = config.monitor.startup_pipeline?.run_db_sync ?? true;
             document.getElementById('mon_startup_run_telegram_sync').checked = config.monitor.startup_pipeline?.run_telegram_sync ?? true;
@@ -364,16 +467,22 @@ async function saveMonitorConfig() {
                 proxy: document.getElementById('mon_tg_proxy').value,
                 channels: tgChannels,
                 keywords: tgKeywords,
-                startup_sync: document.getElementById('mon_tg_startup_sync').value,
                 filter_rules: tgFilterRules,
                 target_dir_id: '0',
                 archive_dir_id: '0',
                 auto_organize: false,
                 auto_strm: document.getElementById('mon_tg_auto_strm').checked,
-                scheduled_sync_enabled: document.getElementById('mon_tg_scheduled_sync_enabled').checked,
-                scheduled_sync_interval_minutes: parseInt(document.getElementById('mon_tg_scheduled_sync_interval_minutes').value, 10) || 5,
-                scheduled_sync_limit: parseInt(document.getElementById('mon_tg_scheduled_sync_limit').value, 10) || 20,
-                full_sync_skip_if_scheduled_within_minutes: parseInt(document.getElementById('mon_tg_full_sync_skip_if_scheduled_within_minutes').value, 10) || 20
+                history_sync: {
+                    mode: document.getElementById('mon_tg_history_mode').value,
+                    relative_value: parseInt(document.getElementById('mon_tg_history_relative_value').value, 10) || 6,
+                    relative_unit: document.getElementById('mon_tg_history_relative_unit').value,
+                    date_start: document.getElementById('mon_tg_history_date_start').value,
+                    date_end: document.getElementById('mon_tg_history_date_end').value,
+                    chunk_days: parseInt(document.getElementById('mon_tg_history_chunk_days').value, 10) || 7,
+                    emit_new_link_events: document.getElementById('mon_tg_history_emit_events').checked,
+                    scheduled_enabled: document.getElementById('mon_tg_history_scheduled_enabled').checked,
+                    scheduled_interval_minutes: parseInt(document.getElementById('mon_tg_history_scheduled_interval_minutes').value, 10) || 5
+                }
             },
             startup_pipeline: {
                 enabled: document.getElementById('mon_startup_pipeline_enabled').checked,
@@ -464,10 +573,10 @@ async function scrapeTgMonitor(btn) {
         return;
     }
     
-    let confirmMsg = `是否立即触发历史消息检索？\n\n- 将对您填写的频道进行全量历史消息/匹配关键字检索。\n- 提取到的分享链接将加入后台队列，间隔 3 秒慢慢转存。\n- 请不要频繁点击此按钮，以免被 115 封控。`;
+    let confirmMsg = `是否立即触发历史同步任务？\n\n- 将按当前页面配置的范围模式进行同步。\n- 历史同步会按频道和时间窗口分片执行。\n- 任务会进入后台队列，可在系统任务列表中查看进度。`;
     
     if (tgKeywords.length === 0) {
-        confirmMsg = `⚠️ 高危操作警告：未配置过滤关键字！\n\n您没有填写任何关键字，这将导致系统对整个频道【从头到尾的所有历史消息】进行无差别全量抓取。\n如果该频道历史悠久，这将会耗费极长时间，并产生海量的转存排队任务。\n\n您确定要继续进行【无差别全量抓取】吗？`;
+        confirmMsg = `⚠️ 未配置关键字过滤。\n\n系统仍会按照您配置的历史范围执行同步，但不会额外按关键字缩小范围。\n若范围模式为“全部历史记录”，任务量可能很大。\n\n确认继续吗？`;
     }
     
     const confirmScrape = await window.customConfirm(confirmMsg);
@@ -482,7 +591,14 @@ async function scrapeTgMonitor(btn) {
         bot_token: document.getElementById('mon_tg_bot_token').value,
         proxy: document.getElementById('mon_tg_proxy').value,
         channels: tgChannels,
-        keywords: tgKeywords
+        keywords: tgKeywords,
+        mode: document.getElementById('mon_tg_history_mode').value,
+        relative_value: parseInt(document.getElementById('mon_tg_history_relative_value').value, 10) || 6,
+        relative_unit: document.getElementById('mon_tg_history_relative_unit').value,
+        date_start: document.getElementById('mon_tg_history_date_start').value,
+        date_end: document.getElementById('mon_tg_history_date_end').value,
+        chunk_days: parseInt(document.getElementById('mon_tg_history_chunk_days').value, 10) || 7,
+        emit_events: document.getElementById('mon_tg_history_emit_events').checked
     };
     
     try {

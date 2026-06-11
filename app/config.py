@@ -103,6 +103,19 @@ class OrganizeConfig(BaseModel):
     wash: WashConfig = WashConfig()
     cloud115: Cloud115OrganizeConfig = Cloud115OrganizeConfig()
 
+
+class TelegramHistorySyncConfig(BaseModel):
+    mode: str = "relative_range"
+    relative_value: int = 6
+    relative_unit: str = "months"
+    date_start: str = ""
+    date_end: str = ""
+    chunk_days: int = 7
+    emit_new_link_events: bool = False
+    scheduled_enabled: bool = True
+    scheduled_interval_minutes: int = 5
+
+
 class TelegramConfig(BaseModel):
     enabled: bool = False
     api_id: str = ""
@@ -117,6 +130,7 @@ class TelegramConfig(BaseModel):
     auto_organize: bool = False
     auto_strm: bool = False
     mode: str = "auto"
+    history_sync: TelegramHistorySyncConfig = TelegramHistorySyncConfig()
     startup_sync: str = "latest"
     history_limit: int = 100
     reconnect_backoff: int = 5
@@ -126,10 +140,11 @@ class TelegramConfig(BaseModel):
     full_sync_skip_if_scheduled_within_minutes: int = 20
 
 class StartupPipelineConfig(BaseModel):
-    enabled: bool = False
-    run_db_sync: bool = True
-    run_telegram_sync: bool = True
-    run_strm_sync: bool = True
+    """启动时工作流执行全局配置"""
+    enabled: bool = False # 全局开关
+    run_db_sync: bool = True  # 是否开启全量同步缓存库 
+    run_telegram_sync: bool = True  # 是否开启Telegram频道监控
+    run_strm_sync: bool = True  # 是否开启STRM生成
 
 class MonitorConfig(BaseModel):
     telegram: TelegramConfig = TelegramConfig()

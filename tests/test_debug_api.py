@@ -102,7 +102,7 @@ def test_debug_page_contains_telegram_latest_transfer_button():
     assert "step10Btn" in response.text
 
 
-def test_monitor_page_contains_telegram_scheduled_sync_fields():
+def test_monitor_page_contains_telegram_tabs_and_history_sync_fields():
     app = FastAPI()
     app.include_router(web_router)
 
@@ -110,7 +110,12 @@ def test_monitor_page_contains_telegram_scheduled_sync_fields():
     response = client.get("/monitor")
 
     assert response.status_code == 200
-    assert "mon_tg_scheduled_sync_enabled" in response.text
-    assert "mon_tg_scheduled_sync_interval_minutes" in response.text
-    assert "mon_tg_scheduled_sync_limit" in response.text
-    assert "mon_tg_full_sync_skip_if_scheduled_within_minutes" in response.text
+    assert "实时监听" in response.text
+    assert "历史同步" in response.text
+    assert "启动编排" in response.text
+    assert "tab-realtime" in response.text
+    assert "tab-history" in response.text
+    assert "tab-startup" in response.text
+    assert "mon_tg_history_mode" in response.text
+    assert "mon_tg_history_scheduled_enabled" in response.text
+    assert "mon_startup_pipeline_enabled" in response.text

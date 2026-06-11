@@ -209,6 +209,30 @@ input:checked + .slider:before {
 
 {% block scripts %}
 <script>
+function getElement(id) {
+    return document.getElementById(id);
+}
+
+function setInputValue(id, value = '') {
+    const el = getElement(id);
+    if (el) el.value = value;
+}
+
+function setCheckedValue(id, value = false) {
+    const el = getElement(id);
+    if (el) el.checked = Boolean(value);
+}
+
+function getInputValue(id, fallback = '') {
+    const el = getElement(id);
+    return el ? el.value : fallback;
+}
+
+function getCheckedValue(id, fallback = false) {
+    const el = getElement(id);
+    return el ? el.checked : fallback;
+}
+
 // --- Tab Logic ---
 function switchTab(tabId) {
     document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -282,25 +306,29 @@ document.addEventListener('DOMContentLoaded', async () => {
         const res = await fetch('/api/v1/system/config');
         if (res.ok) {
             const config = await res.json();
+            const tmdbConfig = config.tmdb || {};
+            const organizeConfig = config.organize || {};
+            const washConfig = organizeConfig.wash || {};
+            const cloud115Config = organizeConfig.cloud115 || {};
             
             // TMDB
-            document.getElementById('tmdb_api_key').value = config.tmdb.api_key || "";
-            document.getElementById('tmdb_language').value = config.tmdb.language || "zh-CN";
-            document.getElementById('tmdb_proxy').value = config.tmdb.proxy || "";
+            setInputValue('tmdb_api_key', tmdbConfig.api_key || '');
+            setInputValue('tmdb_language', tmdbConfig.language || 'zh-CN');
+            setInputValue('tmdb_proxy', tmdbConfig.proxy || '');
             
             // Organize
-            document.getElementById('org_enabled').checked = config.organize.enabled;
+            setCheckedValue('org_enabled', organizeConfig.enabled);
             
             // Wash
-            document.getElementById('wash_dolby').checked = config.organize.wash.prefer_dolby;
-            document.getElementById('wash_larger').checked = config.organize.wash.prefer_larger;
+            setCheckedValue('wash_dolby', washConfig.prefer_dolby);
+            setCheckedValue('wash_larger', washConfig.prefer_larger);
             
             // 115 整理
-            if(config.organize.cloud115) {
-                document.getElementById('cloud115_org_enabled').checked = config.organize.cloud115.enabled;
-                currentSourceDirs = config.organize.cloud115.source_dirs || [];
+            if (cloud115Config) {
+                setCheckedValue('cloud115_org_enabled', cloud115Config.enabled);
+                currentSourceDirs = cloud115Config.source_dirs || [];
                 renderSourceDirs();
-                document.getElementById('cloud115_target_dir').value = config.organize.cloud115.target_dir || "";
+                setInputValue('cloud115_target_dir', cloud115Config.target_dir || '');
             }
         }
     } catch (e) {
@@ -337,27 +365,27 @@ async function testTmdb() {
 // --- 保存配置 ---
 async function saveOrganizeConfig(silent = false) {
     const btn = document.getElementById('saveBtn');
-    if(!silent) {
+    if(!silent && btn) {
         btn.disabled = true;
         btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 保存中...';
     }
         
     const payload = {
         tmdb: {
-            api_key: document.getElementById('tmdb_api_key').value,
-            language: document.getElementById('tmdb_language').value,
-            proxy: document.getElementById('tmdb_proxy').value
+            api_key: getInputValue('tmdb_api_key', ''),
+            language: getInputValue('tmdb_language', 'zh-CN'),
+            proxy: getInputValue('tmdb_proxy', '')
         },
         organize: {
-            enabled: document.getElementById('org_enabled').checked,
+            enabled: getCheckedValue('org_enabled', true),
             wash: {
-                prefer_dolby: document.getElementById('wash_dolby').checked,
-                prefer_larger: document.getElementById('wash_larger').checked
+                prefer_dolby: getCheckedValue('wash_dolby', true),
+                prefer_larger: getCheckedValue('wash_larger', true)
             },
             cloud115: {
-                enabled: document.getElementById('cloud115_org_enabled').checked,
+                enabled: getCheckedValue('cloud115_org_enabled', false),
                 source_dirs: currentSourceDirs,
-                target_dir: document.getElementById('cloud115_target_dir').value
+                target_dir: getInputValue('cloud115_target_dir', '')
             }
         }
     };
@@ -370,7 +398,7 @@ async function saveOrganizeConfig(silent = false) {
         });
         
         if (res.ok) {
-            if(!silent) {
+            if(!silent && btn) {
                 btn.innerHTML = '<i class="fa-solid fa-check"></i> 保存成功！已热加载';
                 btn.style.background = 'var(--success)';
                 setTimeout(() => {
@@ -379,20 +407,23 @@ async function saveOrganizeConfig(silent = false) {
                     btn.style.background = '';
                 }, 2000);
             }
+            return true;
         } else {
             const err = await res.json();
             if(!silent) alert('保存失败: ' + err.detail);
-            if(!silent) {
+            if(!silent && btn) {
                 btn.disabled = false;
                 btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> 保存所有配置并热加载';
             }
+            return false;
         }
     } catch (e) {
         if(!silent) alert('网络请求失败');
-        if(!silent) {
+        if(!silent && btn) {
             btn.disabled = false;
             btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> 保存所有配置并热加载';
         }
+        return false;
     }
 }
 

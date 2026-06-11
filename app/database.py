@@ -177,6 +177,13 @@ async def init_db():
                 status TEXT DEFAULT 'pending',
                 base_title TEXT,
                 poster_url TEXT,
+                overview TEXT,
+                cast_text TEXT,
+                resource_links TEXT,
+                url_links TEXT,
+                magnet_links TEXT,
+                torrent_files TEXT,
+                resource_count INTEGER DEFAULT 1,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ''')
@@ -199,6 +206,27 @@ async def init_db():
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS telegram_history_sync_checkpoint (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                checkpoint_key TEXT NOT NULL UNIQUE,
+                channel_ref TEXT NOT NULL,
+                range_start TEXT NOT NULL,
+                range_end TEXT NOT NULL,
+                status TEXT NOT NULL,
+                last_message_id INTEGER,
+                last_message_date TEXT,
+                processed_count INTEGER DEFAULT 0,
+                inserted_count INTEGER DEFAULT 0,
+                last_error TEXT DEFAULT '',
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        await db.execute('''
+            CREATE INDEX IF NOT EXISTS idx_telegram_history_sync_checkpoint_channel_range
+            ON telegram_history_sync_checkpoint(channel_ref, range_start, range_end)
+        ''')
         
         # 兼容老表升级：尝试新增字段
         try:
@@ -212,6 +240,21 @@ async def init_db():
         except Exception: pass
         try:
             await db.execute("ALTER TABLE tg_resources ADD COLUMN cast_text TEXT")
+        except Exception: pass
+        try:
+            await db.execute("ALTER TABLE tg_resources ADD COLUMN resource_links TEXT")
+        except Exception: pass
+        try:
+            await db.execute("ALTER TABLE tg_resources ADD COLUMN url_links TEXT")
+        except Exception: pass
+        try:
+            await db.execute("ALTER TABLE tg_resources ADD COLUMN magnet_links TEXT")
+        except Exception: pass
+        try:
+            await db.execute("ALTER TABLE tg_resources ADD COLUMN torrent_files TEXT")
+        except Exception: pass
+        try:
+            await db.execute("ALTER TABLE tg_resources ADD COLUMN resource_count INTEGER DEFAULT 1")
         except Exception: pass
 
         # 兼容旧版 STRM 记录表结构，按缺列逐步补齐
@@ -283,8 +326,12 @@ async def insert_tg_resource(db, resource: dict) -> dict | None:
     """插入资源，如果同频道同消息已存在则忽略并返回 None。"""
     cursor = await db.execute('''
         INSERT OR IGNORE INTO tg_resources 
-        (message_id, channel_id, title, raw_text, link, password, disk_type, msg_date, status, base_title, poster_url, overview, cast_text)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (
+            message_id, channel_id, title, raw_text, link, password, disk_type,
+            msg_date, status, base_title, poster_url, overview, cast_text,
+            resource_links, url_links, magnet_links, torrent_files, resource_count
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         resource.get('message_id'),
         resource.get('channel_id'),
@@ -298,7 +345,12 @@ async def insert_tg_resource(db, resource: dict) -> dict | None:
         resource.get('base_title'),
         resource.get('poster_url'),
         resource.get('overview'),
-        resource.get('cast_text')
+        resource.get('cast_text'),
+        resource.get('resource_links'),
+        resource.get('url_links'),
+        resource.get('magnet_links'),
+        resource.get('torrent_files'),
+        resource.get('resource_count', 1),
     ))
     if cursor.rowcount <= 0:
         return None
@@ -350,17 +402,24 @@ async def _migrate_tg_resources_unique_constraint(db) -> None:
             poster_url TEXT,
             overview TEXT,
             cast_text TEXT,
+            resource_links TEXT,
+            url_links TEXT,
+            magnet_links TEXT,
+            torrent_files TEXT,
+            resource_count INTEGER DEFAULT 1,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     ''')
     await db.execute('''
         INSERT INTO tg_resources (
             message_id, channel_id, title, raw_text, link, password, disk_type,
-            msg_date, status, base_title, poster_url, overview, cast_text, created_at
+            msg_date, status, base_title, poster_url, overview, cast_text,
+            resource_links, url_links, magnet_links, torrent_files, resource_count, created_at
         )
         SELECT
             message_id, channel_id, title, raw_text, link, password, disk_type,
-            msg_date, status, base_title, poster_url, overview, cast_text, MAX(created_at)
+            msg_date, status, base_title, poster_url, overview, cast_text,
+            NULL, NULL, NULL, NULL, 1, MAX(created_at)
         FROM tg_resources_legacy
         GROUP BY channel_id, message_id
     ''')
@@ -432,5 +491,96 @@ async def list_telegram_monitor_states() -> list[dict]:
             ORDER BY channel_ref ASC
             '''
         ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+
+async def upsert_telegram_history_sync_checkpoint(
+    checkpoint_key: str,
+    *,
+    channel_ref: str,
+    range_start: str,
+    range_end: str,
+    status: str,
+    last_message_id: int | None = None,
+    last_message_date: str | None = None,
+    processed_count: int = 0,
+    inserted_count: int = 0,
+    last_error: str = "",
+) -> None:
+    now = datetime.utcnow().isoformat()
+    async with get_db_conn() as db:
+        await db.execute(
+            '''
+            INSERT INTO telegram_history_sync_checkpoint (
+                checkpoint_key, channel_ref, range_start, range_end, status,
+                last_message_id, last_message_date, processed_count, inserted_count,
+                last_error, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(checkpoint_key) DO UPDATE SET
+                status=excluded.status,
+                last_message_id=excluded.last_message_id,
+                last_message_date=excluded.last_message_date,
+                processed_count=excluded.processed_count,
+                inserted_count=excluded.inserted_count,
+                last_error=excluded.last_error,
+                updated_at=excluded.updated_at
+            ''',
+            (
+                checkpoint_key,
+                channel_ref,
+                range_start,
+                range_end,
+                status,
+                last_message_id,
+                last_message_date,
+                processed_count,
+                inserted_count,
+                last_error,
+                now,
+            ),
+        )
+        await db.commit()
+
+
+async def get_telegram_history_sync_checkpoint(checkpoint_key: str):
+    async with get_db_conn() as db:
+        async with db.execute(
+            '''
+            SELECT checkpoint_key, channel_ref, range_start, range_end, status,
+                   last_message_id, last_message_date, processed_count, inserted_count,
+                   last_error, updated_at
+            FROM telegram_history_sync_checkpoint
+            WHERE checkpoint_key = ?
+            ''',
+            (checkpoint_key,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+
+async def list_telegram_history_sync_checkpoints(channel_ref: str | None = None) -> list[dict]:
+    async with get_db_conn() as db:
+        if channel_ref:
+            query = '''
+                SELECT checkpoint_key, channel_ref, range_start, range_end, status,
+                       last_message_id, last_message_date, processed_count, inserted_count,
+                       last_error, updated_at
+                FROM telegram_history_sync_checkpoint
+                WHERE channel_ref = ?
+                ORDER BY range_start ASC, range_end ASC
+            '''
+            params = (channel_ref,)
+        else:
+            query = '''
+                SELECT checkpoint_key, channel_ref, range_start, range_end, status,
+                       last_message_id, last_message_date, processed_count, inserted_count,
+                       last_error, updated_at
+                FROM telegram_history_sync_checkpoint
+                ORDER BY channel_ref ASC, range_start ASC, range_end ASC
+            '''
+            params = ()
+
+        async with db.execute(query, params) as cursor:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]

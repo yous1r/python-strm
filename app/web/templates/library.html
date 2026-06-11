@@ -7,9 +7,9 @@
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
         <h2 style="margin: 0;"><i class="fa-solid fa-photo-film"></i> Telegram 私有资源库</h2>
         <div style="display: flex; gap: 1rem; align-items: center;">
-            <input type="text" id="searchInput" class="form-control" placeholder="搜索影视名称..." style="width: 250px;" onkeyup="if(event.key === 'Enter') loadLibrary(1)">
-            <button class="btn btn-primary" onclick="loadLibrary(1)"><i class="fa-solid fa-magnifying-glass"></i></button>
-            <select id="pageSize" class="form-control" onchange="loadLibrary(1)" style="width: auto;">
+            <input type="text" id="searchInput" class="form-control" placeholder="搜索影视名称..." style="width: 250px;" onkeyup="if(event.key === 'Enter') loadLibrary()">
+            <button class="btn btn-primary" onclick="loadLibrary()"><i class="fa-solid fa-magnifying-glass"></i></button>
+            <select id="pageSize" class="form-control" onchange="loadLibrary()" style="width: auto;">
                 <option value="20">20 / 页</option>
                 <option value="50" selected>50 / 页</option>
                 <option value="100">100 / 页</option>
@@ -24,104 +24,196 @@
         </div>
     </div>
     
-    <div id="libraryContainer" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 1.5rem;">
+    <div id="libraryContainer" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; align-items: stretch;">
         <!-- 动态渲染 -->
     </div>
+
+    <div id="libraryLoadMoreTrigger" style="height: 1px;"></div>
     
-    <div style="display: flex; justify-content: space-between; margin-top: 1.5rem; align-items: center;">
-        <span id="pageInfo"></span>
-        <div style="display: flex; gap: 0.5rem;">
-            <button class="btn btn-secondary" id="prevBtn" onclick="changePage(-1)">上一页</button>
-            <button class="btn btn-secondary" id="nextBtn" onclick="changePage(1)">下一页</button>
-        </div>
+    <div style="display: flex; justify-content: space-between; margin-top: 1.5rem; align-items: center; gap: 1rem; flex-wrap: wrap;">
+        <span id="pageInfo" style="color: var(--text-secondary);"></span>
+        <span style="font-size: 0.85rem; color: var(--text-secondary);">滚动到底部时自动加载更多</span>
     </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-let currentPage = 1;
+let currentPage = 0;
+let totalGroups = 0;
+let currentGroups = [];
+let renderedGroupCount = 0;
+let renderObserver = null;
+let hasMorePages = true;
+let isFetchingGroups = false;
+const GROUP_BATCH_SIZE = 12;
 
-async function loadLibrary(page = 1) {
-    currentPage = page;
-    const search = document.getElementById('searchInput').value;
-    const pageSize = document.getElementById('pageSize').value;
+const POSTER_PLACEHOLDER = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNjAiIGhlaWdodD0iMjQwIj4KICA8cmVjdCB3aWR0aD0iMTYwIiBoZWlnaHQ9IjI0MCIgZmlsbD0iIzJkMzc0OCIvPgogIDx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmaWxsPSIjYTBhZWMwIiBmb250LWZhbWlseT0ic2Fucy1zZXJpZiIgZm9udC1zaXplPSIxNiI+Tm8gSW1hZ2U8L3RleHQ+Cjwvc3ZnPg==';
+
+function escapeHtml(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function getThumbnailPoster(url, size = 'w185') {
+    if (!url) return POSTER_PLACEHOLDER;
+    if (url.includes('image.tmdb.org/t/p/')) {
+        return url.replace(/\/t\/p\/(w\d+|original)\//, `/t/p/${size}/`);
+    }
+    return url;
+}
+
+function renderLibraryCard(group) {
+    const title = escapeHtml(group.base_title || '未知剧集');
+    const overview = escapeHtml(group.overview || '暂无内容简介');
+    const poster = getThumbnailPoster(group.poster_url, 'w185');
+    const detailUrl = `/library/detail?base_title=${encodeURIComponent(group.base_title || '')}`;
+
+    return `
+        <a href="${detailUrl}" class="glass-panel" style="padding: 0.9rem; overflow: hidden; display: flex; flex-direction: column; gap: 0.9rem; text-decoration: none; color: inherit; min-height: 100%; transition: transform 0.2s ease, box-shadow 0.2s ease;">
+            <div style="aspect-ratio: 2 / 3; width: 100%; border-radius: 14px; background: rgba(255,255,255,0.04); overflow: hidden; box-shadow: 0 10px 24px rgba(0,0,0,0.22);">
+                <img src="${poster}" loading="lazy" decoding="async" onerror="this.src='${POSTER_PLACEHOLDER}'" alt="${title}" style="width: 100%; height: 100%; object-fit: cover; display: block;">
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 0.6rem; min-width: 0;">
+                <h3 style="margin: 0; font-size: 1rem; line-height: 1.4; word-break: break-word;">${title}</h3>
+                <p style="margin: 0; color: var(--text-secondary); font-size: 0.84rem; line-height: 1.7; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;">${overview}</p>
+            </div>
+        </a>
+    `;
+}
+
+function updatePageInfo(message = '') {
+    const pageInfo = document.getElementById('pageInfo');
+    if (!pageInfo) return;
+
+    if (message) {
+        pageInfo.textContent = message;
+        return;
+    }
+
+    if (!currentGroups.length && !isFetchingGroups) {
+        pageInfo.textContent = '暂无资源';
+        return;
+    }
+
+    const loadedText = `已加载 ${currentGroups.length} / ${totalGroups || currentGroups.length} 部资源`;
+    pageInfo.textContent = hasMorePages ? `${loadedText}，下滑继续加载` : `${loadedText}，已全部加载`;
+}
+
+function disconnectRenderObserver() {
+    if (renderObserver) {
+        renderObserver.disconnect();
+        renderObserver = null;
+    }
+}
+
+function renderNextGroupBatch() {
     const container = document.getElementById('libraryContainer');
-    container.innerHTML = '<div style="grid-column: 1 / -1; text-align:center; padding:2rem;">加载中...</div>';
+    if (!container || renderedGroupCount >= currentGroups.length) {
+        disconnectRenderObserver();
+        return;
+    }
+
+    const slice = currentGroups.slice(renderedGroupCount, renderedGroupCount + GROUP_BATCH_SIZE);
+    const fragment = document.createRange().createContextualFragment(slice.map(renderLibraryCard).join(''));
+    container.appendChild(fragment);
+    renderedGroupCount += slice.length;
+
+    if (renderedGroupCount >= currentGroups.length) {
+        if (!hasMorePages) {
+            disconnectRenderObserver();
+        }
+    }
+
+    updatePageInfo();
+}
+
+function setupLazyRender() {
+    disconnectRenderObserver();
+
+    const trigger = document.getElementById('libraryLoadMoreTrigger');
+    if (!trigger || (!hasMorePages && renderedGroupCount >= currentGroups.length)) {
+        return;
+    }
+
+    renderObserver = new IntersectionObserver((entries) => {
+        if (entries.some(entry => entry.isIntersecting)) {
+            if (renderedGroupCount < currentGroups.length) {
+                renderNextGroupBatch();
+                return;
+            }
+            if (hasMorePages && !isFetchingGroups) {
+                fetchLibraryPage(currentPage + 1);
+            }
+        }
+    }, { rootMargin: '200px 0px' });
+
+    renderObserver.observe(trigger);
+}
+
+async function fetchLibraryPage(page) {
+    if (isFetchingGroups) {
+        return;
+    }
+
+    const search = document.getElementById('searchInput').value;
+    const pageSize = Number(document.getElementById('pageSize').value);
+    const container = document.getElementById('libraryContainer');
+    isFetchingGroups = true;
+    updatePageInfo('加载中...');
     
     try {
         const res = await fetch(`/api/v1/library/tg_resources?page=${page}&page_size=${pageSize}&search=${encodeURIComponent(search)}`);
         const data = await res.json();
+        const groups = data.data || [];
+        currentPage = data.page || page;
+        totalGroups = data.total || 0;
+        hasMorePages = Boolean(data.has_more);
         
-        if (data.data.length === 0) {
+        if (page === 1) {
+            currentGroups = [];
+            renderedGroupCount = 0;
+            container.innerHTML = '';
+        }
+
+        if (page === 1 && groups.length === 0) {
+            currentGroups = [];
+            renderedGroupCount = 0;
+            hasMorePages = false;
             container.innerHTML = '<div style="grid-column: 1 / -1; text-align:center; padding:2rem;">暂无数据</div>';
         } else {
-            container.innerHTML = data.data.map(group => {
-                const placeholder = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNjAiIGhlaWdodD0iMjQwIj4KICA8cmVjdCB3aWR0aD0iMTYwIiBoZWlnaHQ9IjI0MCIgZmlsbD0iIzJkMzc0OCIvPgogIDx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmaWxsPSIjYTBhZWMwIiBmb250LWZhbWlseT0ic2Fucy1zZXJpZiIgZm9udC1zaXplPSIxNiI+Tm8gSW1hZ2U8L3RleHQ+Cjwvc3ZnPg==';
-                const poster = group.poster_url || placeholder;
-                const epsHtml = group.episodes.map(row => {
-                    let statusColor = row.status === 'success' ? '#10b981' : (row.status === 'queued' ? 'var(--accent-primary)' : (row.status === 'failed' ? '#ef4444' : 'var(--text-secondary)'));
-                    let statusText = row.status === 'success' ? '已存' : (row.status === 'queued' ? '排队' : (row.status === 'failed' ? '失败' : '待转'));
-                    let canSelect = row.status !== 'queued' && row.status !== 'success';
-                    return `
-                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 0.85rem;">
-                        <label style="display: flex; align-items: center; gap: 0.5rem; flex: 1; overflow: hidden; ${canSelect ? '' : 'opacity: 0.5;'}">
-                            <input type="checkbox" class="ep-check" data-id="${row.id}" data-title="${group.base_title}" ${canSelect ? '' : 'disabled'} style="flex-shrink: 0;">
-                            <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${row.title}">${row.title}</span>
-                        </label>
-                        <div style="display: flex; align-items: center; gap: 0.5rem;">
-                            <span style="color: ${statusColor}; font-size: 0.75rem;">${statusText}</span>
-                            <button class="btn btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" onclick="transferResource(${row.id}, this)" ${row.status === 'queued' || row.status === 'success' ? 'disabled' : ''} title="转存单集">
-                                <i class="fa-solid fa-cloud-arrow-up"></i>
-                            </button>
-                        </div>
-                    </div>`;
-                }).join('');
-
-                return `
-                <div class="glass-panel" style="padding: 0; overflow: hidden; display: flex; flex-direction: column; max-height: 500px;" data-series="${group.base_title}">
-                    <div style="display: flex; padding: 1rem; border-bottom: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.2);">
-                        <img src="${poster}" onerror="this.src='${placeholder}'" style="width: 80px; height: 120px; object-fit: cover; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.5);">
-                        <div style="margin-left: 1rem; flex: 1; display: flex; flex-direction: column; justify-content: space-between;">
-                            <div>
-                                <h3 style="margin: 0 0 0.5rem 0; font-size: 1.1rem; line-height: 1.3;">${group.base_title || '未知剧集'}</h3>
-                                <span class="badge" style="background: rgba(255,255,255,0.1);">共 ${group.ep_count} 项</span>
-                            </div>
-                            <div style="display: flex; gap: 0.5rem;">
-                                <button class="btn btn-primary" style="flex: 1; padding: 0.4rem; font-size: 0.8rem;" onclick="transferBatch('${group.base_title}', this)">
-                                    <i class="fa-solid fa-layer-group"></i> 整剧转存
-                                </button>
-                                <button class="btn btn-secondary" style="flex: 1; padding: 0.4rem; font-size: 0.8rem;" onclick="transferSelected('${group.base_title}', this)">
-                                    <i class="fa-solid fa-check-double"></i> 转存选中
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                    <div style="padding: 0.25rem 0.5rem; border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; justify-content: space-between; align-items: center;">
-                        <label style="font-size: 0.75rem; color: var(--text-secondary); cursor: pointer;">
-                            <input type="checkbox" class="select-all-check" onchange="toggleSelectAll(this, '${group.base_title}')"> 全选
-                        </label>
-                        <span class="selected-count" style="font-size: 0.75rem; color: var(--accent-primary);">已选 0</span>
-                    </div>
-                    <div style="flex: 1; overflow-y: auto; padding: 0.5rem;">
-                        ${epsHtml}
-                    </div>
-                </div>
-                `;
-            }).join('');
+            currentGroups.push(...groups);
+            renderNextGroupBatch();
+            setupLazyRender();
         }
-        
-        document.getElementById('pageInfo').innerText = `共 ${data.total} 部剧 | 第 ${page} 页`;
-        document.getElementById('prevBtn').disabled = page === 1;
-        document.getElementById('nextBtn').disabled = data.data.length < pageSize;
-        
+
+        updatePageInfo();
     } catch(e) {
-        container.innerHTML = '<div style="grid-column: 1 / -1; text-align:center; padding:2rem; color:#ef4444;">加载失败</div>';
+        if (page === 1) {
+            currentGroups = [];
+            renderedGroupCount = 0;
+            container.innerHTML = '<div style="grid-column: 1 / -1; text-align:center; padding:2rem; color:#ef4444;">加载失败</div>';
+        }
+        updatePageInfo('加载失败，请稍后重试');
+    } finally {
+        isFetchingGroups = false;
     }
 }
 
-function changePage(delta) {
-    loadLibrary(currentPage + delta);
+async function loadLibrary() {
+    disconnectRenderObserver();
+    currentPage = 0;
+    totalGroups = 0;
+    currentGroups = [];
+    renderedGroupCount = 0;
+    hasMorePages = true;
+    document.getElementById('libraryContainer').innerHTML = '<div style="grid-column: 1 / -1; text-align:center; padding:2rem;">加载中...</div>';
+    updatePageInfo('加载中...');
+    await fetchLibraryPage(1);
 }
 
 async function transferResource(id, btn) {
@@ -137,7 +229,7 @@ async function transferResource(id, btn) {
         const data = await res.json();
         if (data.status === 'success') {
             showToast('已加入转存队列', 'success');
-            loadLibrary(currentPage);
+            loadLibrary();
         } else {
             showToast('失败: ' + (data.message || '未知错误'), 'error');
             btn.disabled = false;
@@ -165,9 +257,9 @@ async function handleFileUpload(e) {
             body: formData
         });
         const data = await res.json();
-        if(data.status === 'success') {
+        if (data.status === 'success') {
             await window.customConfirm(`✅ 导入已启动\n\n${data.message}`);
-            setTimeout(() => loadLibrary(1), 2000);
+            setTimeout(() => loadLibrary(), 2000);
         } else {
             alert('导入失败: ' + data.message);
         }
@@ -178,103 +270,7 @@ async function handleFileUpload(e) {
 }
 
 // 初始加载
-document.addEventListener('DOMContentLoaded', () => loadLibrary(1));
-
-// 全选/取消全选
-function toggleSelectAll(checkbox, seriesTitle) {
-    const card = checkbox.closest('.glass-panel');
-    const checks = card.querySelectorAll('.ep-check:not([disabled])');
-    checks.forEach(c => { c.checked = checkbox.checked; });
-    updateSelectedCount(card);
-}
-
-function updateSelectedCount(cardOrTitle) {
-    const card = typeof cardOrTitle === 'string'
-        ? document.querySelector(`.glass-panel[data-series="${cardOrTitle}"]`)
-        : cardOrTitle;
-    if (!card) return;
-    const checks = card.querySelectorAll('.ep-check:checked');
-    const countEl = card.querySelector('.selected-count');
-    if (countEl) countEl.textContent = `已选 ${checks.length}`;
-}
-
-// 监听复选框变更自动更新计数
-document.addEventListener('change', function(e) {
-    if (e.target.classList.contains('ep-check')) {
-        const card = e.target.closest('.glass-panel');
-        if (card) updateSelectedCount(card);
-    }
-});
-
-// 批量转存已勾选的剧集
-async function transferSelected(base_title, btn) {
-    const card = btn.closest('.glass-panel');
-    const checks = card.querySelectorAll('.ep-check:checked');
-    const ids = Array.from(checks).map(c => parseInt(c.dataset.id));
-
-    if (ids.length === 0) {
-        return showToast('请先勾选需要转存的剧集', 'warning');
-    }
-
-    const orig = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 投递中...';
-
-    try {
-        const res = await fetch('/api/v1/library/transfer_selected', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ids: ids, base_title: base_title })
-        });
-        const data = await res.json();
-        if (data.status === 'success') {
-            showToast(`已加入转存队列。`, 'success');
-            // 跳转到转存页面查看进度
-            if (data.task_id) {
-                window.open(`/transfer?task=${data.task_id}`, '_blank');
-            }
-            setTimeout(() => loadLibrary(currentPage), 1500);
-        } else {
-            showToast('失败: ' + (data.message || '未知错误'), 'error');
-            btn.disabled = false;
-            btn.innerHTML = orig;
-        }
-    } catch (e) {
-        showToast('网络错误: ' + e.message, 'error');
-        btn.disabled = false;
-        btn.innerHTML = orig;
-    }
-}
-
-async function transferBatch(base_title, btn) {
-    const orig = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 投递中...';
-    try {
-        // 获取该剧集下所有可转存项的 ID
-        const card = document.querySelector(`.glass-panel[data-series="${base_title}"]`);
-        const checks = card ? card.querySelectorAll('.ep-check:not([disabled])') : [];
-        const ids = checks.length > 0
-            ? Array.from(checks).map(c => parseInt(c.dataset.id))
-            : [];  // 如果没有可选项，后端会处理
-        
-        const res = await fetch('/api/v1/library/transfer_selected', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ids: ids, base_title: base_title, transfer_all: true })
-        });
-        const data = await res.json();
-        if (data.status === 'success') {
-            showToast(`${data.message}`, 'success');
-            if (data.task_id) window.open(`/transfer?task=${data.task_id}`, '_blank');
-            loadLibrary(currentPage);
-        }
-    } catch(e) {
-        showToast('网络错误', 'error');
-        btn.disabled = false;
-        btn.innerHTML = orig;
-    }
-}
+document.addEventListener('DOMContentLoaded', () => loadLibrary());
 
 async function migrateLegacy() {
     if(!confirm('是否启动后台清洗？（会自动为没有海报的旧数据刮削海报）')) return;
