@@ -68,6 +68,18 @@ h1, h2, h3, h4, h5, h6 {
     font-weight: 600;
 }
 
+.mobile-topbar,
+.sidebar-overlay {
+    display: none;
+}
+
+.content-wrapper,
+.glass-panel,
+.grid-2,
+.grid-3 {
+    min-width: 0;
+}
+
 /* Sidebar */
 .sidebar {
     width: 260px;
@@ -482,4 +494,181 @@ input:checked + .slider:before { transform: translateX(26px); }
 
 .custom-modal-overlay.show .custom-modal-dialog {
     transform: translateY(0);
+}
+
+@media (max-width: 768px) {
+    body {
+        display: block;
+        overflow-x: hidden;
+        padding-top: 64px;
+    }
+
+    body.mobile-nav-open {
+        overflow: hidden;
+    }
+
+    .mobile-topbar {
+        position: fixed;
+        inset: 0 0 auto 0;
+        z-index: 250;
+        height: 64px;
+        display: grid;
+        grid-template-columns: 44px minmax(0, 1fr) 44px;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.75rem 1rem;
+        background: var(--bg-secondary);
+        border-bottom: 1px solid var(--border);
+        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+    }
+
+    .mobile-nav-toggle,
+    .mobile-theme-toggle {
+        width: 44px;
+        height: 44px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid var(--border);
+        border-radius: 0.75rem;
+        background: rgba(255,255,255,0.05);
+        color: var(--text-primary);
+        cursor: pointer;
+    }
+
+    .mobile-brand {
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        color: var(--text-primary);
+        font-family: 'Outfit', sans-serif;
+        font-weight: 700;
+    }
+
+    .mobile-brand span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .sidebar {
+        top: 64px;
+        left: 0;
+        width: min(82vw, 280px);
+        height: calc(100dvh - 64px);
+        padding: 1rem;
+        transform: translateX(-105%);
+        transition: transform 0.25s ease;
+        box-shadow: 18px 0 40px rgba(0,0,0,0.35);
+    }
+
+    body.mobile-nav-open .sidebar {
+        transform: translateX(0);
+    }
+
+    .sidebar-overlay {
+        position: fixed;
+        inset: 64px 0 0;
+        z-index: 90;
+        background: rgba(0,0,0,0.55);
+        backdrop-filter: blur(2px);
+    }
+
+    body.mobile-nav-open .sidebar-overlay {
+        display: block;
+    }
+
+    .brand {
+        margin-bottom: 1.25rem;
+    }
+
+    .nav-section-label {
+        margin-top: 0.5rem;
+    }
+
+    .main-content {
+        margin-left: 0;
+        width: 100%;
+        max-width: none;
+        padding: 1rem;
+    }
+
+    .page-header {
+        margin-bottom: 1.25rem;
+    }
+
+    .page-title {
+        font-size: 1.8rem;
+        line-height: 1.2;
+    }
+
+    .page-subtitle {
+        font-size: 0.92rem;
+    }
+
+    .glass-panel {
+        padding: 1rem;
+        border-radius: 0.85rem;
+    }
+
+    .glass-panel:hover,
+    .btn-primary:hover,
+    .nav-link:hover {
+        transform: none;
+    }
+
+    .grid-2,
+    .grid-3 {
+        grid-template-columns: 1fr;
+        gap: 1rem;
+    }
+
+    .status-card {
+        padding: 1rem;
+        gap: 1rem;
+    }
+
+    .status-info h3 {
+        font-size: 1.2rem;
+    }
+
+    .btn {
+        width: 100%;
+        min-height: 44px;
+        padding: 0.75rem 1rem;
+        white-space: normal;
+    }
+
+    .form-control {
+        min-width: 0;
+    }
+
+    .custom-toast-container {
+        left: 1rem;
+        right: 1rem;
+        bottom: max(1rem, env(safe-area-inset-bottom));
+    }
+
+    .custom-toast {
+        min-width: 0;
+        width: 100%;
+        transform: translateY(120%);
+    }
+
+    .custom-toast.show {
+        transform: translateY(0);
+    }
+
+    .custom-modal-overlay {
+        padding: 1rem;
+        align-items: flex-end;
+    }
+
+    .custom-modal-dialog {
+        max-width: calc(100vw - 2rem);
+        max-height: calc(100dvh - 2rem);
+        overflow-y: auto;
+    }
 }

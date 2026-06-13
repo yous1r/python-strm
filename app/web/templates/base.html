@@ -8,6 +8,20 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
+    <div class="mobile-topbar">
+        <button id="mobileNavToggle" class="mobile-nav-toggle" type="button" aria-label="打开导航菜单" aria-expanded="false">
+            <i class="fa-solid fa-bars"></i>
+        </button>
+        <div class="mobile-brand">
+            <i class="fa-solid fa-play"></i>
+            <span>Python-STRM</span>
+        </div>
+        <button id="mobileThemeToggleBtn" class="mobile-theme-toggle" type="button" aria-label="切换主题">
+            <i class="fa-solid fa-moon" id="mobileThemeIcon"></i>
+        </button>
+    </div>
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
     <aside class="sidebar">
         <div class="brand">
             <i class="fa-solid fa-play"></i>
@@ -171,6 +185,7 @@
         const themeToggleBtn = document.getElementById('themeToggleBtn');
         const themeIcon = document.getElementById('themeIcon');
         const themeText = document.getElementById('themeText');
+        const mobileThemeIcon = document.getElementById('mobileThemeIcon');
         
         function applyTheme(theme) {
             document.documentElement.setAttribute('data-theme', theme);
@@ -184,6 +199,9 @@
                     themeText.textContent = '暗黑模式';
                 }
             }
+            if (mobileThemeIcon) {
+                mobileThemeIcon.className = theme === 'light' ? 'fa-solid fa-sun' : 'fa-solid fa-moon';
+            }
         }
         
         // Initialize theme
@@ -195,6 +213,37 @@
                 const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
                 applyTheme(currentTheme === 'dark' ? 'light' : 'dark');
             });
+        }
+
+        // --- Mobile Navigation Logic ---
+        const mobileNavToggle = document.getElementById('mobileNavToggle');
+        const sidebarOverlay = document.getElementById('sidebarOverlay');
+        const mobileThemeToggleBtn = document.getElementById('mobileThemeToggleBtn');
+
+        function closeMobileNav() {
+            document.body.classList.remove('mobile-nav-open');
+            if (mobileNavToggle) {
+                mobileNavToggle.setAttribute('aria-expanded', 'false');
+            }
+        }
+
+        if (mobileNavToggle) {
+            mobileNavToggle.addEventListener('click', () => {
+                const isOpen = document.body.classList.toggle('mobile-nav-open');
+                mobileNavToggle.setAttribute('aria-expanded', String(isOpen));
+            });
+        }
+
+        if (sidebarOverlay) {
+            sidebarOverlay.addEventListener('click', closeMobileNav);
+        }
+
+        document.querySelectorAll('.sidebar .nav-link').forEach(link => {
+            link.addEventListener('click', closeMobileNav);
+        });
+
+        if (mobileThemeToggleBtn && themeToggleBtn) {
+            mobileThemeToggleBtn.addEventListener('click', () => themeToggleBtn.click());
         }
 
         // --- Custom Vanilla Toast Logic ---
