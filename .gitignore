@@ -14,6 +14,7 @@ strm
 data
 
 node_modules
+.worktrees/
 
 archive
 archive_bak
@@ -25,5 +26,4 @@ cache
 config.yaml
 config.yaml.bak
 config.yaml.*.bak
-
 
