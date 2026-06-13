@@ -6,7 +6,7 @@
         <i class="fa-solid fa-search" style="color: var(--accent-primary); margin-right: 0.75rem;"></i> 全网盘搜引擎
     </h2>
     
-    <form id="searchForm" style="display: flex; gap: 1rem; align-items: stretch; flex-wrap: wrap;">
+    <form id="searchForm" class="search-form" style="display: flex; gap: 1rem; align-items: stretch; flex-wrap: wrap;">
         <div style="flex: 3; min-width: 300px;">
             <input type="text" class="form-control" id="keyword" placeholder="输入你想找的电影或剧集..." required style="height: 100%;">
         </div>
@@ -20,7 +20,7 @@
             <i class="fa-solid fa-search"></i> 搜索
         </button>
     </form>
-    <div style="display: flex; gap: 15px; align-items: center; margin-top: 1rem; flex-wrap: wrap;">
+    <div class="search-filters" style="display: flex; gap: 15px; align-items: center; margin-top: 1rem; flex-wrap: wrap;">
         <span style="color: var(--text-secondary); font-size: 0.9rem;">资源过滤:</span>
         <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--text-primary);">
             <input type="checkbox" class="link-type-filter" value="115" checked onchange="renderResults()"> 115网盘
@@ -45,7 +45,7 @@
         <div id="pluginListContainer" style="display: none; flex-wrap: wrap; gap: 10px; margin-top: 10px; max-height: 200px; overflow-y: auto; padding: 0.5rem; border: 1px solid var(--border); border-radius: 4px; background: rgba(0,0,0,0.05);">
             <!-- Plugins will be loaded here dynamically -->
         </div>
-        <div id="pluginActionContainer" style="display: none; justify-content: flex-end; margin-top: 10px; gap: 10px;">
+        <div id="pluginActionContainer" class="search-plugin-actions" style="display: none; justify-content: flex-end; margin-top: 10px; gap: 10px;">
             <button type="button" class="btn btn-secondary" onclick="selectAllPlugins(false)" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;">全部取消</button>
             <button type="button" class="btn btn-secondary" onclick="selectAllPlugins(true)" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;">全选</button>
             <button type="button" class="btn btn-primary" onclick="savePluginConfig()" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;"><i class="fa-solid fa-save"></i> 永久保存为默认插件</button>
@@ -83,7 +83,7 @@
         
         <input type="hidden" id="transferUrlInput">
       </div>
-      <div style="padding: 1.5rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 1rem; background: rgba(0,0,0,0.2);">
+      <div class="transfer-modal-actions" style="padding: 1.5rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 1rem; background: rgba(0,0,0,0.2);">
         <button type="button" class="btn btn-secondary" onclick="closeTransferModal()">取消</button>
         <button type="button" class="btn btn-primary" id="confirmTransferBtn" onclick="submitTransfer()">开始转存并洗版</button>
       </div>
@@ -335,11 +335,11 @@
                             }
                             
                             linksHtml += `
-                                <div style="display: flex; align-items: center; margin-bottom: 0.75rem; padding: 0.75rem; background: rgba(0,0,0,0.2); border-radius: 0.5rem; border: 1px solid var(--border);">
+                                <div class="search-result-link" style="display: flex; align-items: center; margin-bottom: 0.75rem; padding: 0.75rem; background: rgba(0,0,0,0.2); border-radius: 0.5rem; border: 1px solid var(--border);">
                                     <span style="font-size: 0.75rem; font-weight: 600; background: var(--accent-primary); color: white; padding: 4px 8px; border-radius: 4px; margin-right: 12px; white-space: nowrap;">${linkTypeStr}</span>
                                     <span style="flex-grow: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: 0.85rem;" title="${link.url}">${link.url}</span>
                                     ${passHtml}
-                                    <button class="btn btn-secondary" style="padding: 0.4rem 0.75rem; font-size: 0.85rem; margin-left: 12px; white-space: nowrap;" onclick="openTransferModal('${link.url}', '${link.password || ''}', '${targetCloud}', '${type}')">
+                                    <button class="btn btn-secondary search-result-action" style="padding: 0.4rem 0.75rem; font-size: 0.85rem; margin-left: 12px; white-space: nowrap;" onclick="openTransferModal('${link.url}', '${link.password || ''}', '${targetCloud}', '${type}')">
                                         一键转存
                                     </button>
                                 </div>

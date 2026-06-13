@@ -4,9 +4,9 @@
 
 {% block content %}
 <div class="glass-panel animate-fade-in delay-1" style="margin-bottom: 2rem;">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+    <div class="library-toolbar" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
         <h2 style="margin: 0;"><i class="fa-solid fa-photo-film"></i> Telegram 私有资源库</h2>
-        <div style="display: flex; gap: 1rem; align-items: center;">
+        <div class="library-actions" style="display: flex; gap: 1rem; align-items: center;">
             <input type="text" id="searchInput" class="form-control" placeholder="搜索影视名称..." style="width: 250px;" onkeyup="if(event.key === 'Enter') loadLibrary()">
             <button class="btn btn-primary" onclick="loadLibrary()"><i class="fa-solid fa-magnifying-glass"></i></button>
             <select id="pageSize" class="form-control" onchange="loadLibrary()" style="width: auto;">
@@ -24,7 +24,7 @@
         </div>
     </div>
     
-    <div id="libraryContainer" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; align-items: stretch;">
+    <div id="libraryContainer" class="library-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; align-items: stretch;">
         <!-- 动态渲染 -->
     </div>
 

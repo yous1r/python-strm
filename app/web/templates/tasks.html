@@ -33,9 +33,9 @@
 </style>
 
 <div class="glass-panel animate-fade-in delay-1" style="margin-bottom: 1.5rem;">
-    <div style="display: flex; justify-content: space-between; align-items: center;">
+    <div class="tasks-header" style="display: flex; justify-content: space-between; align-items: center;">
         <h2 style="margin: 0;"><i class="fa-solid fa-microchip" style="color: var(--accent-primary); margin-right: 0.75rem;"></i>后台任务总览</h2>
-        <div style="display: flex; gap: 0.5rem; align-items: center;">
+        <div class="tasks-toolbar" style="display: flex; gap: 0.5rem; align-items: center;">
             <span id="lastUpdate" style="font-size: 0.8rem; color: var(--text-secondary);"></span>
             <button class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="loadTasks()">
                 <i class="fa-solid fa-arrows-rotate"></i> 刷新
@@ -67,7 +67,7 @@
 </div>
 
 <div class="glass-panel animate-fade-in delay-2">
-    <div style="overflow-x: auto;">
+    <div class="tasks-table-wrap" style="overflow-x: auto;">
         <table class="task-table">
             <thead>
                 <tr>

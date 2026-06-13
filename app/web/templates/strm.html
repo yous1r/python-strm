@@ -3,7 +3,7 @@
 {% block subtitle %}批量生成与管理 STRM 映射文件{% endblock %}
 
 {% block content %}
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; max-width: 1200px;">
+<div class="strm-settings-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; max-width: 1200px;">
     <!-- 左侧：全局设置 -->
     <div class="glass-panel animate-fade-in delay-1">
         <h2 style="margin-bottom: 1.5rem;"><i class="fa-solid fa-sliders"></i> 全局 STRM 设置</h2>
@@ -99,7 +99,7 @@
     <ul id="syncDirsList" style="list-style: none; padding: 0; margin-bottom: 1rem;">
         <!-- 动态渲染 -->
     </ul>
-    <div style="display: flex; gap: 0.5rem;">
+    <div class="sync-dir-actions" style="display: flex; gap: 0.5rem;">
         <button type="button" class="btn btn-secondary" onclick="openFolderPickerForSync()">
             <i class="fa-solid fa-plus"></i> 添加扫描源目录
         </button>
@@ -126,7 +126,7 @@
             <i class="fa-solid fa-xmark" style="cursor: pointer; color: var(--text-secondary);" onclick="closeSyncHistory()"></i>
         </h3>
         
-        <div style="flex: 1; overflow-y: auto; background: rgba(0,0,0,0.2); border-radius: 0.5rem; border: 1px solid var(--border);">
+        <div class="sync-history-table-wrap" style="flex: 1; overflow-y: auto; background: rgba(0,0,0,0.2); border-radius: 0.5rem; border: 1px solid var(--border);">
             <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.85rem;">
                 <thead style="background: rgba(255,255,255,0.05); position: sticky; top: 0;">
                     <tr>

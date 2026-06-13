@@ -87,7 +87,7 @@
             </label>
         </div>
     </div> -->
-    <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-top: 1rem;">
+    <div class="transfer-card-actions" style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-top: 1rem;">
         <button class="btn btn-primary" id="saveTransferBtn" onclick="saveTransferConfig()">
             <i class="fa-solid fa-floppy-disk"></i> 保存本页全部配置并热加载
         </button>
@@ -101,7 +101,7 @@
             <h2 style="margin: 0 0 0.35rem 0;"><i class="fa-solid fa-folder-tree" style="color: var(--accent-primary); margin-right: 0.75rem;"></i>分类规则</h2>
             <p style="margin: 0; color: var(--text-secondary); font-size: 0.9rem;">真实写入 <code>transfer.categories</code>，用于转存整理时生成归档路径。</p>
         </div>
-        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+        <div class="transfer-card-actions" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
             <button type="button" class="btn btn-secondary" onclick="addCategoryRule()"><i class="fa-solid fa-plus"></i> 添加分类</button>
             <button type="button" class="btn btn-secondary" onclick="resetCategoryRules()"><i class="fa-solid fa-rotate-left"></i> 恢复默认</button>
             <button type="button" class="btn btn-secondary" onclick="clearCategoryRules()"><i class="fa-solid fa-broom"></i> 使用后端默认</button>
@@ -119,7 +119,7 @@
             <h2 style="margin: 0 0 0.35rem 0;"><i class="fa-solid fa-rotate" style="color: var(--accent-primary); margin-right: 0.75rem;"></i>归档 STRM 覆盖</h2>
             <p style="margin: 0; color: var(--text-secondary); font-size: 0.9rem;">基于已记录的 manifest 重写归档 STRM，不补扫历史目录。</p>
         </div>
-        <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
+        <div class="rewrite-archive-controls" style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
             <input type="text" class="form-control" id="rewriteArchiveRoot" placeholder="可选：按归档相对路径过滤，如 剧集/国产剧集" style="min-width: 280px;">
             <button id="rewriteArchiveStrmBtn" class="btn btn-outline-primary" onclick="rewriteArchiveStrm()">一键覆盖归档 STRM</button>
         </div>
@@ -188,7 +188,7 @@
                 <div class="preview-list" id="previewList"></div>
                 <p style="color: var(--warning); font-size: 0.85rem; margin-top: 1rem;">还原后文件回到原始目录和文件名</p>
             </div>
-            <div style="padding: 1.5rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 1rem; background: rgba(0,0,0,0.2);">
+            <div class="rollback-modal-actions" style="padding: 1.5rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 1rem; background: rgba(0,0,0,0.2);">
                 <button class="btn btn-secondary" onclick="closePreview()">取消</button>
                 <button class="btn btn-primary" style="background: var(--warning);" id="confirmRollbackBtn" onclick="confirmRollback()">确认还原</button>
             </div>

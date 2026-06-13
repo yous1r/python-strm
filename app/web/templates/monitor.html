@@ -3,14 +3,14 @@
 {% block subtitle %}统一管理 Telegram 频道资源自动监控节点{% endblock %}
 
 {% block content %}
-<div class="glass-panel animate-fade-in delay-1" style="max-width: 800px; margin-bottom: 1.5rem;">
+<div class="glass-panel monitor-intro animate-fade-in delay-1" style="max-width: 800px; margin-bottom: 1.5rem;">
     <h2 style="margin-bottom: 0.75rem;"><i class="fa-solid fa-satellite-dish"></i> Telegram 监控与同步</h2>
     <div style="color: var(--text-secondary); font-size: 0.95rem; line-height: 1.7;">
         在同一页中统一管理实时监听、历史同步与启动编排配置。实时监听开关仅控制新消息监听，不影响历史同步和启动编排参数保存。
     </div>
 </div>
 
-<div class="tabs" style="max-width: 800px; margin-bottom: 1.5rem;">
+<div class="tabs monitor-tabs" style="max-width: 800px; margin-bottom: 1.5rem;">
     <button type="button" class="tab-btn active" onclick="switchMonitorTab(event, 'realtime')">
         <i class="fa-solid fa-tower-broadcast"></i> 实时监听
     </button>
@@ -25,7 +25,7 @@
 <form id="monitorForm">
     <div id="tab-realtime" class="tab-pane active">
         <div class="glass-panel animate-fade-in" style="max-width: 800px; margin-bottom: 2rem;">
-            <h2 style="margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
+            <h2 class="monitor-section-heading" style="margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
                 <span><i class="fa-solid fa-tower-broadcast"></i> 实时监听</span>
                 <span style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
                     <button type="button" class="btn btn-secondary" onclick="testTgMonitor(this)">
@@ -90,7 +90,7 @@
 
     <div id="tab-history" class="tab-pane">
         <div class="glass-panel animate-fade-in" style="max-width: 800px; margin-bottom: 2rem;">
-            <h2 style="margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
+            <h2 class="monitor-section-heading" style="margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
                 <span><i class="fa-solid fa-clock-rotate-left"></i> 历史同步</span>
                 <button type="button" class="btn btn-secondary" style="color: var(--accent); border-color: var(--accent);" onclick="scrapeTgMonitor(this)">
                     <i class="fa-solid fa-clock-rotate-left"></i> 立即历史同步
@@ -160,7 +160,7 @@
 
     <div id="tab-startup" class="tab-pane">
         <div class="glass-panel animate-fade-in" style="max-width: 800px; margin-bottom: 2rem;">
-            <h2 style="margin-bottom: 1rem;"><i class="fa-solid fa-rocket"></i> 启动编排</h2>
+            <h2 class="monitor-section-heading" style="margin-bottom: 1rem;"><i class="fa-solid fa-rocket"></i> 启动编排</h2>
             <div style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.95rem; line-height: 1.7;">
                 控制服务启动后是否自动执行全局初始化流水，包括 115 本地缓存同步、Telegram 历史同步与 STRM 增量同步。
             </div>
@@ -196,7 +196,7 @@
     </div>
 </form>
 
-<div style="max-width: 800px; display: flex; justify-content: flex-end;">
+<div class="monitor-savebar" style="max-width: 800px; display: flex; justify-content: flex-end;">
     <button class="btn btn-primary" style="padding: 0.75rem 2rem; font-size: 1.1rem; box-shadow: 0 0 15px rgba(99,102,241,0.4);" onclick="saveMonitorConfig()" id="saveBtn">
         <i class="fa-solid fa-floppy-disk"></i> 保存并热加载
     </button>
@@ -293,7 +293,7 @@ input:checked + .slider:before {
             <span><i class="fa-solid fa-film"></i> TMDB 可视化配置正则</span>
             <i class="fa-solid fa-xmark" style="cursor: pointer; color: var(--text-secondary);" onclick="closeTmdbModal()"></i>
         </h3>
-        <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+        <div class="tmdb-modal-filters" style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
             <select id="tmdbSearchType" class="form-control" style="width: 100px; padding: 0.3rem;">
                 <option value="multi">全部</option>
                 <option value="movie">电影</option>

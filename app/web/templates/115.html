@@ -3,7 +3,7 @@
 {% block subtitle %}管理 115 网盘账号、接口与播放访问能力{% endblock %}
 
 {% block content %}
-<div class="glass-panel animate-fade-in delay-1" style="max-width: 800px;">
+<div class="glass-panel cloud115-panel animate-fade-in delay-1" style="max-width: 800px;">
     <h2 style="margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: space-between;">
         <span><i class="fa-solid fa-cloud"></i> 115 网盘配置</span>
         <label class="switch">
@@ -12,7 +12,7 @@
         </label>
     </h2>
     <form id="cookieForm">
-        <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+        <div class="cloud115-select-row" style="display: flex; gap: 1rem; margin-bottom: 1rem;">
             <div class="form-group" style="flex: 1;">
                 <label class="form-label">目录 API 接口</label>
                 <select id="c115_api_type" class="form-control">
@@ -47,15 +47,17 @@
             <label class="form-label">Cookie (115.com)</label>
             <textarea id="cookieInput" class="form-control" rows="5" placeholder="UID=...; CID=...; SEID=..."></textarea>
         </div>
-        <button type="button" class="btn btn-primary" onclick="saveCookie()">
-            <i class="fa-solid fa-save"></i> 保存配置
-        </button>
-        <button type="button" class="btn btn-secondary" onclick="startQrLogin()">
-            <i class="fa-solid fa-qrcode"></i> 扫码登录
-        </button>
-        <button type="button" class="btn btn-secondary" onclick="checkUser()">
-            <i class="fa-solid fa-user-check"></i> 检查状态
-        </button>
+        <div class="cloud115-actions" style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+            <button type="button" class="btn btn-primary" onclick="saveCookie()">
+                <i class="fa-solid fa-save"></i> 保存配置
+            </button>
+            <button type="button" class="btn btn-secondary" onclick="startQrLogin()">
+                <i class="fa-solid fa-qrcode"></i> 扫码登录
+            </button>
+            <button type="button" class="btn btn-secondary" onclick="checkUser()">
+                <i class="fa-solid fa-user-check"></i> 检查状态
+            </button>
+        </div>
     </form>
     
     <!-- 二维码显示区 -->
