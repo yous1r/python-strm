@@ -1,4 +1,5 @@
 from app.events import spawn_task
+from app.utils.background_tasks import CLOUD_API_POOL, LOCAL_DB_POOL, spawn_background_task
 
 
 def apply_runtime_config_changes(changed_data: dict, old_config, new_config) -> None:
@@ -21,7 +22,11 @@ def apply_runtime_config_changes(changed_data: dict, old_config, new_config) -> 
 def trigger_sync_task(force: bool = False) -> dict[str, str]:
     from app.core.sync.engine import sync_engine
 
-    spawn_task(sync_engine.run_sync_task(force=force), name="sync_manual")
+    spawn_background_task(
+        lambda: sync_engine.run_sync_task(force=force),
+        name="sync_manual",
+        pool=LOCAL_DB_POOL,
+    )
     message = "强制全自动同步任务已在后台触发" if force else "全自动增量同步任务已在后台触发"
     return {"status": "success", "message": message}
 
@@ -29,7 +34,11 @@ def trigger_sync_task(force: bool = False) -> dict[str, str]:
 def trigger_db_sync_task() -> dict[str, str]:
     from app.services.cloud115_full_sync_service import cloud115_full_sync_service
 
-    spawn_task(cloud115_full_sync_service.start_full_sync(source="system"), name="db_sync_manual")
+    spawn_background_task(
+        lambda: cloud115_full_sync_service.start_full_sync(source="system"),
+        name="db_sync_manual",
+        pool=CLOUD_API_POOL,
+    )
     return {"status": "success", "message": "115 同步工作流已触发，稍后可在调试页查看结果"}
 
 
@@ -43,8 +52,8 @@ def trigger_emby_preheat_task(
 ) -> dict[str, str]:
     from app.core.emby.standalone_proxy import preheat_media_item_links
 
-    spawn_task(
-        preheat_media_item_links(
+    spawn_background_task(
+        lambda: preheat_media_item_links(
             instance_name=instance_name,
             user_id=user_id,
             library_ids=library_ids,
@@ -52,6 +61,7 @@ def trigger_emby_preheat_task(
             overwrite=overwrite,
         ),
         name="emby_preheat_media_links",
+        pool=CLOUD_API_POOL,
     )
     return {"status": "success", "message": "Emby media_item_links 预热任务已在后台触发"}
 

@@ -15,7 +15,7 @@ class TaskTracker:
         self._tasks: Dict[str, dict] = {}  # task_id -> {name, type, created_at, status, error}
         self._lock = asyncio.Lock()
 
-    async def spawn(self, coro: Awaitable[Any], name: str = "", task_type: str = "async") -> str:
+    async def spawn(self, coro: Awaitable[Any], name: str = "", task_type: str = "async", pool: str = "") -> str:
         """
         创建并追踪一个后台任务。
         task_type: "async" (协程) 或 "thread" (asyncio.to_thread)
@@ -29,6 +29,7 @@ class TaskTracker:
                 "task_id": task_id,
                 "name": name or getattr(coro, "__name__", "unknown"),
                 "type": task_type,
+                "pool": pool,
                 "created_at": now,
                 "status": "running",
                 "error": None,
@@ -62,6 +63,7 @@ class TaskTracker:
         *,
         name: str = "",
         task_type: str = "async",
+        pool: str = "",
     ) -> tuple[str, asyncio.Task]:
         """创建已登记的后台任务，并返回 task_id 与 task 对象。"""
         task_id = str(uuid.uuid4())[:8]
@@ -72,6 +74,7 @@ class TaskTracker:
                 "task_id": task_id,
                 "name": name or getattr(coro, "__name__", "unknown"),
                 "type": task_type,
+                "pool": pool,
                 "created_at": now,
                 "status": "running",
                 "error": None,
@@ -98,7 +101,7 @@ class TaskTracker:
         task = asyncio.create_task(_wrapper())
         return task_id, task
 
-    async def track_to_thread(self, func, *args, name: str = "", **kwargs) -> str:
+    async def track_to_thread(self, func, *args, name: str = "", pool: str = "", **kwargs) -> str:
         """追踪 asyncio.to_thread 调用"""
         task_id = str(uuid.uuid4())[:8]
         now = time.time()
@@ -108,6 +111,7 @@ class TaskTracker:
                 "task_id": task_id,
                 "name": name or getattr(func, "__name__", "unknown"),
                 "type": "thread",
+                "pool": pool,
                 "created_at": now,
                 "status": "running",
                 "error": None,
@@ -165,7 +169,7 @@ class TaskTracker:
 task_tracker = TaskTracker()
 
 
-def spawn_task(coro: Awaitable[Any], name: str = "", task_type: str = "async") -> str:
+def spawn_task(coro: Awaitable[Any], name: str = "", task_type: str = "async", pool: str = "") -> str:
     """
     创建并追踪后台任务。替代裸 asyncio.create_task()。
     返回 task_id 供后续查询。
@@ -178,6 +182,7 @@ def spawn_task(coro: Awaitable[Any], name: str = "", task_type: str = "async") -
                 "task_id": task_id,
                 "name": name or getattr(coro, "__name__", "unknown"),
                 "type": task_type,
+                "pool": pool,
                 "created_at": time.time(),
                 "status": "running",
                 "error": None,
@@ -237,10 +242,10 @@ class EventBus:
         if tasks:
             await asyncio.gather(*(task for _, task in tasks))
 
-    def emit_background(self, event_type: str, *, name: str = "", **kwargs) -> str:
+    def emit_background(self, event_type: str, *, name: str = "", pool: str = "", **kwargs) -> str:
         """后台发布事件，返回可查询的 task_id。"""
         task_name = name or f"event:{event_type}"
-        return spawn_task(self.emit(event_type, **kwargs), name=task_name)
+        return spawn_task(self.emit(event_type, **kwargs), name=task_name, pool=pool)
 
     async def _safe_call(self, event_type: str, callback: Callable, **kwargs):
         try:
@@ -260,7 +265,6 @@ event_bus = EventBus()
 EVENT_ORGANIZE_COMPLETE = "organize_complete"
 EVENT_STRM_GENERATED = "strm_generated"
 EVENT_TRANSFER_COMPLETE = "transfer_complete"
-EVENT_MONITOR_NEW_LINK = "monitor_new_link"
 EVENT_TRANSFER_RECEIVED = "transfer_received"
 EVENT_TRANSFER_MOVED = "transfer_moved"
 EVENT_TRANSFER_BATCH_REQUESTED = "transfer_batch_requested"

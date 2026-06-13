@@ -14,6 +14,7 @@ from app.core.transfer.classifier import classify
 from app.core.transfer.placement import derive_series_scope_path
 from app.core.transfer.receive_target import infer_archive_rel_path, prepare_receive_target
 from app.database import get_db_conn
+from app.utils.background_tasks import LOCAL_DB_POOL, run_in_background_pool
 
 
 transfer_semaphore = asyncio.Semaphore(1)
@@ -249,19 +250,25 @@ async def process_resource_transfer(resource: dict, *, source: str = "telegram")
         if not archive_rel_path and link_data.get("series_folder_id") and share_files:
             archive_rel_path = await infer_archive_rel_path(share_files, classifier=classify)
         if share_files and archive_rel_path:
-            await generator_115.generate_strm_for_folder(
-                target_dir_id,
-                share_files,
-                archive_rel_path,
-                config.strm.output_dir,
-                task_id=str(uuid.uuid4()),
+            await run_in_background_pool(
+                lambda: generator_115.generate_strm_for_folder(
+                    target_dir_id,
+                    share_files,
+                    archive_rel_path,
+                    config.strm.output_dir,
+                    task_id=str(uuid.uuid4()),
+                ),
+                pool=LOCAL_DB_POOL,
             )
-            await generator_115.sync_strm_files_from_manifest(
-                dir_id=target_dir_id,
-                output_dir=config.strm.output_dir,
-                root_output_dir=config.strm.output_dir,
-                base_url=getattr(config.strm, "base_url", "") or "",
-                archive_root=derive_series_scope_path(archive_rel_path),
+            await run_in_background_pool(
+                lambda: generator_115.sync_strm_files_from_manifest(
+                    dir_id=target_dir_id,
+                    output_dir=config.strm.output_dir,
+                    root_output_dir=config.strm.output_dir,
+                    base_url=getattr(config.strm, "base_url", "") or "",
+                    archive_root=derive_series_scope_path(archive_rel_path),
+                ),
+                pool=LOCAL_DB_POOL,
             )
 
         await _notify_transfer_success(share_url, receive_code)
@@ -309,4 +316,3 @@ async def _update_tg_status(db_id, status: str):
     async with get_db_conn() as db:
         await db.execute("UPDATE tg_resources SET status = ? WHERE id = ?", (status, db_id))
         await db.commit()
-

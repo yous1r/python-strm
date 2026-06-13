@@ -296,6 +296,7 @@ class BatchPrepareTests(unittest.IsolatedAsyncioTestCase):
 
         mocked_manifest.assert_awaited_once_with(
             dir_id="cid-6",
+            dir_name="剧集/国产剧集/示例剧/Season 1",
             output_dir="strm_output/剧集/国产剧集/示例剧/Season 1",
             base_url="http://example.com",
             recursive=True,

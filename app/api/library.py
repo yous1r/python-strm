@@ -8,7 +8,8 @@ from loguru import logger
 
 from app.database import get_db_conn, insert_tg_resource
 from app.core.monitor.telegram import telegram_monitor
-from app.services.telegram_resource_transfer_service import normalize_resource_payload
+from app.services.telegram_resource_transfer_service import normalize_resource_payload, process_resource_transfer
+from app.utils.background_tasks import CLOUD_API_POOL, LOCAL_DB_POOL, spawn_background_task
 
 
 
@@ -179,12 +180,15 @@ async def upload_tg_json(background_tasks: BackgroundTasks, file: UploadFile = F
         except Exception as e:
             logger.exception(f"Error in process_json_background: {e}")
             
-    background_tasks.add_task(process_json_background, messages, channel_name, channel_id)
+    spawn_background_task(
+        lambda: process_json_background(messages, channel_name, channel_id),
+        name="telegram_json_import",
+        pool=LOCAL_DB_POOL,
+    )
     return {"status": "success", "message": f"成功接收到 {len(messages)} 条历史消息，正在后台清洗解析并入库。"}
 
 @router.post("/transfer/{res_id}")
 async def manual_transfer(res_id: int):
-    from app.events import event_bus, EVENT_MONITOR_NEW_LINK
     async with get_db_conn() as db:
         db.row_factory = dict_factory
         cursor = await db.execute("SELECT * FROM tg_resources WHERE id = ?", (res_id,))
@@ -206,7 +210,11 @@ async def manual_transfer(res_id: int):
         "db_id": res_id,  # 传入 db_id 以便转存成功后更新状态
         "ignore_filters": True
     }
-    event_bus.emit_background(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
+    spawn_background_task(
+        lambda: process_resource_transfer(link_data, source="telegram"),
+        name="telegram_resource_transfer",
+        pool=CLOUD_API_POOL,
+    )
     return {"status": "success"}
 
 @router.post("/transfer_batch")
@@ -386,5 +394,9 @@ async def migrate_legacy(background_tasks: BackgroundTasks):
                     await db.execute("UPDATE tg_resources SET base_title=?, poster_url=?, overview=?, cast_text=? WHERE id=?", 
                                      (b_title, poster, overview, cast_text, row['id']))
                     await db.commit()
-    background_tasks.add_task(run_migration)
+    spawn_background_task(
+        run_migration,
+        name="telegram_legacy_migration",
+        pool=LOCAL_DB_POOL,
+    )
     return {"status": "success", "message": "后台清洗升级任务已启动"}

@@ -16,6 +16,7 @@ from app.events import (
     spawn_task,
 )
 from app.database import get_db_conn
+from app.utils.background_tasks import LOCAL_DB_POOL, run_in_background_pool
 
 
 class TransferServiceError(Exception):
@@ -70,20 +71,26 @@ async def receive_share_task(
     task_id = str(uuid.uuid4())
 
     if receive_target.archive_rel_path:
-        generated = await generator_115.generate_strm_for_folder(
-            target_dir,
-            share_files,
-            receive_target.archive_rel_path,
-            strm_cfg.output_dir,
-            task_id=task_id,
+        generated = await run_in_background_pool(
+            lambda: generator_115.generate_strm_for_folder(
+                target_dir,
+                share_files,
+                receive_target.archive_rel_path,
+                strm_cfg.output_dir,
+                task_id=task_id,
+            ),
+            pool=LOCAL_DB_POOL,
         )
         series_scope = derive_series_scope_path(receive_target.archive_rel_path)
-        strm_stats = await generator_115.sync_strm_files_from_manifest(
-            dir_id=target_dir,
-            output_dir=strm_cfg.output_dir,
-            root_output_dir=strm_cfg.output_dir,
-            base_url=getattr(strm_cfg, "base_url", "") or "",
-            archive_root=series_scope,
+        strm_stats = await run_in_background_pool(
+            lambda: generator_115.sync_strm_files_from_manifest(
+                dir_id=target_dir,
+                output_dir=strm_cfg.output_dir,
+                root_output_dir=strm_cfg.output_dir,
+                base_url=getattr(strm_cfg, "base_url", "") or "",
+                archive_root=series_scope,
+            ),
+            pool=LOCAL_DB_POOL,
         )
         return {
             "status": "success",
@@ -242,7 +249,10 @@ async def overwrite_task_strm(task_id: str) -> dict[str, object]:
     if not records:
         raise TransferServiceError("该任务暂无可覆盖的 STRM 记录", status_code=404)
 
-    rewritten = await generator_115.rewrite_manifest_records(records)
+    rewritten = await run_in_background_pool(
+        lambda: generator_115.rewrite_manifest_records(records),
+        pool=LOCAL_DB_POOL,
+    )
     return {
         "status": "success",
         "task_id": task_id,
@@ -257,7 +267,10 @@ async def rewrite_archive_strm(archive_root: str = "") -> dict[str, object]:
     if not records:
         raise TransferServiceError("当前范围内暂无可覆盖的 STRM 记录", status_code=404)
 
-    result = await generator_115.rewrite_from_manifest(archive_root)
+    result = await run_in_background_pool(
+        lambda: generator_115.rewrite_from_manifest(archive_root),
+        pool=LOCAL_DB_POOL,
+    )
     return {
         "status": "success",
         **result,

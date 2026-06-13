@@ -1,7 +1,7 @@
 import asyncio
 import httpx
 import re
-from app.events import spawn_task
+from app.events import spawn_task, task_tracker
 import json
 from fastapi import FastAPI, Request, Response, BackgroundTasks
 from fastapi.responses import RedirectResponse
@@ -10,6 +10,7 @@ import uvicorn
 
 from app.config import get_config
 from app.core.cloud115.client import client_115
+from app.utils.background_tasks import CLOUD_API_POOL, DEFAULT_POOL, spawn_background_task
 from app.core.transfer.strm_manifest import (
     get_media_item_link,
     get_strm_record_by_file_id,
@@ -872,10 +873,19 @@ def create_proxy_app(instance) -> FastAPI:
                                     except Exception as e:
                                         logger.error(f"[PROXY] fix_runtime_and_sync failed for {i_id}: {repr(e)}")
                                 
-                                background_tasks.add_task(
-                                    fix_runtime_and_sync, user_id, item_id, 
-                                    position_ticks, effective_runtime_ticks, event_type,
-                                    upstream_url, request, api_key
+                                spawn_background_task(
+                                    lambda: fix_runtime_and_sync(
+                                        user_id,
+                                        item_id,
+                                        position_ticks,
+                                        effective_runtime_ticks,
+                                        event_type,
+                                        upstream_url,
+                                        request,
+                                        api_key,
+                                    ),
+                                    name="proxy_user_data_sync",
+                                    pool=CLOUD_API_POOL,
                                 )
                                 logger.info(f"[PROXY] 📋 Background task dispatched for {item_id} (Event: {event_type})")
                             else:
@@ -997,4 +1007,8 @@ async def restart_standalone_proxy():
     config = get_config()
     if config.emby.proxy.enabled:
         logger.info("[PROXY] Hot reloading Standalone Proxy...")
-        _proxy_task = asyncio.create_task(start_standalone_proxy())
+        _, _proxy_task = await task_tracker.create_task(
+            start_standalone_proxy(),
+            name="standalone_proxy",
+            pool=DEFAULT_POOL,
+        )

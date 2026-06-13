@@ -9,8 +9,8 @@ from app.core.monitor.telegram_runtime import (
     extract_message_torrent_files,
     parse_channels,
 )
-from app.events import event_bus, EVENT_MONITOR_NEW_LINK
-from app.services.telegram_resource_transfer_service import normalize_resource_payload
+from app.services.telegram_resource_transfer_service import normalize_resource_payload, process_resource_transfer
+from app.utils.background_tasks import CLOUD_API_POOL, spawn_background_task
 
 class TelegramMonitor:
     def __init__(self):
@@ -63,8 +63,12 @@ class TelegramMonitor:
             if new_resources:
                 logger.info(f"Found and ingested {len(new_resources)} new Telegram resources")
                 for link_data in new_resources:
-                    # 实时监听只负责投递事件，避免转存链路阻塞消息消费循环。
-                    event_bus.emit_background(EVENT_MONITOR_NEW_LINK, link_data=link_data, source='telegram')
+                    # 实时监听只负责投递可观测后台任务，避免转存链路阻塞消息消费循环。
+                    spawn_background_task(
+                        lambda link_data=link_data: process_resource_transfer(link_data, source="telegram"),
+                        name="telegram_resource_transfer",
+                        pool=CLOUD_API_POOL,
+                    )
 
         await self.client.connect()
         if not await self.client.is_user_authorized():

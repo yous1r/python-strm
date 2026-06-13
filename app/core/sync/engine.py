@@ -9,6 +9,7 @@ from app.core.cloud115.strm import generator_115
 # from app.core.cloud123.strm import generator_123 # 如果 123 的生成器尚未实现，这里预留
 from app.core.emby.standalone_proxy import start_standalone_proxy
 from app.core.notify.manager import notify_manager
+from app.utils.background_tasks import LOCAL_DB_POOL, run_in_background_pool
 
 class SyncEngine:
     async def run_sync_task(self, force: bool = False):
@@ -33,13 +34,16 @@ class SyncEngine:
                     import os
                     target_out = os.path.join(config.strm.output_dir, sync_dir.name)
                     
-                    generated_115 = await generator_115.batch_generate(
-                        dir_id=sync_dir.dir_id,
-                        output_dir=target_out,
-                        base_url=config.strm.base_url,
-                        recursive=True,
-                        root_output_dir=config.strm.output_dir,
-                        force=force
+                    generated_115 = await run_in_background_pool(
+                        lambda sync_dir=sync_dir, target_out=target_out: generator_115.batch_generate(
+                            dir_id=sync_dir.dir_id,
+                            output_dir=target_out,
+                            base_url=config.strm.base_url,
+                            recursive=True,
+                            root_output_dir=config.strm.output_dir,
+                            force=force,
+                        ),
+                        pool=LOCAL_DB_POOL,
                     )
                     count = len(generated_115)
                     total_generated += count

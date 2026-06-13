@@ -130,6 +130,41 @@ async def test_dispatch_scraped_message_prefers_message_chat_id(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_dispatch_scraped_message_spawns_tracked_transfer_task(monkeypatch):
+    from app.services.telegram_service import _dispatch_scraped_message
+
+    class FakeMessage:
+        id = 9
+        message = "电影资源 https://115.com/s/abc"
+        text = message
+        date = None
+        chat_id = -1009876543210
+
+    async def fake_ingest_message(*args, **kwargs):
+        return [{"db_id": 1, "url": "https://115.com/s/abc", "type": "115"}]
+
+    spawn_calls = []
+
+    def fake_spawn(factory, *, name, pool):
+        spawn_calls.append({"factory": factory, "name": name, "pool": pool})
+        return "task-1"
+
+    monkeypatch.setattr("app.services.telegram_service.telegram_monitor.ingest_message", fake_ingest_message)
+    monkeypatch.setattr("app.services.telegram_service.spawn_background_task", fake_spawn, raising=False)
+
+    resources = await _dispatch_scraped_message("demo", FakeMessage(), emit_events=True)
+
+    assert len(resources) == 1
+    assert spawn_calls == [
+        {
+            "factory": spawn_calls[0]["factory"],
+            "name": "telegram_resource_transfer",
+            "pool": "cloud_api",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_sync_configured_channels_collects_resources(monkeypatch):
     from app.services.telegram_service import sync_configured_channels
 

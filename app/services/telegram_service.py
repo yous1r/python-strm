@@ -18,7 +18,8 @@ from app.database import (
     list_telegram_monitor_states,
     upsert_telegram_monitor_state,
 )
-from app.events import EVENT_MONITOR_NEW_LINK, event_bus
+from app.utils.background_tasks import CLOUD_API_POOL, spawn_background_task
+from app.services.telegram_resource_transfer_service import process_resource_transfer
 
 
 class TelegramValidationError(ValueError):
@@ -303,7 +304,11 @@ async def _dispatch_scraped_message(channel: int | str, message, *, emit_events:
 
     if emit_events:
         for link_data in resources:
-            event_bus.emit_background(EVENT_MONITOR_NEW_LINK, link_data=link_data, source="telegram")
+            spawn_background_task(
+                lambda link_data=link_data: process_resource_transfer(link_data, source="telegram"),
+                name="telegram_resource_transfer",
+                pool=CLOUD_API_POOL,
+            )
 
     return resources
 

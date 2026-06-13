@@ -184,7 +184,7 @@ class StrmGenerator115:
             strm_content += f"|User-Agent={config.cloud115.play_ua}"
         return strm_content
 
-    def _derive_scope_prefix(self, output_dir: str, dir_name: str, root_output_dir: str | None = None) -> str:
+    def _derive_scope_prefix(self, output_dir: str, dir_name: str = "", root_output_dir: str | None = None) -> str:
         """推导当前批次对应的 manifest 相对目录前缀。"""
 
         output_path = Path(output_dir).resolve()
@@ -293,7 +293,7 @@ class StrmGenerator115:
         self,
         *,
         dir_id: str,
-        dir_name: str,
+        dir_name: str = "",
         output_dir: str,
         root_output_dir: str | None,
     ) -> dict[str, int]:
@@ -459,7 +459,7 @@ class StrmGenerator115:
         output_dir: str,
         root_output_dir: str | None,
     ) -> list[dict]:
-        scope_prefix = self._derive_scope_prefix(output_dir, root_output_dir)
+        scope_prefix = self._derive_scope_prefix(output_dir, root_output_dir=root_output_dir)
         records = await self._load_cleanup_candidates(
             dir_id=dir_id,
             archive_dir_ids=[str(dir_id)],
@@ -471,7 +471,7 @@ class StrmGenerator115:
         self,
         *,
         dir_id: str,
-        dir_name: str,
+        dir_name: str = "",
         output_dir: str,
         base_url: str,
         recursive: bool = True,

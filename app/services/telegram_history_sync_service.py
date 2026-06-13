@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from typing import Iterable
@@ -29,6 +30,7 @@ from app.services.telegram_service import (
     _dispatch_scraped_message,
     validate_monitor_request,
 )
+from app.utils.background_tasks import CLOUD_API_POOL
 
 
 def _utc_now() -> datetime:
@@ -97,6 +99,7 @@ class TelegramHistorySyncRequest(BaseModel):
 class TelegramHistorySyncService:
     def __init__(self):
         self._events_initialized = False
+        self._active_request_keys: dict[str, str] = {}
 
     def init_event_subscriptions(self) -> None:
         if self._events_initialized:
@@ -161,12 +164,26 @@ class TelegramHistorySyncService:
         )
 
     def queue_history_sync_request(self, request: TelegramHistorySyncRequest, *, name: str | None = None) -> dict[str, object]:
+        request_key = self._build_request_key(request)
+        existing_task_id = self._active_request_keys.get(request_key)
+        if existing_task_id:
+            return {
+                "status": "duplicate",
+                "queued": False,
+                "task_id": existing_task_id,
+                "event": EVENT_TELEGRAM_HISTORY_SYNC_REQUESTED,
+                "source": request.source,
+                "message": "同一 Telegram 历史同步任务正在运行，已跳过重复投递",
+            }
+
         payload = request.model_dump()
         task_id = event_bus.emit_background(
             EVENT_TELEGRAM_HISTORY_SYNC_REQUESTED,
             name=name or f"telegram_history_sync:{request.source}",
+            pool=CLOUD_API_POOL,
             request=payload,
         )
+        self._active_request_keys[request_key] = task_id
         return {
             "status": "success",
             "queued": True,
@@ -175,6 +192,16 @@ class TelegramHistorySyncService:
             "source": request.source,
             "message": "Telegram 历史同步任务已加入后台队列",
         }
+
+    def _build_request_key(self, request: TelegramHistorySyncRequest) -> str:
+        payload = request.model_dump(exclude={"api_hash", "bot_token", "source"})
+        payload["channels"] = sorted(payload.get("channels") or [])
+        payload["keywords"] = sorted(payload.get("keywords") or [])
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+
+    def _release_request_key(self, request: TelegramHistorySyncRequest) -> None:
+        request_key = self._build_request_key(request)
+        self._active_request_keys.pop(request_key, None)
 
     def resolve_requested_range(
         self,
@@ -246,23 +273,26 @@ class TelegramHistorySyncService:
 
     async def handle_history_sync_requested(self, request: dict | TelegramHistorySyncRequest):
         sync_request = request if isinstance(request, TelegramHistorySyncRequest) else TelegramHistorySyncRequest(**request)
-        normalized_channels = validate_monitor_request(
-            sync_request.api_id,
-            sync_request.api_hash,
-            sync_request.channels,
-            empty_channels_message="未配置任何监听频道，无法执行历史同步",
-        )
-        client_to_use, disconnect_after, is_auth, auth_error = await _acquire_client(
-            sync_request.api_id,
-            sync_request.api_hash,
-            bot_token=sync_request.bot_token,
-            proxy=sync_request.proxy,
-        )
-
-        if auth_error or not is_auth:
-            raise TelegramValidationError(auth_error or "Telegram client not authorized")
+        client_to_use = None
+        disconnect_after = False
 
         try:
+            normalized_channels = validate_monitor_request(
+                sync_request.api_id,
+                sync_request.api_hash,
+                sync_request.channels,
+                empty_channels_message="未配置任何监听频道，无法执行历史同步",
+            )
+            client_to_use, disconnect_after, is_auth, auth_error = await _acquire_client(
+                sync_request.api_id,
+                sync_request.api_hash,
+                bot_token=sync_request.bot_token,
+                proxy=sync_request.proxy,
+            )
+
+            if auth_error or not is_auth:
+                raise TelegramValidationError(auth_error or "Telegram client not authorized")
+
             channel_results = []
             total_processed = 0
             total_inserted = 0
@@ -364,7 +394,8 @@ class TelegramHistorySyncService:
             )
             raise
         finally:
-            if disconnect_after:
+            self._release_request_key(sync_request)
+            if disconnect_after and client_to_use:
                 await client_to_use.disconnect()
 
     async def _run_chunk(

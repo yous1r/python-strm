@@ -19,6 +19,7 @@ from app.events import (
     EVENT_CLOUD115_FULL_SYNC_STRM_REFRESH_FINISHED,
     event_bus,
 )
+from app.utils.background_tasks import CLOUD_API_POOL, LOCAL_DB_POOL, run_in_background_pool
 
 
 class Cloud115FullSyncService:
@@ -56,12 +57,21 @@ class Cloud115FullSyncService:
         }
 
         async with self._lock:
+            active_task = self._find_active_task_locked()
+            if active_task:
+                return {
+                    "task_id": active_task["task_id"],
+                    "status": "duplicate",
+                    "current_stage": active_task.get("current_stage", "queued"),
+                    "message": "已有 115 同步工作流正在运行，已跳过重复投递",
+                }
             self._tasks[task_id] = task
             self._trim_tasks_locked(limit=100)
 
         event_bus.emit_background(
             EVENT_CLOUD115_FULL_SYNC_REQUESTED,
             name=f"cloud115_full_sync:{source}",
+            pool=CLOUD_API_POOL,
             task_id=task_id,
             source=source,
         )
@@ -140,13 +150,16 @@ class Cloud115FullSyncService:
             if not item.get("strm_enabled") or not item.get("output_dir"):
                 continue
 
-            manifest_stats = await generator_115.sync_manifest_records(
-                dir_id=str(item["dir_id"]),
-                dir_name=str(item['dir_name']),
-                output_dir=str(item["output_dir"]),
-                base_url=config.strm.base_url,
-                recursive=bool(item.get("recursive", True)),
-                root_output_dir=config.strm.output_dir,
+            manifest_stats = await run_in_background_pool(
+                lambda item=item: generator_115.sync_manifest_records(
+                    dir_id=str(item["dir_id"]),
+                    dir_name=str(item.get("dir_name") or item["dir_id"]),
+                    output_dir=str(item["output_dir"]),
+                    base_url=config.strm.base_url,
+                    recursive=bool(item.get("recursive", True)),
+                    root_output_dir=config.strm.output_dir,
+                ),
+                pool=LOCAL_DB_POOL,
             )
             changed = bool(manifest_stats.get("changed"))
             results.append(
@@ -185,18 +198,25 @@ class Cloud115FullSyncService:
         base_url: str,
         root_output_dir: str,
     ) -> dict[str, object]:
-        manifest_stats = await generator_115.sync_manifest_records(
-            dir_id=str(item["dir_id"]),
-            output_dir=str(item["output_dir"]),
-            base_url=base_url,
-            recursive=bool(item.get("recursive", True)),
-            root_output_dir=root_output_dir,
+        manifest_stats = await run_in_background_pool(
+            lambda: generator_115.sync_manifest_records(
+                dir_id=str(item["dir_id"]),
+                dir_name=str(item.get("dir_name") or item["dir_id"]),
+                output_dir=str(item["output_dir"]),
+                base_url=base_url,
+                recursive=bool(item.get("recursive", True)),
+                root_output_dir=root_output_dir,
+            ),
+            pool=LOCAL_DB_POOL,
         )
-        strm_stats = await generator_115.sync_strm_files_from_manifest(
-            dir_id=str(item["dir_id"]),
-            output_dir=str(item["output_dir"]),
-            root_output_dir=root_output_dir,
-            base_url=base_url,
+        strm_stats = await run_in_background_pool(
+            lambda: generator_115.sync_strm_files_from_manifest(
+                dir_id=str(item["dir_id"]),
+                output_dir=str(item["output_dir"]),
+                root_output_dir=root_output_dir,
+                base_url=base_url,
+            ),
+            pool=LOCAL_DB_POOL,
         )
         return {
             "dir": dict(item),
@@ -289,11 +309,14 @@ class Cloud115FullSyncService:
         results: list[dict[str, object]] = []
 
         for item in dirs:
-            strm_stats = await generator_115.sync_strm_files_from_manifest(
-                dir_id=str(item["dir_id"]),
-                output_dir=str(item["output_dir"]),
-                root_output_dir=config.strm.output_dir,
-                base_url=config.strm.base_url,
+            strm_stats = await run_in_background_pool(
+                lambda item=item: generator_115.sync_strm_files_from_manifest(
+                    dir_id=str(item["dir_id"]),
+                    output_dir=str(item["output_dir"]),
+                    root_output_dir=config.strm.output_dir,
+                    base_url=config.strm.base_url,
+                ),
+                pool=LOCAL_DB_POOL,
             )
             results.append(
                 {
@@ -503,6 +526,12 @@ class Cloud115FullSyncService:
         )
         for task_id, _ in ordered[:-limit]:
             self._tasks.pop(task_id, None)
+
+    def _find_active_task_locked(self) -> dict[str, object] | None:
+        for task in self._tasks.values():
+            if task.get("status") in {"running", "queued"}:
+                return task
+        return None
 
     def _now(self) -> str:
         return datetime.now().isoformat(timespec="seconds")

@@ -13,6 +13,7 @@ from app.core.notify.manager import notify_manager
 from app.core.transfer.classifier import build_archive_path, classify
 from app.core.transfer.placement import derive_series_scope_path
 from app.database import get_db_conn
+from app.utils.background_tasks import LOCAL_DB_POOL, run_in_background_pool
 from app.events import (
     EVENT_STRM_BATCH_COMPLETED,
     EVENT_STRM_BATCH_REQUESTED,
@@ -281,13 +282,17 @@ async def handle_strm_batch_requested(
         return
 
     output_dir = os.path.join(config.strm.output_dir, target_subdir) if target_subdir else config.strm.output_dir
-    manifest_stats = await generator_115.sync_manifest_records(
-        dir_id=target_dir_id,
-        output_dir=output_dir,
-        base_url=config.strm.base_url,
-        recursive=True,
-        root_output_dir=config.strm.output_dir,
-        preserve_existing_structure=True,
+    manifest_stats = await run_in_background_pool(
+        lambda: generator_115.sync_manifest_records(
+            dir_id=target_dir_id,
+            dir_name=target_subdir or target_dir_id,
+            output_dir=output_dir,
+            base_url=config.strm.base_url,
+            recursive=True,
+            root_output_dir=config.strm.output_dir,
+            preserve_existing_structure=True,
+        ),
+        pool=LOCAL_DB_POOL,
     )
     await event_bus.emit(
         EVENT_STRM_BATCH_REWRITE_REQUESTED,
@@ -320,12 +325,15 @@ async def handle_strm_batch_rewrite_requested(
 
     output_dir = os.path.join(config.strm.output_dir, target_subdir) if target_subdir else config.strm.output_dir
     series_scope = derive_series_scope_path(target_subdir)
-    strm_stats = await generator_115.sync_strm_files_from_manifest(
-        dir_id=target_dir_id,
-        output_dir=output_dir,
-        root_output_dir=config.strm.output_dir,
-        base_url=config.strm.base_url,
-        archive_root=series_scope,
+    strm_stats = await run_in_background_pool(
+        lambda: generator_115.sync_strm_files_from_manifest(
+            dir_id=target_dir_id,
+            output_dir=output_dir,
+            root_output_dir=config.strm.output_dir,
+            base_url=config.strm.base_url,
+            archive_root=series_scope,
+        ),
+        pool=LOCAL_DB_POOL,
     )
     await event_bus.emit(
         EVENT_STRM_BATCH_COMPLETED,

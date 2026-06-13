@@ -3,6 +3,7 @@ import time
 from loguru import logger
 from app.core.cloud115.auth import auth_manager
 import asyncio
+from app.utils.background_tasks import CLOUD_API_POOL, get_pool_semaphore
 
 # --- 内部工具函数 ---
 def _extract_share_code(url):
@@ -23,8 +24,8 @@ def _normalize_file_name(item):
 class Cloud115Client:
     def __init__(self):
         self.auth = auth_manager
-        # 限制并发
-        self.semaphore = asyncio.Semaphore(5)
+        # 网盘接口共享独立并发池，避免与本地库查询任务互相挤占。
+        self.semaphore = get_pool_semaphore(CLOUD_API_POOL)
         # 内存缓存：key为 'pickcode|user_agent'，value为 (到期时间戳, 直链url)
         self._url_cache: Dict[str, Tuple[float, str]] = {}
 

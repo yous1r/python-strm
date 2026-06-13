@@ -7,6 +7,7 @@ from loguru import logger
 from app.config import get_config
 from app.core.cloud115.auth import auth_manager
 from app.events import EVENT_CLOUD115_DB_SYNC_COMPLETED, event_bus
+from app.utils.background_tasks import CLOUD_API_POOL, get_pool_semaphore
 
 
 def _get_db_path() -> str:
@@ -38,15 +39,16 @@ async def sync_directory(dir_id: str, dir_name: str = "", recursive: bool = True
     logger.info(f"[DBSync] 开始同步目录: {name} (cid={dir_id})")
 
     try:
-        count = await asyncio.to_thread(
-            updatedb,
-            client=client,
-            dbfile=db_path,
-            cid=dir_id,
-            recursive=recursive,
-            app="android",
-            async_=False,
-        )
+        async with get_pool_semaphore(CLOUD_API_POOL):
+            count = await asyncio.to_thread(
+                updatedb,
+                client=client,
+                dbfile=db_path,
+                cid=dir_id,
+                recursive=recursive,
+                app="android",
+                async_=False,
+            )
         logger.info(f"[DBSync] 同步完成: {name}, 影响 {count} 行")
         return count
     except Exception as e:
@@ -76,11 +78,20 @@ async def sync_all_configured() -> dict:
         )
 
     # 2. 同步 transfer 管道中的 archive_dir
-    # transfer_cfg = config.transfer
-    # if transfer_cfg.enabled:
-    #     if transfer_cfg.archive_dir_id and transfer_cfg.archive_dir_id != "0":
-    #         count = await sync_directory(transfer_cfg.archive_dir_id, "archive_dir")
-    #         results["archive_dir"] = count
+    transfer_cfg = config.transfer
+    if transfer_cfg.enabled:
+        archive_dir_id = getattr(transfer_cfg, "archive_dir_id", "")
+        if archive_dir_id and archive_dir_id != "0":
+            count = await sync_directory(archive_dir_id, "archive_dir")
+            results["archive_dir"] = count
+            await event_bus.emit(
+                EVENT_CLOUD115_DB_SYNC_COMPLETED,
+                dir_id=archive_dir_id,
+                dir_name="archive_dir",
+                recursive=True,
+                count=count,
+                source="sync_all_configured",
+            )
 
     return results
 

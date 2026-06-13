@@ -6,6 +6,22 @@ from app.services.cloud115_full_sync_service import Cloud115FullSyncService
 
 
 class Cloud115FullSyncServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_start_full_sync_deduplicates_active_workflow_before_task_insert(self):
+        service = Cloud115FullSyncService()
+
+        with patch(
+            "app.services.cloud115_full_sync_service.event_bus.emit_background",
+            return_value="tracked-1",
+        ) as emit_mock:
+            first = await service.start_full_sync(source="debug")
+            second = await service.start_full_sync(source="scheduler")
+
+        self.assertEqual(first["status"], "running")
+        self.assertEqual(second["status"], "duplicate")
+        self.assertEqual(second["task_id"], first["task_id"])
+        self.assertEqual(len(service._tasks), 1)
+        emit_mock.assert_called_once()
+
     async def test_run_db_sync_step_returns_structured_dir_results(self):
         service = Cloud115FullSyncService()
         dirs = [
@@ -88,6 +104,7 @@ class Cloud115FullSyncServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["has_changes"])
         manifest_mock.assert_awaited_once_with(
             dir_id="100",
+            dir_name="影视",
             output_dir="strm_output/影视",
             base_url="",
             recursive=True,
@@ -176,6 +193,7 @@ class Cloud115FullSyncServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["dirs"], dirs)
         manifest_mock.assert_awaited_once_with(
             dir_id="100",
+            dir_name="影视",
             output_dir="strm_output/影视",
             base_url="http://localhost:8095",
             recursive=True,

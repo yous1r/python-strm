@@ -102,3 +102,47 @@ def test_queue_history_sync_request_returns_success_payload(monkeypatch):
     assert result["status"] == "success"
     assert result["queued"] is True
     assert result["task_id"] == "task-123"
+
+
+def test_queue_history_sync_request_deduplicates_active_payload_before_emit(monkeypatch):
+    from app.services.telegram_history_sync_service import (
+        TelegramHistorySyncRequest,
+        TelegramHistorySyncService,
+    )
+
+    emitted = []
+
+    def fake_emit_background(*args, **kwargs):
+        emitted.append((args, kwargs))
+        return f"task-{len(emitted)}"
+
+    monkeypatch.setattr(
+        "app.services.telegram_history_sync_service.event_bus.emit_background",
+        fake_emit_background,
+    )
+
+    service = TelegramHistorySyncService()
+    request = TelegramHistorySyncRequest(
+        api_id="1",
+        api_hash="2",
+        channels=["@demo"],
+        mode="date_range",
+        date_start="2026-01-01",
+        date_end="2026-01-31",
+        source="manual",
+    )
+
+    first = service.queue_history_sync_request(request, name="telegram_history_sync:manual")
+    second = service.queue_history_sync_request(request, name="telegram_history_sync:manual")
+
+    assert first["status"] == "success"
+    assert second["status"] == "duplicate"
+    assert second["task_id"] == first["task_id"]
+    assert len(emitted) == 1
+
+
+def test_monitor_new_link_event_is_no_longer_exported():
+    import pytest
+
+    with pytest.raises(ImportError):
+        exec("from app.events import EVENT_MONITOR_NEW_LINK", {})

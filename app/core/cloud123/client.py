@@ -1,13 +1,13 @@
-import asyncio
 from typing import List, Dict, Optional
 import httpx
 from loguru import logger
 from app.core.cloud123.auth import auth_manager_123
+from app.utils.background_tasks import CLOUD_API_POOL, get_pool_semaphore
 
 class Cloud123Client:
     def __init__(self):
         self.auth = auth_manager_123
-        self.semaphore = asyncio.Semaphore(5)
+        self.semaphore = get_pool_semaphore(CLOUD_API_POOL)
         self.base_url = "https://www.123pan.com/api"
         # 也可以使用 openapi: https://openapi.123pan.com/api/v1 
         # 此处我们基于web接口或者OpenAPI实现核心功能。为稳定起见，假设使用的是标准的Web API结构

@@ -7,6 +7,7 @@ from app.core.search.pansou import pansou_client
 from app.core.cloud115.client import client_115
 from app.core.sync.engine import sync_engine
 from app.services.transfer_service import TransferServiceError, receive_share_task
+from app.utils.background_tasks import CLOUD_API_POOL, spawn_background_task
 import asyncio
 
 router = APIRouter(prefix="/search", tags=["search"])
@@ -151,7 +152,11 @@ async def transfer_resource(req: TransferRequest, background_tasks: BackgroundTa
                 logger.info(f"Successfully added offline task {name} ({info_hash})")
                 # 开启后台轮询
                 if info_hash:
-                    background_tasks.add_task(poll_offline_task, info_hash, archive_dir_id)
+                    spawn_background_task(
+                        lambda: poll_offline_task(info_hash, archive_dir_id),
+                        name="offline_task_poll",
+                        pool=CLOUD_API_POOL,
+                    )
                 return {"status": "success", "msg": f"已推送到离线下载: {name}"}
             else:
                 raise HTTPException(status_code=400, detail=res.get("error", "添加离线任务失败"))
