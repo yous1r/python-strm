@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from loguru import logger
 
-from app.core.cloud115.client import client_115
+from app.core.cloud import get_cloud_plugin
 from app.core.transfer.classifier import classify, build_archive_path
 from app.core.transfer.catalog import ensure_path
 from app.core.transfer.scope import init_scope, validate, expand_allowed_dirs
@@ -69,7 +69,7 @@ async def trigger_telegram_history_sync_debug():
 @router.post("/step1_share_receive")
 async def step1_share_receive(share_url: str, receive_code: str = "", target_dir_id: str = "0"):
     """仅执行 share_receive，返回结果。filter_rules=None 表示接收全部文件，不应用规则过滤。"""
-    res = await client_115.share_receive(share_url, receive_code, target_dir_id, filter_rules=None)
+    res = await get_cloud_plugin("115").client.share_receive(share_url, receive_code, target_dir_id, filter_rules=None)
     return DebugResult(
         step="share_receive",
         success=res.get("state", False),
@@ -84,7 +84,7 @@ async def step2_list_files(dir_id: str = "0", limit: int = 50):
     """列出指定目录的文件"""
     config = get_config()
     archive_id = getattr(config.transfer, "archive_dir_id", "")
-    res = await client_115.list_files(dir_id, limit=limit)
+    res = await get_cloud_plugin("115").client.list_files(dir_id, limit=limit)
     files = []
     if not res.get("error"):
         for item in res.get("items", []):
@@ -116,7 +116,7 @@ async def step3_move_file(req: MoveRequest):
     if not validate(req.source_dir_id, req.target_dir_id):
         return DebugResult(step="move_file", success=False, error="安全校验失败").model_dump()
 
-    ok = await client_115.move_files([req.file_cid], req.target_dir_id)
+    ok = await get_cloud_plugin("115").client.move_files([req.file_cid], req.target_dir_id)
     return DebugResult(
         step="move_file",
         success=ok,
@@ -172,7 +172,7 @@ async def step5_ensure_path(req: CatalogRequest):
 @router.get("/step6_list_dirs")
 async def step6_list_dirs(dir_id: str = "0"):
     """列出纯目录"""
-    res = await client_115.list_dirs(dir_id)
+    res = await get_cloud_plugin("115").client.list_dirs(dir_id)
     return DebugResult(
         step="list_dirs",
         success=not res.get("error"),
@@ -190,7 +190,7 @@ class MkdirRequest(BaseModel):
 @router.post("/step7_mkdir")
 async def step7_mkdir(req: MkdirRequest):
     """创建单个文件夹"""
-    res = await client_115.create_folder(req.parent_id, req.name)
+    res = await get_cloud_plugin("115").client.create_folder(req.parent_id, req.name)
     return DebugResult(
         step="mkdir",
         success="id" in res,
@@ -234,7 +234,7 @@ async def step8_organize_one(req: OrganizeOneRequest):
     # 3. 移动
     init_scope(req.temp_dir_id, archive_id, req.temp_dir_id)
     expand_allowed_dirs(target_cid)
-    ok = await client_115.move_files([req.file_cid], target_cid)
+    ok = await get_cloud_plugin("115").client.move_files([req.file_cid], target_cid)
     steps.append(f"移动: {'成功' if ok else '失败'}")
 
     return DebugResult(

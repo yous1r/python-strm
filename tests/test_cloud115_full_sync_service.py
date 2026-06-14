@@ -24,6 +24,8 @@ class Cloud115FullSyncServiceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_db_sync_step_returns_structured_dir_results(self):
         service = Cloud115FullSyncService()
+        sync_directory = AsyncMock(return_value=7)
+        service.plugin = SimpleNamespace(sync_directory=sync_directory)
         dirs = [
             {
                 "dir_id": "100",
@@ -35,15 +37,12 @@ class Cloud115FullSyncServiceTests(unittest.IsolatedAsyncioTestCase):
             }
         ]
 
-        with patch(
-            "app.services.cloud115_full_sync_service.sync_directory",
-            new=AsyncMock(return_value=7),
-        ):
-            results = await service.run_db_sync_step(dirs)
+        results = await service.run_db_sync_step(dirs)
 
         self.assertEqual(results[0]["dir_id"], "100")
         self.assertEqual(results[0]["dir_name"], "影视")
         self.assertEqual(results[0]["count"], 7)
+        sync_directory.assert_awaited_once_with("100", "影视", True)
 
     async def test_run_manifest_refresh_step_returns_cleanup_stats(self):
         service = Cloud115FullSyncService()
@@ -69,21 +68,19 @@ class Cloud115FullSyncServiceTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("app.services.cloud115_full_sync_service.get_config", return_value=config),
-            patch(
-                "app.services.cloud115_full_sync_service.generator_115.sync_manifest_records",
-                new=AsyncMock(
-                    return_value={
-                        "scanned": 5,
-                        "created": 2,
-                        "updated": 1,
-                        "unchanged": 2,
-                        "deleted_records": 2,
-                        "deleted_files": 1,
-                        "changed": True,
-                    }
-                ),
-            ) as manifest_mock,
         ):
+            manifest_mock = AsyncMock(
+                return_value={
+                    "scanned": 5,
+                    "created": 2,
+                    "updated": 1,
+                    "unchanged": 2,
+                    "deleted_records": 2,
+                    "deleted_files": 1,
+                    "changed": True,
+                }
+            )
+            service.plugin = SimpleNamespace(strm_generator=SimpleNamespace(sync_manifest_records=manifest_mock))
             result = await service.run_manifest_refresh_step(dirs)
 
         self.assertEqual(result["results"], [
@@ -129,11 +126,9 @@ class Cloud115FullSyncServiceTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("app.services.cloud115_full_sync_service.get_config", return_value=config),
-            patch(
-                "app.services.cloud115_full_sync_service.generator_115.sync_strm_files_from_manifest",
-                new=AsyncMock(return_value={"scanned": 4, "updated": 2, "skipped": 2, "failed": 0, "files": ["a.strm", "b.strm"]}),
-            ) as generate_mock,
         ):
+            generate_mock = AsyncMock(return_value={"scanned": 4, "updated": 2, "skipped": 2, "failed": 0, "files": ["a.strm", "b.strm"]})
+            service.plugin = SimpleNamespace(strm_generator=SimpleNamespace(sync_strm_files_from_manifest=generate_mock))
             results = await service.run_strm_refresh_step(dirs)
 
         self.assertEqual(results[0]["generated_count"], 2)

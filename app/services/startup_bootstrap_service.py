@@ -1,7 +1,7 @@
 from loguru import logger
 
 from app.config import get_config
-from app.core.cloud115.db_sync import sync_all_configured
+from app.core.cloud import get_cloud_plugin
 from app.core.sync.engine import sync_engine
 from app.services.telegram_history_sync_service import telegram_history_sync_service
 
@@ -17,7 +17,7 @@ async def run_startup_pipeline() -> dict[str, object]:
 
     if pipeline.run_db_sync:
         logger.info("Running startup 115 DB sync...")
-        results["db_sync"] = await sync_all_configured()
+        results["db_sync"] = await get_cloud_plugin("115").sync_all_configured()
 
     telegram_config = config.monitor.telegram
     should_run_telegram_sync = (

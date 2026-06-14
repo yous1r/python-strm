@@ -5,8 +5,7 @@ from datetime import datetime
 
 from app.config import get_config
 from app.database import get_db_conn
-from app.core.cloud115.strm import generator_115
-# from app.core.cloud123.strm import generator_123 # 如果 123 的生成器尚未实现，这里预留
+from app.core.cloud import get_cloud_plugin
 from app.core.emby.standalone_proxy import start_standalone_proxy
 from app.core.notify.manager import notify_manager
 from app.utils.background_tasks import LOCAL_DB_POOL, run_in_background_pool
@@ -24,6 +23,7 @@ class SyncEngine:
         try:
             # 1. 扫描 115 网盘
             if config.cloud115.enabled and config.cloud115.cookie:
+                plugin = get_cloud_plugin("115")
                 logger.info("Scanning 115 cloud drive...")
                 if not config.cloud115.sync_dirs:
                     logger.warning("No sync directories configured for 115. Skipping.")
@@ -35,7 +35,7 @@ class SyncEngine:
                     target_out = os.path.join(config.strm.output_dir, sync_dir.name)
                     
                     generated_115 = await run_in_background_pool(
-                        lambda sync_dir=sync_dir, target_out=target_out: generator_115.batch_generate(
+                        lambda sync_dir=sync_dir, target_out=target_out: plugin.strm_generator.batch_generate(
                             dir_id=sync_dir.dir_id,
                             output_dir=target_out,
                             base_url=config.strm.base_url,

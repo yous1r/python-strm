@@ -5,9 +5,7 @@ import re
 from loguru import logger
 
 from app.config import get_config
-from app.core.cloud115.client import client_115
-from app.core.cloud115.db_sync import sync_directory
-from app.core.cloud115.strm import generator_115
+from app.core.cloud import get_cloud_plugin
 from app.core.media.parser import parse_filename
 from app.core.notify.manager import notify_manager
 from app.core.transfer.classifier import build_archive_path, classify
@@ -67,6 +65,8 @@ async def handle_batch_requested(task_id: str, rows: list, base_title: str = "",
     batch_title = base_title or rows[0].get("base_title") or "批量转存"
     episode_count = len(rows)
     cloud_type = str(kwargs.get("cloud_type") or "115")
+    plugin = get_cloud_plugin(cloud_type)
+    client = plugin.client
     destination_dir_id = str(
         kwargs.get("destination_dir_id")
         or kwargs.get("target_dir_id")
@@ -83,7 +83,7 @@ async def handle_batch_requested(task_id: str, rows: list, base_title: str = "",
             path_parts = build_archive_path(classify_result)
             series_path_str = "/".join(path_parts)
             if destination_dir_id and destination_dir_id != "0":
-                res = await client_115.create_path(destination_dir_id, series_path_str)
+                res = await client.create_path(destination_dir_id, series_path_str)
                 if "id" in res and res["id"]:
                     series_folder_id = res["id"]
                     logger.info(f"[Batch] 已创建归档路径: {series_path_str} (cid={series_folder_id})")
@@ -139,6 +139,7 @@ async def handle_batch_prepared(
 ):
     state = _batch_states.get(task_id) or {}
     target_dir_id = target_dir_id or series_folder_id or state.get("target_dir_id") or destination_dir_id
+    cloud_type = str(kwargs.get("cloud_type") or state.get("cloud_type") or "115")
 
     if not target_dir_id or target_dir_id == "0":
         error_message = "未选择 STRM 远程扫描源目录"
@@ -161,7 +162,7 @@ async def handle_batch_prepared(
                 await asyncio.sleep(0.1)
 
             try:
-                transfer_res = await client_115.share_receive(
+                transfer_res = await get_cloud_plugin(cloud_type).client.share_receive(
                     share_url,
                     receive_code,
                     target_dir_id,
@@ -248,6 +249,7 @@ async def handle_batch_done(task_id: str, batch_state: dict, **kwargs):
                 strm_rel_dir=archive_rel_path,
                 batch_title=batch_state.get("title") or task_id,
                 files=batch_state.get("share_files", []),
+                cloud_type=batch_state.get("cloud_type") or "115",
             )
 
         await _notify_batch_summary(task_id, batch_state)
@@ -268,11 +270,13 @@ async def handle_batch_db_sync_requested(
         logger.warning(f"[Batch] {task_id}: archive_dir_id 为空，跳过批次 db_sync")
         return
 
+    cloud_type = str(kwargs.get("cloud_type") or "115")
     dir_name = archive_rel_path or batch_title or archive_dir_id
-    count = await sync_directory(archive_dir_id, dir_name, recursive=True)
+    count = await get_cloud_plugin(cloud_type).sync_directory(archive_dir_id, dir_name, recursive=True)
     await event_bus.emit(
         EVENT_TRANSFER_BATCH_DB_SYNC_COMPLETED,
         task_id=task_id,
+        cloud_type=cloud_type,
         archive_dir_id=archive_dir_id,
         archive_rel_path=archive_rel_path,
         strm_rel_dir=strm_rel_dir or archive_rel_path,
@@ -296,13 +300,14 @@ async def handle_strm_batch_requested(
     config = get_config()
     target_dir_id = archive_dir_id or folder_cid
     target_subdir = strm_rel_dir or archive_rel_path or strm_subdir
+    cloud_type = str(kwargs.get("cloud_type") or "115")
     if not target_dir_id:
         logger.warning(f"[Batch] {task_id}: 未找到目标目录，跳过 STRM 刷新")
         return
 
     output_dir = os.path.join(config.strm.output_dir, target_subdir) if target_subdir else config.strm.output_dir
     manifest_stats = await run_in_background_pool(
-        lambda: generator_115.sync_manifest_records(
+        lambda: get_cloud_plugin(cloud_type).strm_generator.sync_manifest_records(
             dir_id=target_dir_id,
             dir_name=target_subdir or target_dir_id,
             output_dir=output_dir,
@@ -316,6 +321,7 @@ async def handle_strm_batch_requested(
     await event_bus.emit(
         EVENT_STRM_BATCH_REWRITE_REQUESTED,
         task_id=task_id,
+        cloud_type=cloud_type,
         archive_dir_id=target_dir_id,
         archive_rel_path=target_subdir,
         files=files or share_files or [],
@@ -338,6 +344,7 @@ async def handle_strm_batch_rewrite_requested(
     config = get_config()
     target_dir_id = archive_dir_id
     target_subdir = archive_rel_path
+    cloud_type = str(kwargs.get("cloud_type") or "115")
     if not target_dir_id:
         logger.warning(f"[Batch] {task_id}: 未找到目标目录，跳过 STRM 重写")
         return
@@ -345,7 +352,7 @@ async def handle_strm_batch_rewrite_requested(
     output_dir = os.path.join(config.strm.output_dir, target_subdir) if target_subdir else config.strm.output_dir
     series_scope = derive_series_scope_path(target_subdir)
     strm_stats = await run_in_background_pool(
-        lambda: generator_115.sync_strm_files_from_manifest(
+        lambda: get_cloud_plugin(cloud_type).strm_generator.sync_strm_files_from_manifest(
             dir_id=target_dir_id,
             output_dir=output_dir,
             root_output_dir=config.strm.output_dir,
@@ -357,6 +364,7 @@ async def handle_strm_batch_rewrite_requested(
     await event_bus.emit(
         EVENT_STRM_BATCH_COMPLETED,
         task_id=task_id,
+        cloud_type=cloud_type,
         archive_dir_id=target_dir_id,
         archive_rel_path=target_subdir,
         files=files or [],
@@ -402,7 +410,7 @@ async def handle_batch_db_sync_completed(
     await event_bus.emit(
         EVENT_STRM_BATCH_REQUESTED,
         task_id=task_id,
-        cloud_type="115",
+        cloud_type=str(kwargs.get("cloud_type") or "115"),
         archive_dir_id=archive_dir_id,
         archive_rel_path=archive_rel_path,
         strm_rel_dir=strm_rel_dir or archive_rel_path,

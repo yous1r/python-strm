@@ -95,13 +95,20 @@ async def test_notify(channel: str):
         elif channel == "telegram":
             await telegram_notifier.send_message(content, title)
         elif channel == "bark":
-            await bark_notifier.send_message(content, title)
+            sent = await bark_notifier.send_message(content, title)
+            if sent is False:
+                raise HTTPException(
+                    status_code=502,
+                    detail="Bark 测试通知发送失败，请检查 Bark 服务地址、设备 Key、加密配置或服务响应",
+                )
         elif channel == "all":
             await notify_manager.notify(title, content)
         else:
             raise HTTPException(status_code=400, detail="未知的推送通道")
             
         return {"status": "success", "message": "测试请求已触发"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -183,6 +183,8 @@ class PlaybackIndexTests(unittest.IsolatedAsyncioTestCase):
             "play_identity": "pickcode-11",
             "strm_path": "/mnt/strm-self/archive/show.strm",
         }
+        mocked_download_url = AsyncMock(return_value="https://cdn.example/video.mkv")
+        plugin = SimpleNamespace(client=SimpleNamespace(get_download_url=mocked_download_url))
 
         with (
             patch("app.core.emby.standalone_proxy._get_playback_record_by_media_item", AsyncMock(return_value=None)) as mocked_link,
@@ -195,7 +197,7 @@ class PlaybackIndexTests(unittest.IsolatedAsyncioTestCase):
             ),
             patch("app.core.emby.standalone_proxy._get_local_playback_record_by_path", AsyncMock(return_value=record)) as mocked_lookup,
             patch("app.core.emby.standalone_proxy._cache_media_item_playback_record", AsyncMock()) as mocked_cache,
-            patch("app.core.emby.standalone_proxy.client_115.get_download_url", AsyncMock(return_value="https://cdn.example/video.mkv")) as mocked_url,
+            patch("app.core.emby.standalone_proxy.get_cloud_plugin", return_value=plugin),
         ):
             resolved = await _resolve_playback_url("http://emby.local", "token", "item-3", request, instance)
 
@@ -203,7 +205,7 @@ class PlaybackIndexTests(unittest.IsolatedAsyncioTestCase):
         mocked_link.assert_awaited_once_with("item-3", media_source_id="source-3", instance=instance)
         mocked_lookup.assert_awaited_once_with("/mnt/strm-self/archive/show.strm", instance)
         mocked_cache.assert_awaited_once()
-        mocked_url.assert_awaited_once_with("pickcode-11", user_agent="VidHub")
+        mocked_download_url.assert_awaited_once_with("pickcode-11", user_agent="VidHub")
 
     def test_uses_longest_matching_prefix(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -1,7 +1,7 @@
 """还原执行器：按操作日志逆序还原文件位置和名称"""
 from loguru import logger
 from app.events import event_bus, EVENT_ROLLBACK_START, EVENT_ROLLBACK_FILE_DONE, EVENT_ROLLBACK_COMPLETE
-from app.core.cloud115.client import client_115
+from app.core.cloud import get_cloud_plugin
 from app.database import get_db_conn
 
 
@@ -24,6 +24,7 @@ async def rollback_task(task_id: str, **kwargs):
     total = len(logs)
     rolled_back = 0
     errors = []
+    client = get_cloud_plugin("115").client
 
     for log_row in logs:
         row = dict(log_row)
@@ -38,7 +39,7 @@ async def rollback_task(task_id: str, **kwargs):
         try:
             if op_type == "move":
                 # 逆向移动：从 target_cid 移回 source_cid
-                ok = await client_115.move_files([file_cid], source_cid)
+                ok = await client.move_files([file_cid], source_cid)
                 if not ok:
                     errors.append(f"移动还原失败: {file_name}")
                     continue
@@ -47,7 +48,7 @@ async def rollback_task(task_id: str, **kwargs):
             elif op_type == "rename":
                 # 逆向重命名：从 new_name 改回 file_name
                 if new_name and new_name != file_name:
-                    ok = await client_115.rename_file(file_cid, file_name)
+                    ok = await client.rename_file(file_cid, file_name)
                     if not ok:
                         errors.append(f"重命名还原失败: {file_name}")
                         continue

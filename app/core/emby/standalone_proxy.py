@@ -9,7 +9,7 @@ from loguru import logger
 import uvicorn
 
 from app.config import get_config
-from app.core.cloud115.client import client_115
+from app.core.cloud import get_cloud_plugin
 from app.utils.background_tasks import CLOUD_API_POOL, DEFAULT_POOL, spawn_background_task
 from app.core.transfer.strm_manifest import (
     get_media_item_link,
@@ -568,7 +568,7 @@ async def _resolve_playback_url(upstream_url: str, api_key: str, item_id: str, r
             config = get_config()
             target_ua = config.cloud115.play_ua
             request_ua = target_ua if target_ua else player_ua
-            return await client_115.get_download_url(record["play_identity"], user_agent=request_ua)
+            return await get_cloud_plugin("115").client.get_download_url(record["play_identity"], user_agent=request_ua)
 
         item_data = await _get_upstream_item_payload(upstream_url, api_key, item_id, request)
         if item_data:
@@ -593,7 +593,7 @@ async def _resolve_playback_url(upstream_url: str, api_key: str, item_id: str, r
                     target_ua = config.cloud115.play_ua
                     request_ua = target_ua if target_ua else player_ua
 
-                    real_url = await client_115.get_download_url(pickcode, user_agent=request_ua)
+                    real_url = await get_cloud_plugin("115").client.get_download_url(pickcode, user_agent=request_ua)
                     if real_url:
                         return real_url
 
@@ -906,7 +906,7 @@ def create_proxy_app(instance) -> FastAPI:
 
             logger.info(f"[PROXY] Player requested 115play for pickcode {pickcode} (UA: {player_ua})")
 
-            url = await client_115.get_download_url(pickcode, user_agent=request_ua)
+            url = await get_cloud_plugin("115").client.get_download_url(pickcode, user_agent=request_ua)
             if not url:
                 return Response(status_code=404, content="Failed to get 115 download url")
 

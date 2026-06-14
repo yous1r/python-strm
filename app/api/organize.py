@@ -1,7 +1,8 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from app.core.media.organizer import organizer
-from app.core.cloud115.client import client_115
+from app.core.cloud import get_cloud_plugin
+from app.core.cloud.plugin import CloudPluginNotFoundError
 
 router = APIRouter(prefix="/organize", tags=["影视整理"])
 
@@ -12,28 +13,22 @@ class OrganizeReq(BaseModel):
 
 async def _organize_for_cloud(cloud_type: str, source_dir_ids: list[str], target_base_dir_id: str) -> list[dict]:
     results = []
+    try:
+        client = get_cloud_plugin(cloud_type).client
+    except CloudPluginNotFoundError as exc:
+        raise ValueError("Unsupported cloud type") from exc
+
     if cloud_type == "115":
         for src_dir in source_dir_ids:
             if not src_dir or src_dir == "0":
                 continue
-            res = await client_115.list_files(dir_id=src_dir)
+            res = await client.list_files(dir_id=src_dir)
             if "error" in res:
                 continue
             for item in res.get("items", []):
                 if "cid" in item or "fid" in item:
-                    org_res = await organizer.organize_item(client_115, item, target_base_dir_id)
+                    org_res = await organizer.organize_item(client, item, target_base_dir_id)
                     results.append(org_res)
-    elif cloud_type == "123":
-        from app.core.cloud123.client import client_123
-        for src_dir in source_dir_ids:
-            res = await client_123.list_files(parent_id=src_dir)
-            if "error" in res:
-                continue
-            for item in res.get("items", []):
-                item['n'] = item.get("file_name", "")
-                item['fid'] = str(item.get("file_id", ""))
-                org_res = await organizer.organize_item(client_123, item, target_base_dir_id)
-                results.append(org_res)
     else:
         raise ValueError("Unsupported cloud type")
     return results
@@ -86,4 +81,3 @@ async def start_all_organize():
         "total": len(all_results),
         "details": all_results
     }
-

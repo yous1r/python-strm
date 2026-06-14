@@ -55,7 +55,7 @@ class StartupBootstrapTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch("app.services.startup_bootstrap_service.get_config", lambda: config), \
-             patch("app.services.startup_bootstrap_service.sync_all_configured", fake_db_sync), \
+             patch("app.services.startup_bootstrap_service.get_cloud_plugin", return_value=SimpleNamespace(sync_all_configured=fake_db_sync)), \
              patch("app.services.startup_bootstrap_service.telegram_history_sync_service.build_request_for_startup", fake_build_request_for_startup), \
              patch("app.services.startup_bootstrap_service.telegram_history_sync_service.queue_history_sync_request", fake_queue_history_sync_request), \
              patch("app.services.startup_bootstrap_service.sync_engine.run_sync_task", fake_sync_task):

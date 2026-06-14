@@ -2,7 +2,7 @@
 import asyncio
 from loguru import logger
 from app.events import event_bus, EVENT_TRANSFER_MOVED, EVENT_ORGANIZE_START, EVENT_ORGANIZE_FILE_DONE, EVENT_ORGANIZE_COMPLETE
-from app.core.cloud115.client import client_115
+from app.core.cloud import get_cloud_plugin
 from app.core.transfer.scope import validate, expand_allowed_dirs
 from app.core.transfer.classifier import classify, build_archive_path
 from app.core.transfer.catalog import ensure_path, CatalogIntegrityError
@@ -36,13 +36,14 @@ async def handle_transfer_moved(task_id: str, temp_dir_id: str, files: list, sha
 
     logger.info(f"[Organizer] 开始整理 {len(files)} 个文件, task_id={task_id}")
     logger.info(f"[Organizer] 临时目录: {temp_dir_id}, 归档根目录: {archive_dir_id}")
+    client = get_cloud_plugin("115").client
 
     await event_bus.emit(EVENT_ORGANIZE_START, task_id=task_id, file_count=len(files))
 
     # 先获取临时目录中所有文件的cid，用于移动前校验
     temp_files = {}
     try:
-        list_res = await client_115.list_files(temp_dir_id, limit=500)
+        list_res = await client.list_files(temp_dir_id, limit=500)
         if not list_res.get("error"):
             for item in list_res.get("items", []):
                 cid = str(item.get("cid") or item.get("fid") or "")
@@ -129,7 +130,7 @@ async def handle_transfer_moved(task_id: str, temp_dir_id: str, files: list, sha
         )
 
         # 4. 移动文件
-        move_ok = await client_115.move_files([file_cid], target_dir_cid)
+        move_ok = await client.move_files([file_cid], target_dir_cid)
         if not move_ok:
             raise OrganizerIntegrityError(
                 f"[Organizer] 移动失败！{file_name} (cid={file_cid}) "

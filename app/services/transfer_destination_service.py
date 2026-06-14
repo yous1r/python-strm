@@ -1,30 +1,20 @@
 from app.config import get_config
-
-
-CLOUD_NAMES = {
-    "115": "115 网盘",
-    "123": "123 网盘",
-}
+from app.core.cloud import get_cloud_plugin
+from app.core.cloud import normalize_cloud_type as _normalize_cloud_type
 
 
 def normalize_cloud_type(cloud_type: str | None) -> str:
-    return str(cloud_type or "115").strip().lower()
+    return _normalize_cloud_type(cloud_type)
 
 
 def get_cloud_display_name(cloud_type: str | None) -> str:
-    normalized = normalize_cloud_type(cloud_type)
-    return CLOUD_NAMES.get(normalized, f"{normalized} 网盘")
+    return get_cloud_plugin(cloud_type).display_name
 
 
 def list_transfer_destinations(cloud_type: str | None = "115", config=None) -> list[dict[str, str]]:
     config = config or get_config()
-    normalized = normalize_cloud_type(cloud_type)
-    if normalized == "115":
-        sync_dirs = getattr(getattr(config, "cloud115", None), "sync_dirs", []) or []
-    elif normalized == "123":
-        sync_dirs = getattr(getattr(config, "cloud123", None), "sync_dirs", []) or []
-    else:
-        sync_dirs = []
+    plugin = get_cloud_plugin(cloud_type)
+    sync_dirs = plugin.list_sync_dirs(config)
 
     destinations: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -48,7 +38,8 @@ def resolve_transfer_destination(
     *,
     config=None,
 ) -> dict[str, str]:
-    normalized = normalize_cloud_type(cloud_type)
+    plugin = get_cloud_plugin(cloud_type)
+    normalized = plugin.cloud_type
     destinations = list_transfer_destinations(normalized, config=config)
     selected_id = str(target_dir_id or "").strip()
 

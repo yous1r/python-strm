@@ -7,9 +7,8 @@ from datetime import datetime
 from loguru import logger
 
 from app.config import get_config
-from app.core.cloud115.db_sync import sync_directory
+from app.core.cloud import get_cloud_plugin
 from app.core.emby.standalone_proxy import preheat_media_item_links
-from app.core.cloud115.strm import generator_115
 from app.events import (
     EVENT_CLOUD115_FULL_SYNC_COMPLETED,
     EVENT_CLOUD115_FULL_SYNC_DB_SYNC_FINISHED,
@@ -27,6 +26,7 @@ class Cloud115FullSyncService:
         self._tasks: dict[str, dict] = {}
         self._lock = asyncio.Lock()
         self.cloud_type = "115"
+        self.plugin = get_cloud_plugin(self.cloud_type)
 
     async def start_full_sync(self, source: str = "debug") -> dict[str, object]:
         task_id = str(uuid.uuid4())[:8]
@@ -95,7 +95,7 @@ class Cloud115FullSyncService:
         dirs: list[dict[str, object]] = []
         seen: set[tuple[str, str]] = set()
 
-        for sync_dir in config.cloud115.sync_dirs:
+        for sync_dir in self.plugin.list_sync_dirs(config):
             key = (str(sync_dir.dir_id), "sync_dir")
             if key in seen:
                 continue
@@ -131,7 +131,7 @@ class Cloud115FullSyncService:
         sync_dirs = dirs or self.build_sync_dirs()
         results: list[dict[str, object]] = []
         for item in sync_dirs:
-            count = await sync_directory(
+            count = await self.plugin.sync_directory(
                 str(item["dir_id"]),
                 str(item.get("dir_name") or item["dir_id"]),
                 bool(item.get("recursive", True)),
@@ -151,7 +151,7 @@ class Cloud115FullSyncService:
                 continue
 
             manifest_stats = await run_in_background_pool(
-                lambda item=item: generator_115.sync_manifest_records(
+                lambda item=item: self.plugin.strm_generator.sync_manifest_records(
                     dir_id=str(item["dir_id"]),
                     dir_name=str(item.get("dir_name") or item["dir_id"]),
                     output_dir=str(item["output_dir"]),
@@ -209,7 +209,7 @@ class Cloud115FullSyncService:
 
         for item in dirs:
             strm_stats = await run_in_background_pool(
-                lambda item=item: generator_115.sync_strm_files_from_manifest(
+                lambda item=item: self.plugin.strm_generator.sync_strm_files_from_manifest(
                     dir_id=str(item["dir_id"]),
                     output_dir=str(item["output_dir"]),
                     root_output_dir=config.strm.output_dir,

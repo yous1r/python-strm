@@ -3,7 +3,7 @@ from fastapi.responses import RedirectResponse
 import httpx
 from pydantic import BaseModel
 from loguru import logger
-from app.core.cloud115.client import client_115
+from app.core.cloud import get_cloud_plugin
 from app.core.cloud115.auth import auth_manager
 from app.config import get_config
 
@@ -52,7 +52,7 @@ async def check_qr_status(payload: dict):
 @router.get("/files")
 async def list_files(dir_id: str = '0', limit: int = 100, offset: int = 0):
     """获取文件列表"""
-    res = await client_115.list_files(dir_id, limit, offset)
+    res = await get_cloud_plugin("115").client.list_files(dir_id, limit, offset)
     if "error" in res:
         logger.error(f"[115 API] Failed to list files (dir_id={dir_id}): {res['error']}")
         raise HTTPException(status_code=400, detail=res["error"])
@@ -61,7 +61,7 @@ async def list_files(dir_id: str = '0', limit: int = 100, offset: int = 0):
 @router.get("/dirs")
 async def list_dirs(dir_id: str = '0'):
     """获取纯文件夹列表 (用于目录选择器)"""
-    res = await client_115.list_dirs(dir_id)
+    res = await get_cloud_plugin("115").client.list_dirs(dir_id)
     if "error" in res:
         logger.error(f"[115 API] Failed to list dirs (dir_id={dir_id}): {res['error']}")
         raise HTTPException(status_code=400, detail=res["error"])
@@ -124,7 +124,7 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
         # 代理少量 CDN 请求
         config = get_config()
         browser_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        url = await client_115.get_download_url(pickcode, user_agent=browser_ua)
+        url = await get_cloud_plugin("115").client.get_download_url(pickcode, user_agent=browser_ua)
         if not url:
             return Response(status_code=404)
 
@@ -163,7 +163,7 @@ async def play_video(pickcode: str, request: Request, filename: str = ""):
     target_ua = config.cloud115.play_ua
     request_ua = target_ua if target_ua else player_ua
     
-    url = await client_115.get_download_url(pickcode, user_agent=request_ua)
+    url = await get_cloud_plugin("115").client.get_download_url(pickcode, user_agent=request_ua)
     if not url:
         logger.error(f"[115 API] Failed to get download URL for pickcode={pickcode}")
         raise HTTPException(status_code=404, detail="Download URL not found")

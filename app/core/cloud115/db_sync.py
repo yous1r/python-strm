@@ -202,7 +202,7 @@ async def handle_cloud115_db_sync_completed(
     **kwargs,
 ):
     """115 本地目录树同步完成后，按全局输出根目录批量刷新全部 STRM。"""
-    from app.core.cloud115.strm import generator_115
+    from app.core.cloud import get_cloud_plugin
 
     config = get_config()
     output_root = config.strm.output_dir
@@ -212,7 +212,7 @@ async def handle_cloud115_db_sync_completed(
         f"[DBSync] 目录同步完成后开始全量刷新 STRM: root={output_root} (trigger={dir_name or dir_id}, changed={count})"
     )
 
-    strm_stats = await generator_115.sync_strm_files_from_manifest(
+    strm_stats = await get_cloud_plugin("115").strm_generator.sync_strm_files_from_manifest(
         dir_id=dir_id,
         output_dir=output_root,
         root_output_dir=output_root,

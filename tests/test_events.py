@@ -4,7 +4,10 @@ from pathlib import Path
 import sys
 import types
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+import httpx
 
 from app.core.notify.bark import BarkNotifier
 
@@ -226,6 +229,48 @@ class BarkNotifierPayloadTests(unittest.TestCase):
         self.assertEqual(payload["group"], "transfer-batch:demo")
         self.assertEqual(payload["subtitle"], "失败 1/3")
         self.assertEqual(payload["isArchive"], "1")
+
+
+class BarkNotifierSendTests(unittest.IsolatedAsyncioTestCase):
+    async def test_send_message_logs_timeout_without_stacktrace(self):
+        class TimeoutClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def post(self, *args, **kwargs):
+                raise httpx.ReadTimeout("read timed out")
+
+        config = SimpleNamespace(
+            notify=SimpleNamespace(
+                bark=SimpleNamespace(
+                    enabled=True,
+                    server="http://10.0.0.50:28080",
+                    device_key="device-key",
+                    device_keys=[],
+                    encryption_key="",
+                    encryption_iv="",
+                    encryption_algorithm="AES-128-CBC",
+                )
+            )
+        )
+        logger = SimpleNamespace(
+            warning=MagicMock(),
+            error=MagicMock(),
+            exception=MagicMock(),
+        )
+
+        with patch("app.core.notify.bark.get_config", return_value=config), patch(
+            "app.core.notify.bark.httpx.AsyncClient",
+            lambda **kwargs: TimeoutClient(),
+        ), patch("app.core.notify.bark.logger", logger):
+            result = await BarkNotifier().send_message("content", "title")
+
+        self.assertIs(result, False)
+        logger.warning.assert_called_once()
+        logger.exception.assert_not_called()
 
 
 class BatchEventConstantTests(unittest.TestCase):

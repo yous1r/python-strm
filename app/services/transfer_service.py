@@ -2,8 +2,7 @@ import uuid
 from typing import Iterable, Optional
 
 from app.config import get_config
-from app.core.cloud115.client import client_115
-from app.core.cloud115.strm import generator_115
+from app.core.cloud import get_cloud_plugin
 from app.core.transfer.classifier import classify
 from app.core.transfer.placement import derive_series_scope_path
 from app.core.transfer.receive_target import prepare_receive_target
@@ -49,19 +48,23 @@ async def receive_share_task(
     archive_dir_id = destination["dir_id"]
 
     strm_cfg = config.strm
+    plugin = get_cloud_plugin("115")
+    client = plugin.client
+    strm_generator = plugin.strm_generator
 
     receive_target = await prepare_receive_target(
         share_url=share_url,
         receive_code=receive_code,
         archive_dir_id=archive_dir_id,
         fallback_dir_id=archive_dir_id,
+        cloud_client=client,
         classifier=classify,
     )
     target_dir = receive_target.target_dir_id
     if not target_dir:
         raise TransferServiceError("无法确定转存目标目录")
 
-    result = await client_115.share_receive(
+    result = await client.share_receive(
         share_url,
         receive_code,
         target_dir_id=target_dir,
@@ -75,7 +78,7 @@ async def receive_share_task(
 
     if receive_target.archive_rel_path:
         generated = await run_in_background_pool(
-            lambda: generator_115.generate_strm_for_folder(
+            lambda: strm_generator.generate_strm_for_folder(
                 target_dir,
                 share_files,
                 receive_target.archive_rel_path,
@@ -86,7 +89,7 @@ async def receive_share_task(
         )
         series_scope = derive_series_scope_path(receive_target.archive_rel_path)
         strm_stats = await run_in_background_pool(
-            lambda: generator_115.sync_strm_files_from_manifest(
+            lambda: strm_generator.sync_strm_files_from_manifest(
                 dir_id=target_dir,
                 output_dir=strm_cfg.output_dir,
                 root_output_dir=strm_cfg.output_dir,
@@ -240,7 +243,7 @@ async def overwrite_task_strm(task_id: str) -> dict[str, object]:
         raise TransferServiceError("该任务暂无可覆盖的 STRM 记录", status_code=404)
 
     rewritten = await run_in_background_pool(
-        lambda: generator_115.rewrite_manifest_records(records),
+        lambda: get_cloud_plugin("115").strm_generator.rewrite_manifest_records(records),
         pool=LOCAL_DB_POOL,
     )
     return {
@@ -258,7 +261,7 @@ async def rewrite_archive_strm(archive_root: str = "") -> dict[str, object]:
         raise TransferServiceError("当前范围内暂无可覆盖的 STRM 记录", status_code=404)
 
     result = await run_in_background_pool(
-        lambda: generator_115.rewrite_from_manifest(archive_root),
+        lambda: get_cloud_plugin("115").strm_generator.rewrite_from_manifest(archive_root),
         pool=LOCAL_DB_POOL,
     )
     return {
@@ -282,7 +285,7 @@ def get_transfer_categories() -> dict[str, list[dict[str, object]]]:
 
 
 async def _list_regular_files(dir_id: str, limit: int) -> list[dict[str, str]]:
-    files_res = await client_115.list_files(dir_id, limit=limit)
+    files_res = await get_cloud_plugin("115").client.list_files(dir_id, limit=limit)
     if files_res.get("error"):
         return []
 

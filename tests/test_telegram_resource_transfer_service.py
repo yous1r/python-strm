@@ -7,6 +7,10 @@ import pytest
 from app.services.telegram_resource_transfer_service import normalize_resource_payload
 
 
+def _cloud_plugin(client, generator):
+    return SimpleNamespace(client=client, strm_generator=generator)
+
+
 def test_normalize_resource_payload_filters_promo_urls_and_falls_back_to_real_share_link():
     payload = normalize_resource_payload(
         {
@@ -82,14 +86,20 @@ async def test_process_resource_transfer_uses_series_folder_id_without_falling_b
     share_receive = AsyncMock(return_value={"state": True, "share_files": [{"name": "秘恋稽核中 (2026) S01E01.mkv", "sha": "ABC"}]})
     generate_strm = AsyncMock(return_value=["strm_output/a.strm"])
     sync_strm = AsyncMock(return_value={"scanned": 3, "updated": 2, "skipped": 1, "failed": 0})
+    client = SimpleNamespace(
+        client=object(),
+        get_share_info=get_share_info,
+        create_path=create_path,
+        share_receive=share_receive,
+    )
+    generator = SimpleNamespace(
+        generate_strm_for_folder=generate_strm,
+        sync_strm_files_from_manifest=sync_strm,
+    )
 
     monkeypatch.setattr("app.services.telegram_resource_transfer_service.get_config", lambda: config)
-    monkeypatch.setattr("app.services.telegram_resource_transfer_service.client_115.get_share_info", get_share_info)
+    monkeypatch.setattr("app.services.telegram_resource_transfer_service.get_cloud_plugin", lambda cloud_type: _cloud_plugin(client, generator))
     monkeypatch.setattr("app.services.telegram_resource_transfer_service.classify", classify_mock)
-    monkeypatch.setattr("app.services.telegram_resource_transfer_service.client_115.create_path", create_path)
-    monkeypatch.setattr("app.services.telegram_resource_transfer_service.client_115.share_receive", share_receive)
-    monkeypatch.setattr("app.services.telegram_resource_transfer_service.generator_115.generate_strm_for_folder", generate_strm)
-    monkeypatch.setattr("app.services.telegram_resource_transfer_service.generator_115.sync_strm_files_from_manifest", sync_strm)
     monkeypatch.setattr("app.services.telegram_resource_transfer_service._update_tg_status", AsyncMock())
     monkeypatch.setattr("app.services.telegram_resource_transfer_service._notify_transfer_success", AsyncMock())
     monkeypatch.setattr("app.services.telegram_resource_transfer_service._notify_transfer_failure", AsyncMock())
@@ -136,10 +146,6 @@ async def test_process_resource_transfer_precreates_archive_dir_and_ignores_temp
 
     monkeypatch.setattr("app.services.telegram_resource_transfer_service.get_config", lambda: config)
     monkeypatch.setattr(
-        "app.services.telegram_resource_transfer_service.client_115.get_share_info",
-        AsyncMock(return_value={"state": True, "files": [{"name": "秘恋稽核中 (2026) S01E01.mkv", "sha": "ABC"}]}),
-    )
-    monkeypatch.setattr(
         "app.services.telegram_resource_transfer_service.classify",
         AsyncMock(return_value=SimpleNamespace(
             category="剧集",
@@ -155,10 +161,17 @@ async def test_process_resource_transfer_precreates_archive_dir_and_ignores_temp
     share_receive = AsyncMock(return_value={"state": True, "share_files": [{"name": "秘恋稽核中 (2026) S01E01.mkv", "sha": "ABC"}]})
     generate_strm = AsyncMock(return_value=["strm_output/a.strm"])
     sync_strm = AsyncMock(return_value={"scanned": 3, "updated": 2, "skipped": 1, "failed": 0})
-    monkeypatch.setattr("app.services.telegram_resource_transfer_service.client_115.create_path", create_path)
-    monkeypatch.setattr("app.services.telegram_resource_transfer_service.client_115.share_receive", share_receive)
-    monkeypatch.setattr("app.services.telegram_resource_transfer_service.generator_115.generate_strm_for_folder", generate_strm)
-    monkeypatch.setattr("app.services.telegram_resource_transfer_service.generator_115.sync_strm_files_from_manifest", sync_strm)
+    client = SimpleNamespace(
+        client=object(),
+        get_share_info=AsyncMock(return_value={"state": True, "files": [{"name": "秘恋稽核中 (2026) S01E01.mkv", "sha": "ABC"}]}),
+        create_path=create_path,
+        share_receive=share_receive,
+    )
+    generator = SimpleNamespace(
+        generate_strm_for_folder=generate_strm,
+        sync_strm_files_from_manifest=sync_strm,
+    )
+    monkeypatch.setattr("app.services.telegram_resource_transfer_service.get_cloud_plugin", lambda cloud_type: _cloud_plugin(client, generator))
     monkeypatch.setattr("app.services.telegram_resource_transfer_service._update_tg_status", AsyncMock())
     monkeypatch.setattr("app.services.telegram_resource_transfer_service._notify_transfer_success", AsyncMock())
     monkeypatch.setattr("app.services.telegram_resource_transfer_service._notify_transfer_failure", AsyncMock())
@@ -225,8 +238,9 @@ async def test_process_resource_transfer_does_not_hold_transfer_slot_during_cool
             await release_cooldown.wait()
 
     monkeypatch.setattr("app.services.telegram_resource_transfer_service.get_config", lambda: config)
-    monkeypatch.setattr("app.services.telegram_resource_transfer_service.client_115.auth.client", object())
-    monkeypatch.setattr("app.services.telegram_resource_transfer_service.client_115.share_receive", fake_share_receive)
+    client = SimpleNamespace(client=object(), share_receive=fake_share_receive)
+    generator = SimpleNamespace(generate_strm_for_folder=AsyncMock(), sync_strm_files_from_manifest=AsyncMock())
+    monkeypatch.setattr("app.services.telegram_resource_transfer_service.get_cloud_plugin", lambda cloud_type: _cloud_plugin(client, generator))
     monkeypatch.setattr("app.services.telegram_resource_transfer_service.asyncio.sleep", fake_sleep)
     monkeypatch.setattr("app.services.telegram_resource_transfer_service._update_tg_status", AsyncMock())
     monkeypatch.setattr("app.services.telegram_resource_transfer_service._notify_transfer_success", AsyncMock())
@@ -244,6 +258,51 @@ async def test_process_resource_transfer_does_not_hold_transfer_slot_during_cool
         await asyncio.gather(first, second)
 
     assert share_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_process_resource_transfer_does_not_notify_failure_when_filter_rules_do_not_match(monkeypatch):
+    from app.services.telegram_resource_transfer_service import process_resource_transfer
+
+    config = SimpleNamespace(
+        monitor=SimpleNamespace(
+            telegram=SimpleNamespace(
+                filter_rules=["S01E02"],
+                transfer_concurrency=2,
+                transfer_cooldown_seconds=0,
+            )
+        ),
+        transfer=SimpleNamespace(enabled=True),
+        cloud115=SimpleNamespace(target_dir_id="cloud-default"),
+        strm=SimpleNamespace(output_dir="strm_output", base_url="http://localhost:8095"),
+    )
+    share_receive = AsyncMock(return_value={
+        "state": False,
+        "error": "No files found in share or none matched filter rules",
+    })
+    client = SimpleNamespace(client=object(), share_receive=share_receive)
+    generator = SimpleNamespace(generate_strm_for_folder=AsyncMock(), sync_strm_files_from_manifest=AsyncMock())
+    notify_failure = AsyncMock()
+    update_status = AsyncMock()
+
+    monkeypatch.setattr("app.services.telegram_resource_transfer_service.get_config", lambda: config)
+    monkeypatch.setattr("app.services.telegram_resource_transfer_service.get_cloud_plugin", lambda cloud_type: _cloud_plugin(client, generator))
+    monkeypatch.setattr("app.services.telegram_resource_transfer_service._update_tg_status", update_status)
+    monkeypatch.setattr("app.services.telegram_resource_transfer_service._notify_transfer_success", AsyncMock())
+    monkeypatch.setattr("app.services.telegram_resource_transfer_service._notify_transfer_failure", notify_failure)
+
+    result = await process_resource_transfer({
+        "id": 9,
+        "type": "115",
+        "url": "https://115.com/s/abc123",
+        "series_folder_id": "series-final",
+    })
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "no_matching_filter_rules"
+    notify_failure.assert_not_awaited()
+    update_status.assert_any_await(9, "queued")
+    update_status.assert_any_await(9, "skipped")
 
 
 @pytest.mark.asyncio
@@ -266,10 +325,6 @@ async def test_process_resource_transfer_precreates_from_selected_strm_destinati
 
     monkeypatch.setattr("app.services.telegram_resource_transfer_service.get_config", lambda: config)
     monkeypatch.setattr(
-        "app.services.telegram_resource_transfer_service.client_115.get_share_info",
-        AsyncMock(return_value={"state": True, "files": [{"name": "秘恋稽核中 (2026) S01E01.mkv", "sha": "ABC"}]}),
-    )
-    monkeypatch.setattr(
         "app.services.telegram_resource_transfer_service.classify",
         AsyncMock(return_value=SimpleNamespace(
             category="剧集",
@@ -285,10 +340,17 @@ async def test_process_resource_transfer_precreates_from_selected_strm_destinati
     share_receive = AsyncMock(return_value={"state": True, "share_files": [{"name": "秘恋稽核中 (2026) S01E01.mkv", "sha": "ABC"}]})
     generate_strm = AsyncMock(return_value=["strm_output/a.strm"])
     sync_strm = AsyncMock(return_value={"scanned": 3, "updated": 2, "skipped": 1, "failed": 0})
-    monkeypatch.setattr("app.services.telegram_resource_transfer_service.client_115.create_path", create_path)
-    monkeypatch.setattr("app.services.telegram_resource_transfer_service.client_115.share_receive", share_receive)
-    monkeypatch.setattr("app.services.telegram_resource_transfer_service.generator_115.generate_strm_for_folder", generate_strm)
-    monkeypatch.setattr("app.services.telegram_resource_transfer_service.generator_115.sync_strm_files_from_manifest", sync_strm)
+    client = SimpleNamespace(
+        client=object(),
+        get_share_info=AsyncMock(return_value={"state": True, "files": [{"name": "秘恋稽核中 (2026) S01E01.mkv", "sha": "ABC"}]}),
+        create_path=create_path,
+        share_receive=share_receive,
+    )
+    generator = SimpleNamespace(
+        generate_strm_for_folder=generate_strm,
+        sync_strm_files_from_manifest=sync_strm,
+    )
+    monkeypatch.setattr("app.services.telegram_resource_transfer_service.get_cloud_plugin", lambda cloud_type: _cloud_plugin(client, generator))
     monkeypatch.setattr("app.services.telegram_resource_transfer_service._update_tg_status", AsyncMock())
     monkeypatch.setattr("app.services.telegram_resource_transfer_service._notify_transfer_success", AsyncMock())
     monkeypatch.setattr("app.services.telegram_resource_transfer_service._notify_transfer_failure", AsyncMock())

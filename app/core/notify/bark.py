@@ -137,10 +137,10 @@ class BarkNotifier:
     ):
         config = get_config().notify.bark
         if not config.enabled:
-            return
+            return False
         if not config.server or (not config.device_key and not config.device_keys):
             logger.error("Bark notify is enabled but server or device_key(s) is missing.")
-            return
+            return False
 
         server = config.server.rstrip('/')
         push_url = f"{server}/push"
@@ -188,7 +188,16 @@ class BarkNotifier:
                 data = res.json()
                 if data.get("code") != 200:
                     logger.error(f"Bark notify failed: {data.get('message')}")
+                    return False
+                return True
+        except httpx.TimeoutException as e:
+            logger.warning(f"Bark notify timeout: server={server}, error={e.__class__.__name__}")
+            return False
+        except httpx.HTTPError as e:
+            logger.error(f"Bark notify request failed: server={server}, error={e.__class__.__name__}: {e}")
+            return False
         except Exception as e:
-            logger.exception("Bark notify error details")
+            logger.error(f"Bark notify error: {e.__class__.__name__}: {e}")
+            return False
 
 notifier = BarkNotifier()

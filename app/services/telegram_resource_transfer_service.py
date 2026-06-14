@@ -7,8 +7,7 @@ from loguru import logger
 import uuid
 
 from app.config import get_config
-from app.core.cloud115.client import client_115
-from app.core.cloud115.strm import generator_115
+from app.core.cloud import get_cloud_plugin
 from app.core.notify.manager import notify_manager
 from app.core.transfer.classifier import classify
 from app.core.transfer.placement import derive_series_scope_path
@@ -22,6 +21,10 @@ transfer_semaphore = asyncio.Semaphore(2)
 _transfer_semaphore_limit = 2
 
 _SUPPORTED_LINK_PRIORITY = {"115": 0, "123": 1, "magnet": 2}
+_NO_MATCH_FILTER_RULE_ERROR_MARKERS = (
+    "none matched filter rules",
+    "no files matched filter rules",
+)
 
 
 def _get_transfer_semaphore(limit: int) -> asyncio.Semaphore:
@@ -46,6 +49,18 @@ def _get_transfer_concurrency(monitor_cfg) -> int:
         return max(int(getattr(monitor_cfg, "transfer_concurrency", 2) or 2), 1)
     except (TypeError, ValueError):
         return 2
+
+
+def _is_no_matching_filter_rules(transfer_res: dict, filter_rules: list[str] | None) -> bool:
+    if not filter_rules:
+        return False
+    reason = str(transfer_res.get("reason") or "").strip()
+    if reason == "no_matching_filter_rules":
+        return True
+    error_message = str(transfer_res.get("error") or "").lower()
+    if any(marker in error_message for marker in _NO_MATCH_FILTER_RULE_ERROR_MARKERS):
+        return True
+    return "没有匹配" in error_message and "规则" in error_message
 
 
 def _clean_resource_url(url: str) -> str:
@@ -211,6 +226,9 @@ async def process_resource_transfer(resource: dict, *, source: str = "telegram")
 
     config = get_config()
     monitor_cfg = config.monitor.telegram
+    plugin = get_cloud_plugin("115")
+    client = plugin.client
+    strm_generator = plugin.strm_generator
     destination_dir_id = str(
         link_data.get("destination_dir_id")
         or link_data.get("target_dir_id")
@@ -231,7 +249,7 @@ async def process_resource_transfer(resource: dict, *, source: str = "telegram")
     if db_id:
         await _update_tg_status(db_id, "queued")
 
-    if not client_115.client:
+    if not client.client:
         await _update_tg_status(db_id, "failed")
         return {"status": "failed", "error": "115 client not initialized", "resource": link_data, "source": source}
     if not target_dir_id or target_dir_id == "0":
@@ -250,6 +268,7 @@ async def process_resource_transfer(resource: dict, *, source: str = "telegram")
                     receive_code=receive_code,
                     archive_dir_id=destination_dir_id,
                     fallback_dir_id=destination_dir_id,
+                    cloud_client=client,
                     classifier=classify,
                 )
                 if receive_target.target_dir_id:
@@ -259,7 +278,7 @@ async def process_resource_transfer(resource: dict, *, source: str = "telegram")
                 await _update_tg_status(db_id, "failed")
                 return {"status": "failed", "error": "target_dir_id 未配置", "resource": link_data, "source": source}
 
-            transfer_res = await client_115.share_receive(
+            transfer_res = await client.share_receive(
                 share_url,
                 receive_code,
                 target_dir_id,
@@ -271,6 +290,17 @@ async def process_resource_transfer(resource: dict, *, source: str = "telegram")
 
         if not transfer_res.get("state"):
             error_message = transfer_res.get("error") or "转存失败"
+            if _is_no_matching_filter_rules(transfer_res, filter_rules):
+                logger.info(f"Skip auto-transfer link {share_url}: no files matched configured filter rules")
+                await _update_tg_status(db_id, "skipped")
+                return {
+                    "status": "skipped",
+                    "reason": "no_matching_filter_rules",
+                    "message": error_message,
+                    "resource": link_data,
+                    "target_dir_id": target_dir_id,
+                    "source": source,
+                }
             logger.error(f"Failed to auto-transfer link {share_url}: {error_message}")
             await _notify_transfer_failure(share_url, error_message)
             await _update_tg_status(db_id, "failed")
@@ -289,7 +319,7 @@ async def process_resource_transfer(resource: dict, *, source: str = "telegram")
             archive_rel_path = await infer_archive_rel_path(share_files, classifier=classify)
         if share_files and archive_rel_path:
             await run_in_background_pool(
-                lambda: generator_115.generate_strm_for_folder(
+                lambda: strm_generator.generate_strm_for_folder(
                     target_dir_id,
                     share_files,
                     archive_rel_path,
@@ -299,7 +329,7 @@ async def process_resource_transfer(resource: dict, *, source: str = "telegram")
                 pool=LOCAL_DB_POOL,
             )
             await run_in_background_pool(
-                lambda: generator_115.sync_strm_files_from_manifest(
+                lambda: strm_generator.sync_strm_files_from_manifest(
                     dir_id=target_dir_id,
                     output_dir=config.strm.output_dir,
                     root_output_dir=config.strm.output_dir,

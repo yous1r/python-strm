@@ -55,13 +55,17 @@ class Cloud115DbSyncEventTests(unittest.IsolatedAsyncioTestCase):
         config = SimpleNamespace(
             strm=SimpleNamespace(output_dir="strm_output", base_url="http://localhost:8095")
         )
+        sync_strm = AsyncMock(return_value={"scanned": 5, "updated": 2, "skipped": 3, "failed": 0})
+        plugin = SimpleNamespace(
+            strm_generator=SimpleNamespace(sync_strm_files_from_manifest=sync_strm)
+        )
 
         with (
             patch("app.core.cloud115.db_sync.get_config", return_value=config),
             patch(
-                "app.core.cloud115.strm.generator_115.sync_strm_files_from_manifest",
-                new=AsyncMock(return_value={"scanned": 5, "updated": 2, "skipped": 3, "failed": 0}),
-            ) as sync_strm,
+                "app.core.cloud.get_cloud_plugin",
+                return_value=plugin,
+            ),
         ):
             await handle_cloud115_db_sync_completed(dir_id="300", dir_name="综艺", count=0)
 

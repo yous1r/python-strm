@@ -23,6 +23,14 @@ from app.core.cloud115.strm import StrmGenerator115
 from app.core.media.organizer import MediaOrganizer
 
 
+def _cloud_plugin(client=None, generator=None, sync_directory=None):
+    return SimpleNamespace(
+        client=client or SimpleNamespace(),
+        strm_generator=generator or SimpleNamespace(),
+        sync_directory=sync_directory or AsyncMock(return_value=0),
+    )
+
+
 class _RecordingDb:
     def __init__(self):
         self.calls = []
@@ -150,10 +158,11 @@ class BatchPrepareTests(unittest.IsolatedAsyncioTestCase):
             transfer=SimpleNamespace(),
         )
 
+        mocked_create_path = AsyncMock(return_value={"id": "cid-123"})
         with patch("app.core.transfer.batch.classify", AsyncMock(return_value=classify_result)) as mocked_classify, patch(
-            "app.core.transfer.batch.client_115.create_path",
-            AsyncMock(return_value={"id": "cid-123"}),
-        ) as mocked_create_path, patch(
+            "app.core.transfer.batch.get_cloud_plugin",
+            return_value=_cloud_plugin(client=SimpleNamespace(create_path=mocked_create_path)),
+        ), patch(
             "app.core.transfer.batch.get_config",
             return_value=config,
         ), patch(
@@ -196,10 +205,11 @@ class BatchPrepareTests(unittest.IsolatedAsyncioTestCase):
         mocked_emit = AsyncMock()
         config = SimpleNamespace(transfer=SimpleNamespace())
 
+        mocked_create_path = AsyncMock(return_value={"id": "cid-123"})
         with patch("app.core.transfer.batch.classify", AsyncMock(return_value=classify_result)), patch(
-            "app.core.transfer.batch.client_115.create_path",
-            AsyncMock(return_value={"id": "cid-123"}),
-        ) as mocked_create_path, patch(
+            "app.core.transfer.batch.get_cloud_plugin",
+            return_value=_cloud_plugin(client=SimpleNamespace(create_path=mocked_create_path)),
+        ), patch(
             "app.core.transfer.batch.get_config",
             return_value=config,
         ), patch(
@@ -273,6 +283,7 @@ class BatchPrepareTests(unittest.IsolatedAsyncioTestCase):
                 {"sha": "A1", "name": "E01.mkv"},
                 {"sha": "A2", "name": "E02.mkv"},
             ],
+            "cloud_type": "115",
             "success_count": 2,
             "failed_links": [],
             "group": "transfer-batch:秘恋稽核中",
@@ -302,6 +313,7 @@ class BatchPrepareTests(unittest.IsolatedAsyncioTestCase):
                 {"sha": "A1", "name": "E01.mkv"},
                 {"sha": "A2", "name": "E02.mkv"},
             ],
+            cloud_type="115",
         )
         self.assertNotIn("task-3", _batch_states)
         self.assertEqual(_batch_completion_states["task-3"]["task_id"], "task-3")
@@ -348,10 +360,11 @@ class BatchPrepareTests(unittest.IsolatedAsyncioTestCase):
     async def test_handle_batch_db_sync_requested_emits_followup_event_after_sync(self):
         mocked_emit = AsyncMock()
 
+        mocked_sync = AsyncMock(return_value=6)
         with patch(
-            "app.core.transfer.batch.sync_directory",
-            AsyncMock(return_value=6),
-        ) as mocked_sync, patch(
+            "app.core.transfer.batch.get_cloud_plugin",
+            return_value=_cloud_plugin(sync_directory=mocked_sync),
+        ), patch(
             "app.core.transfer.batch.event_bus.emit",
             mocked_emit,
         ):
@@ -374,6 +387,7 @@ class BatchPrepareTests(unittest.IsolatedAsyncioTestCase):
             batch_title="示例剧",
             files=[{"sha": "A1", "name": "E01.mkv"}],
             count=6,
+            cloud_type="115",
         )
 
     async def test_handle_batch_db_sync_completed_emits_strm_request(self):
@@ -402,10 +416,11 @@ class BatchPrepareTests(unittest.IsolatedAsyncioTestCase):
     async def test_handle_strm_batch_requested_emits_rewrite_event_after_manifest_refresh(self):
         config = SimpleNamespace(strm=SimpleNamespace(base_url="http://example.com", output_dir="strm_output"))
 
+        mocked_manifest = AsyncMock(return_value={"scanned": 2, "changed": True})
         with patch("app.core.transfer.batch.get_config", return_value=config), patch(
-            "app.core.transfer.batch.generator_115.sync_manifest_records",
-            AsyncMock(return_value={"scanned": 2, "changed": True}),
-        ) as mocked_manifest, patch(
+            "app.core.transfer.batch.get_cloud_plugin",
+            return_value=_cloud_plugin(generator=SimpleNamespace(sync_manifest_records=mocked_manifest)),
+        ), patch(
             "app.core.transfer.batch.event_bus.emit",
             AsyncMock(),
         ) as mocked_emit:
@@ -431,6 +446,7 @@ class BatchPrepareTests(unittest.IsolatedAsyncioTestCase):
         mocked_emit.assert_awaited_once_with(
             "strm_batch_rewrite_requested",
             task_id="task-6",
+            cloud_type="115",
             archive_dir_id="cid-6",
             archive_rel_path="剧集/国产剧集/示例剧/Season 1",
             files=[{"sha": "A1", "name": "E01.mkv"}],
@@ -440,10 +456,11 @@ class BatchPrepareTests(unittest.IsolatedAsyncioTestCase):
     async def test_handle_strm_batch_rewrite_requested_runs_strm_refresh_then_emits_completed(self):
         config = SimpleNamespace(strm=SimpleNamespace(base_url="http://example.com", output_dir="strm_output"))
 
+        mocked_strm = AsyncMock(return_value={"updated": 2, "files": ["a.strm"], "skipped": 1, "failed": 0})
         with patch("app.core.transfer.batch.get_config", return_value=config), patch(
-            "app.core.transfer.batch.generator_115.sync_strm_files_from_manifest",
-            AsyncMock(return_value={"updated": 2, "files": ["a.strm"], "skipped": 1, "failed": 0}),
-        ) as mocked_strm, patch(
+            "app.core.transfer.batch.get_cloud_plugin",
+            return_value=_cloud_plugin(generator=SimpleNamespace(sync_strm_files_from_manifest=mocked_strm)),
+        ), patch(
             "app.core.transfer.batch.event_bus.emit",
             AsyncMock(),
         ) as mocked_emit:
@@ -465,6 +482,7 @@ class BatchPrepareTests(unittest.IsolatedAsyncioTestCase):
         mocked_emit.assert_awaited_once_with(
             "strm_batch_completed",
             task_id="task-7",
+            cloud_type="115",
             archive_dir_id="cid-7",
             archive_rel_path="剧集/国产剧集/示例剧/Season 1",
             files=[{"sha": "A1", "name": "E01.mkv"}],

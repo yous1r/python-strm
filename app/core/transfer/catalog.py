@@ -1,7 +1,7 @@
 """目录树构建器：使用 fs_makedirs_app 递归创建目录，单次 API 调用完成"""
 from typing import Optional
 from loguru import logger
-from app.core.cloud115.client import client_115
+from app.core.cloud import get_cloud_plugin
 from app.core.transfer.scope import expand_allowed_dirs
 
 
@@ -28,7 +28,7 @@ async def ensure_path(base_cid: str, path_parts: list) -> Optional[str]:
 
     logger.info(f"[Catalog] 递归创建路径: {path_str} (父cid={base_cid})")
 
-    res = await client_115.create_path(base_cid, path_str)
+    res = await get_cloud_plugin("115").client.create_path(base_cid, path_str)
 
     if "id" in res and res["id"]:
         final_cid = res["id"]

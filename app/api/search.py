@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 from loguru import logger
 from app.core.search.pansou import pansou_client
-from app.core.cloud115.client import client_115
+from app.core.cloud import get_cloud_plugin
 from app.core.sync.engine import sync_engine
 from app.services.transfer_service import TransferServiceError, receive_share_task
 from app.services.transfer_destination_service import resolve_transfer_destination
@@ -25,11 +25,12 @@ class PluginUpdateRequest(BaseModel):
 async def poll_offline_task(info_hash: str, target_dir_id: str):
     """后台轮询监控离线下载任务进度"""
     logger.info(f"Started polling offline task: {info_hash}")
+    client = get_cloud_plugin("115").client
     max_retries = 720 # 轮询时间上限，假设一次10秒，总计 2 小时
     
     for _ in range(max_retries):
         await asyncio.sleep(10)
-        tasks = await client_115.get_offline_tasks()
+        tasks = await client.get_offline_tasks()
         task_info = next((t for t in tasks if t.get("info_hash") == info_hash), None)
         
         if not task_info:
@@ -144,7 +145,7 @@ async def transfer_resource(req: TransferRequest, background_tasks: BackgroundTa
                 
         elif link_type in ["magnet", "torrent", "bt"] or url.startswith("magnet:?") or url.startswith("http"):
             # 磁力链或种子下载
-            res = await client_115.offline_add_url(url, archive_dir_id)
+            res = await get_cloud_plugin("115").client.offline_add_url(url, archive_dir_id)
             if res.get("state"):
                 info_hash = res.get("info_hash")
                 name = res.get("name", "Unknown")

@@ -429,7 +429,13 @@ class Cloud115Client:
                             share_files.append({"name": fname, "sha": str(sha_val).upper()})
                     
                 if not file_ids:
-                    return {"state": False, "error": "No files found in share or none matched filter rules"}
+                    if valid_rules:
+                        return {
+                            "state": False,
+                            "error": "No files matched configured filter rules",
+                            "reason": "no_matching_filter_rules",
+                        }
+                    return {"state": False, "error": "No files found in share", "reason": "empty_share"}
                     
                 # 构造 payload 进行转存
                 receive_payload = {

@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Dict, List, Optional
 import os
 import yaml
 from pydantic import BaseModel
@@ -40,7 +40,12 @@ class ServerConfig(BaseModel):
 class DatabaseConfig(BaseModel):
     path: str = "data/strm.db"
 
-class Cloud115Config(BaseModel):
+class CloudPluginConfig(BaseModel):
+    enabled: bool = False
+    sync_dirs: List[SyncDirConfig] = []
+
+
+class Cloud115Config(CloudPluginConfig):
     enabled: bool = False
     cookie: str = ""
     strm_type: str = "pickcode"
@@ -49,11 +54,16 @@ class Cloud115Config(BaseModel):
     target_dir_id: str = "0"
     sync_dirs: List[SyncDirConfig] = []
 
-class Cloud123Config(BaseModel):
+class Cloud123Config(CloudPluginConfig):
     enabled: bool = False
     access_token: str = ""
     strm_type: str = "fileid"
     sync_dirs: List[SyncDirConfig] = []
+
+
+class CloudsConfig(BaseModel):
+    plugins: Dict[str, dict] = {}
+    default: str = "115"
 
 class TmdbConfig(BaseModel):
     api_key: str = ""
@@ -192,6 +202,7 @@ class LogConfig(BaseModel):
 class AppConfig(BaseSettings):
     server: ServerConfig = ServerConfig()
     database: DatabaseConfig = DatabaseConfig()
+    clouds: CloudsConfig = CloudsConfig()
     cloud115: Cloud115Config = Cloud115Config()
     cloud123: Cloud123Config = Cloud123Config()
     tmdb: TmdbConfig = TmdbConfig()
@@ -215,7 +226,7 @@ def load_config(config_path: str = "data/config.yaml") -> AppConfig:
         with open(config_path, "r", encoding="utf-8") as f:
             config_dict = yaml.safe_load(f) or {}
             
-    _config_instance = AppConfig(**config_dict)
+    _config_instance = _build_app_config(config_dict)
     return _config_instance
 
 def get_config() -> AppConfig:
@@ -244,7 +255,7 @@ def update_config(partial_dict: dict, config_path: str = "data/config.yaml") -> 
     merged_dict = deep_update(current_dict, partial_dict)
     
     # Pydantic 类型安全校验 (如果传入非法参数，此处会抛出异常被上层捕获)
-    new_config = AppConfig(**merged_dict)
+    new_config = _build_app_config(merged_dict)
     
     # 持久化到文件
     with open(config_path, "w", encoding="utf-8") as f:
@@ -253,3 +264,18 @@ def update_config(partial_dict: dict, config_path: str = "data/config.yaml") -> 
     # 热替换内存单例
     _config_instance = new_config
     return _config_instance
+
+
+def _build_app_config(config_dict: dict) -> AppConfig:
+    merged = dict(config_dict or {})
+    clouds = dict(merged.get("clouds") or {})
+    plugins = dict(clouds.get("plugins") or {})
+
+    if "115" in plugins and "cloud115" not in merged:
+        merged["cloud115"] = plugins["115"]
+    if "123" in plugins and "cloud123" not in merged:
+        merged["cloud123"] = plugins["123"]
+
+    config = AppConfig(**merged)
+    config.clouds.plugins["115"] = config.cloud115.model_dump()
+    return config

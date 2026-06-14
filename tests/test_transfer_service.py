@@ -67,9 +67,12 @@ class OverwriteTaskStrmTests(unittest.IsolatedAsyncioTestCase):
             )
 
             async_mock = AsyncMock(return_value=[str(strm_path)])
+            plugin = SimpleNamespace(
+                strm_generator=SimpleNamespace(rewrite_manifest_records=async_mock)
+            )
             with patch("app.services.transfer_service.get_db_conn", return_value=_AsyncDbContext(db)), patch(
-                "app.services.transfer_service.generator_115.rewrite_manifest_records",
-                async_mock,
+                "app.services.transfer_service.get_cloud_plugin",
+                return_value=plugin,
             ):
                 result = await overwrite_task_strm("task-1")
 
@@ -90,12 +93,14 @@ class OverwriteTaskStrmTests(unittest.IsolatedAsyncioTestCase):
 
 class RewriteArchiveStrmTests(unittest.IsolatedAsyncioTestCase):
     async def test_rewrite_archive_strm_delegates_to_manifest_rewrite(self):
+        rewrite_mock = AsyncMock(return_value={"archive_root": "剧集/国产剧集", "rewritten": 1, "files": ["/tmp/a.strm"]})
+        plugin = SimpleNamespace(strm_generator=SimpleNamespace(rewrite_from_manifest=rewrite_mock))
         with patch(
             "app.services.transfer_service.list_records_for_rewrite",
             AsyncMock(return_value=[{"file_id": "fid-1"}]),
         ), patch(
-            "app.services.transfer_service.generator_115.rewrite_from_manifest",
-            AsyncMock(return_value={"archive_root": "剧集/国产剧集", "rewritten": 1, "files": ["/tmp/a.strm"]}),
+            "app.services.transfer_service.get_cloud_plugin",
+            return_value=plugin,
         ):
             result = await rewrite_archive_strm("剧集/国产剧集")
 
@@ -115,6 +120,12 @@ class RewriteArchiveStrmTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ReceiveShareTaskTests(unittest.IsolatedAsyncioTestCase):
+    def test_transfer_service_uses_cloud_plugin_instead_of_module_singletons(self):
+        import app.services.transfer_service as transfer_service
+
+        self.assertFalse(hasattr(transfer_service, "client_115"))
+        self.assertFalse(hasattr(transfer_service, "generator_115"))
+
     async def test_receive_share_task_precreates_archive_path_under_selected_strm_destination(self):
         config = SimpleNamespace(
             transfer=SimpleNamespace(enabled=True),
@@ -124,12 +135,23 @@ class ReceiveShareTaskTests(unittest.IsolatedAsyncioTestCase):
         )
         mocked_db = _AsyncDbContext(_AsyncDb(task_row=None, record_rows=[]))
 
+        client = SimpleNamespace(
+            get_share_info=AsyncMock(return_value={"state": True, "files": [{"name": "秘恋稽核中 (2026) S01E01.mkv", "sha": "ABC"}]}),
+            create_path=AsyncMock(return_value={"id": "cid-123"}),
+            share_receive=AsyncMock(return_value={"state": True, "share_files": [{"name": "秘恋稽核中 (2026) S01E01.mkv", "sha": "ABC"}]}),
+        )
+        generator = SimpleNamespace(
+            generate_strm_for_folder=AsyncMock(return_value=["strm_output/a.strm"]),
+            sync_strm_files_from_manifest=AsyncMock(return_value={"scanned": 3, "updated": 2, "skipped": 1, "failed": 0}),
+        )
+        plugin = SimpleNamespace(client=client, strm_generator=generator)
+
         with patch(
             "app.services.transfer_service.get_config",
             return_value=config,
         ), patch(
-            "app.services.transfer_service.client_115.get_share_info",
-            AsyncMock(return_value={"state": True, "files": [{"name": "秘恋稽核中 (2026) S01E01.mkv", "sha": "ABC"}]}),
+            "app.services.transfer_service.get_cloud_plugin",
+            return_value=plugin,
         ), patch(
             "app.services.transfer_service.classify",
             AsyncMock(return_value=SimpleNamespace(
@@ -142,42 +164,30 @@ class ReceiveShareTaskTests(unittest.IsolatedAsyncioTestCase):
                 media_type="tv",
             )),
         ), patch(
-            "app.services.transfer_service.client_115.create_path",
-            AsyncMock(return_value={"id": "cid-123"}),
-        ) as mocked_create_path, patch(
-            "app.services.transfer_service.client_115.share_receive",
-            AsyncMock(return_value={"state": True, "share_files": [{"name": "秘恋稽核中 (2026) S01E01.mkv", "sha": "ABC"}]}),
-        ) as mocked_receive, patch(
             "app.services.transfer_service.get_db_conn",
             return_value=mocked_db,
-        ), patch(
-            "app.services.transfer_service.generator_115.generate_strm_for_folder",
-            AsyncMock(return_value=["strm_output/a.strm"]),
-        ) as mocked_generate_strm, patch(
-            "app.services.transfer_service.generator_115.sync_strm_files_from_manifest",
-            AsyncMock(return_value={"scanned": 3, "updated": 2, "skipped": 1, "failed": 0}),
-        ) as mocked_sync_strm:
+        ):
             result = await receive_share_task("https://115.com/s/demo", "", target_dir_id="strm-root")
 
         self.assertEqual(result["status"], "success")
-        mocked_create_path.assert_awaited_once_with(
+        client.create_path.assert_awaited_once_with(
             "strm-root",
             "剧集/日韩剧集/秘恋稽核中 (2026) {tmdb-297640}/Season 1",
         )
-        mocked_receive.assert_awaited_once_with(
+        client.share_receive.assert_awaited_once_with(
             "https://115.com/s/demo",
             "",
             target_dir_id="cid-123",
             filter_rules=None,
         )
-        mocked_generate_strm.assert_awaited_once_with(
+        generator.generate_strm_for_folder.assert_awaited_once_with(
             "cid-123",
             [{"name": "秘恋稽核中 (2026) S01E01.mkv", "sha": "ABC"}],
             "剧集/日韩剧集/秘恋稽核中 (2026) {tmdb-297640}/Season 1",
             "strm_output",
             task_id=unittest.mock.ANY,
         )
-        mocked_sync_strm.assert_awaited_once_with(
+        generator.sync_strm_files_from_manifest.assert_awaited_once_with(
             dir_id="cid-123",
             output_dir="strm_output",
             root_output_dir="strm_output",

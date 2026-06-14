@@ -3,7 +3,7 @@ import uuid
 import asyncio
 from loguru import logger
 from app.events import event_bus, EVENT_TRANSFER_RECEIVED, EVENT_TRANSFER_MOVED
-from app.core.cloud115.client import client_115
+from app.core.cloud import get_cloud_plugin
 from app.core.transfer.scope import validate, expand_allowed_dirs
 from app.database import get_db_conn
 
@@ -31,13 +31,14 @@ async def handle_transfer_received(share_url: str, inbox_dir_id: str, temp_dir_i
         )
 
     expand_allowed_dirs(temp_dir_id)
+    client = get_cloud_plugin("115").client
 
     logger.info(f"[Mover] 开始移动 {len(files)} 个文件: 收件箱(inbox={inbox_dir_id}) → 临时目录(temp={temp_dir_id})")
 
     # 先列出收件箱中的所有文件cid，用于移动前校验
     inbox_files = {}
     try:
-        list_res = await client_115.list_files(inbox_dir_id, limit=200)
+        list_res = await client.list_files(inbox_dir_id, limit=200)
         if not list_res.get("error"):
             for item in list_res.get("items", []):
                 cid = item.get("cid") or item.get("fid")
@@ -68,7 +69,7 @@ async def handle_transfer_received(share_url: str, inbox_dir_id: str, temp_dir_i
 
         logger.info(f"[Mover] 移动: {file_name} (cid={file_cid}) 从 inbox={inbox_dir_id} → temp={temp_dir_id}")
 
-        success = await client_115.move_files([file_cid], temp_dir_id)
+        success = await client.move_files([file_cid], temp_dir_id)
         if not success:
             raise MoverIntegrityError(
                 f"[Mover] 移动失败！{file_name} (cid={file_cid}) "

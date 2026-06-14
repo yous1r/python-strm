@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from app.core.cloud115.strm import generator_115
+from app.core.cloud import get_cloud_plugin
+from app.core.cloud.plugin import CloudPluginNotFoundError
 from app.config import get_config
 
 router = APIRouter(prefix="/api/v1/strm", tags=["STRM管理"])
@@ -16,13 +17,11 @@ async def generate_strm(req: GenerateReq):
     output_dir = config.strm.output_dir
     base_url = config.strm.base_url
     
-    if req.cloud_type == "115":
-        generated = await generator_115.batch_generate(req.dir_id, output_dir, base_url, req.recursive)
-    elif req.cloud_type == "123":
-        from app.core.cloud123.strm import generator_123
-        generated = await generator_123.batch_generate(req.dir_id, output_dir, base_url, req.recursive)
-    else:
+    try:
+        plugin = get_cloud_plugin(req.cloud_type)
+    except CloudPluginNotFoundError:
         raise HTTPException(status_code=400, detail="Unsupported cloud type")
+    generated = await plugin.strm_generator.batch_generate(req.dir_id, output_dir, base_url, req.recursive)
     
     return {
         "status": "success",
