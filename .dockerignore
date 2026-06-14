@@ -1,9 +1,13 @@
 .git
 .gitignore
+.gitea/
+.github/
 .venv
 venv/
 env/
 __pycache__/
+.pytest_cache/
+.codex/
 *.pyc
 *.pyo
 *.pyd
@@ -14,10 +18,17 @@ __pycache__/
 
 # 排除本地数据和缓存，防止打包进镜像
 data/
+strm/
 strm_output/
+strm_output_bak/
+archive/
+archive_bak/
 .agents/
 .idea/
 .vscode/
+.cursor/
+.cline/
+.specstory/
 
 # 配置文件可通过宿主机挂载或容器内默认生成，也可以选择打包
 # config.yaml

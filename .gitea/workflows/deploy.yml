@@ -1,0 +1,73 @@
+name: Deploy
+
+"on":
+  push:
+    branches:
+      - master
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run Python tests
+        run: PYTHONPATH=. uv run pytest -q
+
+      - name: Build Docker images
+        run: |
+          docker build -t python-strm:ci .
+          docker build -t pansou-src:ci ./pansou_src
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs:
+      - test
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+    steps:
+      - name: Validate deployment secrets
+        run: |
+          test -n "$DEPLOY_HOST" || (echo "Missing required secret: DEPLOY_HOST" && exit 1)
+          test -n "$DEPLOY_USER" || (echo "Missing required secret: DEPLOY_USER" && exit 1)
+          test -n "$DEPLOY_SSH_KEY" || (echo "Missing required secret: DEPLOY_SSH_KEY" && exit 1)
+          test -n "$DEPLOY_PATH" || (echo "Missing required secret: DEPLOY_PATH" && exit 1)
+
+      - name: Deploy over SSH
+        run: |
+          set -euo pipefail
+          PORT="${DEPLOY_PORT:-22}"
+
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "$PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+          ssh -i ~/.ssh/deploy_key -p "$PORT" "$DEPLOY_USER@$DEPLOY_HOST" "bash -s -- \"$DEPLOY_PATH\"" <<'REMOTE'
+          set -euo pipefail
+          DEPLOY_PATH="$1"
+
+          cd "$DEPLOY_PATH"
+          git fetch origin master
+          git checkout master
+          git pull --ff-only origin master
+          docker compose build
+          docker compose up -d --remove-orphans
+          docker image prune -f
+          REMOTE
