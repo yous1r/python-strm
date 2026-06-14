@@ -16,8 +16,6 @@ from app.core.transfer import init_transfer_pipeline
 
 from app.database import init_db
 
-from app.events import spawn_task
-
 from app.services.telegram_background_service import telegram_background_sync_service
 from app.services.telegram_history_sync_service import init_telegram_history_sync_events
 from app.services.startup_bootstrap_service import run_startup_pipeline
@@ -28,6 +26,7 @@ from app.services.cloud115_full_sync_service import (
 
 from app.utils.logger import setup_logger
 from app.utils.scheduler import start_scheduler, stop_scheduler, add_job
+from app.utils.background_tasks import CLOUD_API_POOL, DEFAULT_POOL, background_task_coordinator
 
 from app.api.debug import router as debug_router
 from app.api.library import router as library_router
@@ -37,6 +36,31 @@ from app.api import cloud115, cloud123, strm, organize, search, web, system, tra
 logger = setup_logger()
 
 config = get_config()
+
+
+async def queue_startup_workflows(config) -> dict[str, object]:
+    queued: dict[str, object] = {}
+    if config.monitor.startup_pipeline.enabled:
+        queued["startup_pipeline"] = await background_task_coordinator.spawn_unique(
+            "startup_pipeline",
+            lambda: run_startup_pipeline(),
+            name="startup_pipeline",
+            pool=DEFAULT_POOL,
+        )
+
+    queued["telegram_monitor"] = await background_task_coordinator.spawn_unique(
+        "telegram_monitor",
+        lambda: telegram_monitor.start(),
+        name="telegram_monitor",
+        pool=CLOUD_API_POOL,
+    )
+    queued["standalone_proxy"] = await background_task_coordinator.spawn_unique(
+        "standalone_proxy",
+        lambda: restart_standalone_proxy(),
+        name="standalone_proxy",
+        pool=DEFAULT_POOL,
+    )
+    return queued
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -48,7 +72,7 @@ async def lifespan(app: FastAPI):
     # init_handlers()
     init_cloud115_full_sync_events()
     init_telegram_history_sync_events()
-    # init_transfer_pipeline()
+    init_transfer_pipeline()
 
     config = get_config()
     
@@ -68,14 +92,7 @@ async def lifespan(app: FastAPI):
 
     telegram_background_sync_service.configure_scheduled_sync_job()
 
-    if config.monitor.startup_pipeline.enabled:
-        spawn_task(run_startup_pipeline(), name="startup_pipeline")
-
-    # 实时抓取telegram 频道消息
-    spawn_task(telegram_monitor.start(), name="telegram_monitor")
-
-    # 第三方客户端代理    
-    spawn_task(restart_standalone_proxy(), name="standalone_proxy")
+    await queue_startup_workflows(config)
         
     yield
     # 关闭时执行

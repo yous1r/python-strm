@@ -191,107 +191,6 @@ class Cloud115FullSyncService:
             workflow_dirs.append(item)
         return workflow_dirs
 
-    async def _run_manifest_and_strm_for_dir(
-        self,
-        item: dict[str, object],
-        *,
-        base_url: str,
-        root_output_dir: str,
-    ) -> dict[str, object]:
-        manifest_stats = await run_in_background_pool(
-            lambda: generator_115.sync_manifest_records(
-                dir_id=str(item["dir_id"]),
-                dir_name=str(item.get("dir_name") or item["dir_id"]),
-                output_dir=str(item["output_dir"]),
-                base_url=base_url,
-                recursive=bool(item.get("recursive", True)),
-                root_output_dir=root_output_dir,
-            ),
-            pool=LOCAL_DB_POOL,
-        )
-        strm_stats = await run_in_background_pool(
-            lambda: generator_115.sync_strm_files_from_manifest(
-                dir_id=str(item["dir_id"]),
-                output_dir=str(item["output_dir"]),
-                root_output_dir=root_output_dir,
-                base_url=base_url,
-            ),
-            pool=LOCAL_DB_POOL,
-        )
-        return {
-            "dir": dict(item),
-            "manifest_stats": manifest_stats,
-            "strm_stats": strm_stats,
-        }
-
-    async def run_manifest_and_strm_refresh_step(self, dirs: list[dict[str, object]]) -> dict[str, object]:
-        config = get_config()
-        workflow_dirs = self._select_strm_workflow_dirs(dirs)
-        if not workflow_dirs:
-            return {
-                "manifest_results": [],
-                "strm_results": [],
-                "dirs": [],
-                "has_changes": False,
-            }
-
-        raw_results = await asyncio.gather(
-            *[
-                self._run_manifest_and_strm_for_dir(
-                    item,
-                    base_url=config.strm.base_url,
-                    root_output_dir=config.strm.output_dir,
-                )
-                for item in workflow_dirs
-            ]
-        )
-
-        manifest_results: list[dict[str, object]] = []
-        strm_results: list[dict[str, object]] = []
-        changed_dirs: list[dict[str, object]] = []
-
-        for result in raw_results:
-            item = result["dir"]
-            manifest_stats = result["manifest_stats"]
-            strm_stats = result["strm_stats"]
-            changed = bool(manifest_stats.get("changed"))
-
-            manifest_results.append(
-                {
-                    "dir_id": str(item["dir_id"]),
-                    "dir_name": str(item.get("dir_name") or item["dir_id"]),
-                    "output_dir": str(item["output_dir"]),
-                    "scanned_records": int(manifest_stats.get("scanned", 0) or 0),
-                    "created_records": int(manifest_stats.get("created", 0) or 0),
-                    "updated_records": int(manifest_stats.get("updated", 0) or 0),
-                    "unchanged_records": int(manifest_stats.get("unchanged", 0) or 0),
-                    "cleaned_records": int(manifest_stats.get("deleted_records", 0) or 0),
-                    "deleted_strm_files": int(manifest_stats.get("deleted_files", 0) or 0),
-                    "changed": changed,
-                }
-            )
-            strm_results.append(
-                {
-                    "dir_id": str(item["dir_id"]),
-                    "dir_name": str(item.get("dir_name") or item["dir_id"]),
-                    "output_dir": str(item["output_dir"]),
-                    "generated_count": int(strm_stats.get("updated", 0) or 0),
-                    "generated_files": list(strm_stats.get("files", []) or []),
-                    "scanned_count": int(strm_stats.get("scanned", 0) or 0),
-                    "skipped_count": int(strm_stats.get("skipped", 0) or 0),
-                    "failed_count": int(strm_stats.get("failed", 0) or 0),
-                }
-            )
-            if changed:
-                changed_dirs.append(dict(item))
-
-        return {
-            "manifest_results": manifest_results,
-            "strm_results": strm_results,
-            "dirs": workflow_dirs,
-            "has_changes": bool(changed_dirs),
-        }
-
     def _select_changed_strm_dirs(self, dirs: list[dict[str, object]]) -> list[dict[str, object]]:
         """仅对发生实际变更的 STRM 目录执行后续刷新。"""
 
@@ -403,7 +302,10 @@ class Cloud115FullSyncService:
         try:
             manifest_data = await self.run_manifest_refresh_step(dirs)
             manifest_results = manifest_data["results"]
-            await self._update_task(task_id, manifest_results=manifest_results)
+            await self._update_task(
+                task_id,
+                manifest_results=manifest_results,
+            )
             await self._update_stats(
                 task_id,
                 cleaned_records=sum(int(item.get("cleaned_records", 0)) for item in manifest_results),
@@ -413,9 +315,7 @@ class Cloud115FullSyncService:
                 EVENT_CLOUD115_FULL_SYNC_MANIFEST_REFRESH_FINISHED,
                 task_id=task_id,
                 source=source,
-                dirs=dirs,
-                manifest_results=manifest_results,
-                has_changes=bool(manifest_data.get("has_changes")),
+                dirs=manifest_data["dirs"],
             )
         except Exception as exc:
             await self._mark_failed(task_id, "manifest_refresh", exc)

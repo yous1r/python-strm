@@ -6,7 +6,8 @@ WORKDIR /app
 # 设置环境变量
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV TZ=Asia/Shanghai
+ARG TZ=Asia/Shanghai
+ENV TZ=${TZ}
 
 RUN echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ $(. /etc/os-release && echo $VERSION_CODENAME) main contrib non-free" > /etc/apt/sources.list && \
     echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ $(. /etc/os-release && echo $VERSION_CODENAME)-updates main contrib non-free" >> /etc/apt/sources.list && \
@@ -15,9 +16,9 @@ RUN echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ $(. /etc/os-release &
 
 
 # 安装系统级依赖并配置时区
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     tzdata \
-    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone \
+    && ln -snf /usr/share/zoneinfo/${TZ} /etc/localtime && echo ${TZ} > /etc/timezone \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

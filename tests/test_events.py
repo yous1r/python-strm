@@ -157,6 +157,27 @@ class EventBusBehaviorTests(unittest.IsolatedAsyncioTestCase):
         tracked_ids = {task["task_id"] for task in tasks}
         self.assertIn(task_id, tracked_ids)
 
+    async def test_spawn_task_records_error_without_unretrieved_task_exception(self):
+        observed_contexts = []
+        loop = asyncio.get_running_loop()
+        previous_handler = loop.get_exception_handler()
+        loop.set_exception_handler(lambda _loop, context: observed_contexts.append(context))
+
+        async def boom():
+            raise RuntimeError("database is locked")
+
+        try:
+            task_id = spawn_task(boom(), name="boom")
+            await asyncio.sleep(0.05)
+        finally:
+            loop.set_exception_handler(previous_handler)
+
+        tasks = await task_tracker.get_active()
+        task = next(item for item in tasks if item["task_id"] == task_id)
+        self.assertEqual(task["status"], "error")
+        self.assertEqual(task["error"], "database is locked")
+        self.assertEqual(observed_contexts, [])
+
     async def test_rollback_task_does_not_reemit_start_event(self):
         observed = []
 

@@ -115,9 +115,11 @@ class RewriteArchiveStrmTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ReceiveShareTaskTests(unittest.IsolatedAsyncioTestCase):
-    async def test_receive_share_task_precreates_archive_path_and_ignores_custom_target_dir(self):
+    async def test_receive_share_task_precreates_archive_path_under_selected_strm_destination(self):
         config = SimpleNamespace(
-            transfer=SimpleNamespace(enabled=True, archive_dir_id="archive-root"),
+            transfer=SimpleNamespace(enabled=True),
+            cloud115=SimpleNamespace(sync_dirs=[SimpleNamespace(dir_id="strm-root", name="115 STRM 扫描源目录")]),
+            cloud123=SimpleNamespace(sync_dirs=[]),
             strm=SimpleNamespace(output_dir="strm_output", base_url="http://localhost:8095"),
         )
         mocked_db = _AsyncDbContext(_AsyncDb(task_row=None, record_rows=[]))
@@ -155,11 +157,11 @@ class ReceiveShareTaskTests(unittest.IsolatedAsyncioTestCase):
             "app.services.transfer_service.generator_115.sync_strm_files_from_manifest",
             AsyncMock(return_value={"scanned": 3, "updated": 2, "skipped": 1, "failed": 0}),
         ) as mocked_sync_strm:
-            result = await receive_share_task("https://115.com/s/demo", "", target_dir_id="manual-dir")
+            result = await receive_share_task("https://115.com/s/demo", "", target_dir_id="strm-root")
 
         self.assertEqual(result["status"], "success")
         mocked_create_path.assert_awaited_once_with(
-            "archive-root",
+            "strm-root",
             "剧集/日韩剧集/秘恋稽核中 (2026) {tmdb-297640}/Season 1",
         )
         mocked_receive.assert_awaited_once_with(
@@ -184,16 +186,18 @@ class ReceiveShareTaskTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result["strm_updated_count"], 2)
 
-    async def test_receive_share_task_without_archive_dir_raises_instead_of_using_temp_dir(self):
+    async def test_receive_share_task_without_strm_destination_raises(self):
         config = SimpleNamespace(
-            transfer=SimpleNamespace(enabled=True, archive_dir_id=""),
+            transfer=SimpleNamespace(enabled=True),
+            cloud115=SimpleNamespace(sync_dirs=[]),
+            cloud123=SimpleNamespace(sync_dirs=[]),
         )
 
         with patch("app.services.transfer_service.get_config", return_value=config):
             with self.assertRaises(TransferServiceError) as ctx:
                 await receive_share_task("https://115.com/s/demo", "")
 
-        self.assertEqual(str(ctx.exception), "未配置归档目录 (archive_dir_id)")
+        self.assertEqual(str(ctx.exception), "请先在 STRM 配置中添加 115 网盘的扫描源目录")
 
 
 class SeriesScopePathTests(unittest.TestCase):

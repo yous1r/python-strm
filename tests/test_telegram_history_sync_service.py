@@ -1,4 +1,7 @@
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -146,3 +149,60 @@ def test_monitor_new_link_event_is_no_longer_exported():
 
     with pytest.raises(ImportError):
         exec("from app.events import EVENT_MONITOR_NEW_LINK", {})
+
+
+@pytest.mark.asyncio
+async def test_history_sync_scans_each_channel_once_for_chunked_date_range(monkeypatch):
+    from app.services.telegram_history_sync_service import (
+        TelegramHistorySyncRequest,
+        TelegramHistorySyncService,
+    )
+
+    class FakeClient:
+        def __init__(self):
+            self.iter_calls = 0
+            self.messages = [
+                SimpleNamespace(id=4, date=datetime(2026, 1, 4, 12, tzinfo=timezone.utc), text="资源 4"),
+                SimpleNamespace(id=3, date=datetime(2026, 1, 3, 12, tzinfo=timezone.utc), text="资源 3"),
+                SimpleNamespace(id=2, date=datetime(2026, 1, 2, 12, tzinfo=timezone.utc), text="资源 2"),
+                SimpleNamespace(id=1, date=datetime(2026, 1, 1, 12, tzinfo=timezone.utc), text="资源 1"),
+            ]
+
+        async def iter_messages(self, channel, limit=None):
+            self.iter_calls += 1
+            for message in self.messages:
+                yield message
+
+    fake_client = FakeClient()
+
+    @asynccontextmanager
+    async def fake_acquire_client(*args, **kwargs):
+        yield fake_client, True, True, None
+
+    monkeypatch.setattr("app.services.telegram_history_sync_service._acquire_client_for_operation", fake_acquire_client)
+    monkeypatch.setattr("app.services.telegram_history_sync_service.get_telegram_history_sync_checkpoint", AsyncMock(return_value=None))
+    monkeypatch.setattr("app.services.telegram_history_sync_service.upsert_telegram_history_sync_checkpoint", AsyncMock())
+    monkeypatch.setattr("app.services.telegram_history_sync_service.upsert_telegram_monitor_state", AsyncMock())
+    monkeypatch.setattr(
+        "app.services.telegram_history_sync_service._dispatch_scraped_message",
+        AsyncMock(return_value=[{"db_id": 1}]),
+    )
+    monkeypatch.setattr("app.services.telegram_history_sync_service.event_bus.emit_background", lambda *args, **kwargs: "task")
+
+    service = TelegramHistorySyncService()
+    result = await service.handle_history_sync_requested(
+        TelegramHistorySyncRequest(
+            api_id="1",
+            api_hash="2",
+            channels=["@demo"],
+            mode="date_range",
+            date_start="2026-01-01",
+            date_end="2026-01-04",
+            chunk_days=2,
+        )
+    )
+
+    assert fake_client.iter_calls == 1
+    assert result["processed"] == 4
+    assert result["inserted"] == 4
+    assert len(result["channels"][0]["chunks"]) == 2

@@ -30,6 +30,7 @@ from app.events import (
 
 
 _batch_states: dict[str, dict] = {}
+_batch_completion_states: dict[str, dict] = {}
 _batch_semaphore = asyncio.Semaphore(1)
 
 
@@ -65,6 +66,13 @@ async def handle_batch_requested(task_id: str, rows: list, base_title: str = "",
 
     batch_title = base_title or rows[0].get("base_title") or "批量转存"
     episode_count = len(rows)
+    cloud_type = str(kwargs.get("cloud_type") or "115")
+    destination_dir_id = str(
+        kwargs.get("destination_dir_id")
+        or kwargs.get("target_dir_id")
+        or ""
+    ).strip()
+    target_dir_name = str(kwargs.get("target_dir_name") or "")
     series_folder_id = ""
     series_path_str = ""
 
@@ -74,25 +82,28 @@ async def handle_batch_requested(task_id: str, rows: list, base_title: str = "",
         if classify_result:
             path_parts = build_archive_path(classify_result)
             series_path_str = "/".join(path_parts)
-            archive_id = get_config().transfer.archive_dir_id
-            if archive_id and archive_id != "0":
-                res = await client_115.create_path(archive_id, series_path_str)
+            if destination_dir_id and destination_dir_id != "0":
+                res = await client_115.create_path(destination_dir_id, series_path_str)
                 if "id" in res and res["id"]:
                     series_folder_id = res["id"]
                     logger.info(f"[Batch] 已创建归档路径: {series_path_str} (cid={series_folder_id})")
                 else:
                     logger.warning(f"[Batch] create_path 未返回目录 ID: {res}")
             else:
-                logger.warning("[Batch] archive_dir_id 未配置，跳过目录创建")
+                logger.warning("[Batch] 未选择 STRM 远程扫描源目录，跳过目录创建")
     except Exception as exc:
         logger.error(f"[Batch] 预创建归档路径失败: {exc}")
 
+    final_target_dir_id = series_folder_id or destination_dir_id
     _batch_states[task_id] = {
         "task_id": task_id,
         "title": batch_title,
         "episode_count": episode_count,
+        "cloud_type": cloud_type,
+        "destination_dir_id": destination_dir_id,
+        "target_dir_name": target_dir_name,
         "series_folder_id": series_folder_id,
-        "target_dir_id": series_folder_id or get_config().transfer.archive_dir_id,
+        "target_dir_id": final_target_dir_id,
         "series_path_str": series_path_str,
         "share_files": [],
         "success_count": 0,
@@ -107,6 +118,10 @@ async def handle_batch_requested(task_id: str, rows: list, base_title: str = "",
         batch_title=batch_title,
         episode_count=episode_count,
         series_folder_id=series_folder_id,
+        target_dir_id=final_target_dir_id,
+        destination_dir_id=destination_dir_id,
+        target_dir_name=target_dir_name,
+        cloud_type=cloud_type,
         series_path_str=series_path_str,
     )
 
@@ -117,13 +132,16 @@ async def handle_batch_prepared(
     batch_title: str,
     episode_count: int,
     series_folder_id: str = "",
+    target_dir_id: str = "",
+    destination_dir_id: str = "",
     series_path_str: str = "",
     **kwargs,
 ):
-    target_dir_id = series_folder_id or get_config().transfer.archive_dir_id
+    state = _batch_states.get(task_id) or {}
+    target_dir_id = target_dir_id or series_folder_id or state.get("target_dir_id") or destination_dir_id
 
     if not target_dir_id or target_dir_id == "0":
-        error_message = "未配置归档目录 (archive_dir_id)"
+        error_message = "未选择 STRM 远程扫描源目录"
         for row in rows:
             await event_bus.emit(
                 EVENT_TRANSFER_BATCH_ITEM_FAILED,
@@ -221,6 +239,7 @@ async def handle_batch_done(task_id: str, batch_state: dict, **kwargs):
         archive_dir_id = batch_state.get("target_dir_id") or batch_state.get("series_folder_id", "")
         archive_rel_path = batch_state.get("series_path_str", "")
         if batch_state.get("success_count", 0) > 0 and archive_dir_id:
+            _batch_completion_states[task_id] = dict(batch_state)
             await event_bus.emit(
                 EVENT_TRANSFER_BATCH_DB_SYNC_REQUESTED,
                 task_id=task_id,
@@ -350,6 +369,26 @@ async def handle_strm_batch_rewrite_requested(
     )
 
 
+async def handle_strm_batch_completed(
+    task_id: str,
+    archive_dir_id: str,
+    archive_rel_path: str = "",
+    files: list | None = None,
+    manifest_stats: dict | None = None,
+    strm_stats: dict | None = None,
+    **kwargs,
+):
+    batch_state = _batch_completion_states.pop(task_id, {})
+    failed_count = len(batch_state.get("failed_links", []))
+    strm_failed_count = int((strm_stats or {}).get("failed", 0) or 0)
+    status = "failed" if failed_count or strm_failed_count else "done"
+    await _complete_transfer_task(task_id, status)
+    logger.info(
+        f"[Batch] {task_id}: 批次入库工作流完成 status={status}, "
+        f"archive_dir_id={archive_dir_id}, archive_rel_path={archive_rel_path}"
+    )
+
+
 async def handle_batch_db_sync_completed(
     task_id: str,
     archive_dir_id: str,
@@ -373,7 +412,8 @@ async def handle_batch_db_sync_completed(
 
 async def _finalize_transfer_task(task_id: str, batch_state: dict):
     failed_count = len(batch_state.get("failed_links", []))
-    status = "done" if failed_count == 0 else "failed"
+    success_count = int(batch_state.get("success_count", 0) or 0)
+    status = "running" if success_count > 0 else "failed"
     error_detail = None
     if failed_count:
         error_detail = "; ".join(
@@ -381,18 +421,28 @@ async def _finalize_transfer_task(task_id: str, batch_state: dict):
         )
 
     async with get_db_conn() as db:
+        completed_sql = "" if success_count > 0 else ", completed_at=CURRENT_TIMESTAMP"
         await db.execute(
-            """UPDATE transfer_tasks
-               SET status=?, success_count=?, file_count=?, archive_dir_id=?, error_detail=?, completed_at=CURRENT_TIMESTAMP
+            f"""UPDATE transfer_tasks
+               SET status=?, success_count=?, file_count=?, archive_dir_id=?, error_detail=?{completed_sql}
                WHERE task_id=?""",
             (
                 status,
-                batch_state.get("success_count", 0),
+                success_count,
                 batch_state.get("episode_count", 0),
                 batch_state.get("target_dir_id") or batch_state.get("series_folder_id") or "library_batch",
                 error_detail,
                 task_id,
             ),
+        )
+        await db.commit()
+
+
+async def _complete_transfer_task(task_id: str, status: str):
+    async with get_db_conn() as db:
+        await db.execute(
+            "UPDATE transfer_tasks SET status=?, completed_at=CURRENT_TIMESTAMP WHERE task_id=?",
+            (status, task_id),
         )
         await db.commit()
 
@@ -448,4 +498,5 @@ def init_batch_transfer():
     event_bus.subscribe(EVENT_TRANSFER_BATCH_DB_SYNC_COMPLETED, handle_batch_db_sync_completed)
     event_bus.subscribe(EVENT_STRM_BATCH_REQUESTED, handle_strm_batch_requested)
     event_bus.subscribe(EVENT_STRM_BATCH_REWRITE_REQUESTED, handle_strm_batch_rewrite_requested)
+    event_bus.subscribe(EVENT_STRM_BATCH_COMPLETED, handle_strm_batch_completed)
     logger.info("[Transfer] Batch transfer 已注册")

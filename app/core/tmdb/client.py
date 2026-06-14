@@ -1,109 +1,121 @@
-from tmdbv3api import TMDb, Movie, TV
 import asyncio
+
+import requests
+import tmdbsimple as tmdb
 from loguru import logger
+
 from app.config import get_config
+
 
 class TmdbClient:
     def __init__(self):
         self.config = get_config().tmdb
-        self.tmdb = TMDb()
-        self.tmdb.api_key = self.config.api_key
-        self.tmdb.language = self.config.language
-        self.tmdb.debug = False
-        
+        self._configure_tmdb()
+        self.search_api = tmdb.Search()
+
+    def _configure_tmdb(self):
+        tmdb.API_KEY = self.config.api_key
         if self.config.proxy:
-            # 解决 tmdbv3api 内部使用 lru_cache 导致代理字典 unhashable 的 Bug
-            original_cached_request = TMDb.cached_request
-            
-            def patched_cached_request(method, url, data, json, proxies):
-                my_proxies = {
+            session = requests.Session()
+            session.proxies.update(
+                {
                     "http": self.config.proxy,
-                    "https": self.config.proxy
+                    "https": self.config.proxy,
                 }
-                return original_cached_request.__wrapped__(method, url, data, json, my_proxies)
-                
-            TMDb.cached_request = staticmethod(patched_cached_request)
-        
-        self.movie_api = Movie()
-        self.tv_api = TV()
-        
+            )
+            tmdb.REQUESTS_SESSION = session
+        else:
+            tmdb.REQUESTS_SESSION = None
+
+    def _search_kwargs(self, title: str) -> dict[str, object]:
+        kwargs: dict[str, object] = {"query": title}
+        if self.config.language:
+            kwargs["language"] = self.config.language
+        return kwargs
+
+    def _result_list(self, response: object) -> list[dict]:
+        if not isinstance(response, dict):
+            return []
+
+        results = response.get("results", [])
+        if not isinstance(results, list):
+            return []
+
+        normalized: list[dict] = []
+        for item in results:
+            if isinstance(item, dict):
+                normalized.append(dict(item))
+            elif hasattr(item, "__dict__"):
+                normalized.append(dict(item.__dict__))
+        return normalized
+
     async def search_movie(self, title: str, year: int = None) -> list:
         """搜索电影"""
-        if not self.tmdb.api_key:
+        if not self.config.api_key:
             return []
         try:
-            results = await asyncio.to_thread(self.movie_api.search, title)
-            if not results:
-                return []
-            
+            response = await asyncio.to_thread(self.search_api.movie, **self._search_kwargs(title))
+            results = self._result_list(response)
+
             if year:
-                filtered = []
-                for m in results:
-                    if hasattr(m, 'release_date') and m.release_date and m.release_date.startswith(str(year)):
-                        filtered.append(m)
+                filtered = [
+                    movie
+                    for movie in results
+                    if str(movie.get("release_date") or "").startswith(str(year))
+                ]
                 if filtered:
                     results = filtered
-                    
-            final_res = []
-            for m in results:
-                if hasattr(m, '__dict__'):
-                    final_res.append(m.__dict__)
-                elif isinstance(m, dict):
-                    final_res.append(m)
-            return final_res
+
+            return results
         except Exception as e:
             logger.error(f"TMDB movie search failed: {e}")
             return []
 
     async def search_tv(self, title: str, year: int = None) -> list:
         """搜索剧集"""
-        if not self.tmdb.api_key:
+        if not self.config.api_key:
             return []
         try:
-            results = await asyncio.to_thread(self.tv_api.search, title)
-            if not results:
-                return []
-            
+            response = await asyncio.to_thread(self.search_api.tv, **self._search_kwargs(title))
+            results = self._result_list(response)
+
             if year:
-                filtered = []
-                for t in results:
-                    if hasattr(t, 'first_air_date') and t.first_air_date and t.first_air_date.startswith(str(year)):
-                        filtered.append(t)
+                filtered = [
+                    tv_item
+                    for tv_item in results
+                    if str(tv_item.get("first_air_date") or "").startswith(str(year))
+                ]
                 if filtered:
                     results = filtered
-                    
-            final_res = []
-            for t in results:
-                if hasattr(t, '__dict__'):
-                    final_res.append(t.__dict__)
-                elif isinstance(t, dict):
-                    final_res.append(t)
-            return final_res
+
+            return results
         except Exception as e:
             logger.error(f"TMDB TV search failed: {e}")
             return []
 
     async def get_movie_detail(self, tmdb_id: int) -> dict:
         """获取电影详情"""
-        if not self.tmdb.api_key:
+        if not self.config.api_key:
             return {}
         try:
-            detail = await asyncio.to_thread(self.movie_api.details, tmdb_id)
-            return detail.__dict__
+            movie_api = tmdb.Movies(tmdb_id)
+            detail = await asyncio.to_thread(movie_api.info, language=self.config.language)
+            return dict(detail) if isinstance(detail, dict) else {}
         except Exception as e:
             logger.error(f"TMDB movie detail failed: {e}")
             return {}
 
     async def get_tv_detail(self, tmdb_id: int) -> dict:
         """获取剧集详情"""
-        if not self.tmdb.api_key:
+        if not self.config.api_key:
             return {}
         try:
-            detail = await asyncio.to_thread(self.tv_api.details, tmdb_id)
-            return detail.__dict__
+            tv_api = tmdb.TV(tmdb_id)
+            detail = await asyncio.to_thread(tv_api.info, language=self.config.language)
+            return dict(detail) if isinstance(detail, dict) else {}
         except Exception as e:
             logger.error(f"TMDB tv detail failed: {e}")
             return {}
 
-# 单例
+
 tmdb_client = TmdbClient()

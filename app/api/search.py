@@ -2,11 +2,11 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 from loguru import logger
-from app.config import get_config
 from app.core.search.pansou import pansou_client
 from app.core.cloud115.client import client_115
 from app.core.sync.engine import sync_engine
 from app.services.transfer_service import TransferServiceError, receive_share_task
+from app.services.transfer_destination_service import resolve_transfer_destination
 from app.utils.background_tasks import CLOUD_API_POOL, spawn_background_task
 import asyncio
 
@@ -129,17 +129,16 @@ async def transfer_resource(req: TransferRequest, background_tasks: BackgroundTa
     cloud_type = req.cloud_type
     link_type = req.link_type.lower() if req.link_type else ""
 
-    if req.target_dir_id and req.target_dir_id != "0":
-        raise HTTPException(status_code=400, detail="仅 debug 接口支持自定义 target_dir_id")
-
-    archive_dir_id = get_config().transfer.archive_dir_id
-    if not archive_dir_id or archive_dir_id == "0":
-        raise HTTPException(status_code=400, detail="未配置归档目录 (archive_dir_id)")
-    
     if cloud_type == "115":
+        try:
+            destination = resolve_transfer_destination("115", req.target_dir_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        archive_dir_id = destination["dir_id"]
+
         if link_type == "115" or "115.com/s/" in url or "anxia.com/s/" in url or "115cdn.com/s/" in url or "share_code=" in url:
             try:
-                return await receive_share_task(url, req.receive_code)
+                return await receive_share_task(url, req.receive_code, target_dir_id=archive_dir_id)
             except TransferServiceError as exc:
                 raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
                 

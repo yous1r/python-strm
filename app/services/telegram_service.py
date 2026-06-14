@@ -1,4 +1,6 @@
 import asyncio
+import sqlite3
+from contextlib import asynccontextmanager
 from typing import Iterable
 
 from loguru import logger
@@ -7,10 +9,12 @@ from app.config import get_config
 from app.core.monitor.telegram import telegram_monitor
 from app.core.monitor.telegram_runtime import (
     build_telegram_client,
+    close_telegram_session_connection_without_commit,
     extract_message_text,
     extract_message_torrent_files,
     parse_channel_reference,
     parse_channels,
+    telegram_session_operation_lock,
 )
 from app.database import (
     get_db_conn,
@@ -20,6 +24,13 @@ from app.database import (
 )
 from app.utils.background_tasks import CLOUD_API_POOL, spawn_background_task
 from app.services.telegram_resource_transfer_service import process_resource_transfer
+
+TELEGRAM_SESSION_RETRY_ATTEMPTS = 3
+TELEGRAM_SESSION_RETRY_DELAY_SECONDS = 2.0
+
+
+def _is_telegram_session_locked(exc: Exception) -> bool:
+    return isinstance(exc, sqlite3.OperationalError) and "database is locked" in str(exc).lower()
 
 
 class TelegramValidationError(ValueError):
@@ -79,14 +90,12 @@ async def test_monitor_connection(
     first_channel = normalized_channels[0]
     parsed_channel = parse_channel_reference(first_channel)
 
-    client_to_use, disconnect_after, is_auth, auth_error = await _acquire_client(
+    async with _acquire_client_for_operation(
         api_id,
         api_hash,
         bot_token=bot_token,
         proxy=proxy,
-    )
-
-    try:
+    ) as (client_to_use, _disconnect_after, is_auth, auth_error):
         if auth_error:
             return {"status": "error", "message": auth_error}
 
@@ -107,9 +116,6 @@ async def test_monitor_connection(
             )
 
         return {"status": "success", "message": success_msg}
-    finally:
-        if disconnect_after:
-            await client_to_use.disconnect()
 
 
 async def scrape_monitor_history(
@@ -126,50 +132,42 @@ async def scrape_monitor_history(
         channels,
         empty_channels_message="未配置任何监听频道，无法抓取",
     )
-    client_to_use, disconnect_after, is_auth, auth_error = await _acquire_client(
+    async with _acquire_client_for_operation(
         api_id,
         api_hash,
         bot_token=bot_token,
         proxy=proxy,
-    )
+    ) as (client_to_use, _disconnect_after, is_auth, auth_error):
+        if auth_error:
+            logger.error(f"Scrape History failed: {auth_error}")
+            return
 
-    if auth_error:
-        logger.error(f"Scrape History failed: {auth_error}")
-        if disconnect_after:
-            await client_to_use.disconnect()
-        return
+        if not is_auth:
+            logger.error("Scrape History failed: Telegram client not authorized.")
+            return
 
-    if not is_auth:
-        logger.error("Scrape History failed: Telegram client not authorized.")
-        if disconnect_after:
-            await client_to_use.disconnect()
-        return
+        try:
+            total_links_found = 0
+            valid_kws = [keyword.strip().lower() for keyword in (keywords or []) if keyword and keyword.strip()]
 
-    try:
-        total_links_found = 0
-        valid_kws = [keyword.strip().lower() for keyword in (keywords or []) if keyword and keyword.strip()]
+            for channel_ref in normalized_channels:
+                parsed_channel = parse_channel_reference(channel_ref)
+                try:
+                    msg_count = 0
+                    async for message in client_to_use.iter_messages(parsed_channel, limit=None):
+                        text = extract_message_text(message)
+                        if valid_kws and not any(kw in text.lower() for kw in valid_kws):
+                            continue
+                        msg_count += 1
+                        await _throttle_scrape(msg_count)
+                        resources = await _dispatch_scraped_message(parsed_channel, message)
+                        total_links_found += len(resources)
+                except Exception as exc:
+                    logger.error(f"Failed to scrape channel {channel_ref}: {exc}")
 
-        for channel_ref in normalized_channels:
-            parsed_channel = parse_channel_reference(channel_ref)
-            try:
-                msg_count = 0
-                async for message in client_to_use.iter_messages(parsed_channel, limit=None):
-                    text = extract_message_text(message)
-                    if valid_kws and not any(kw in text.lower() for kw in valid_kws):
-                        continue
-                    msg_count += 1
-                    await _throttle_scrape(msg_count)
-                    resources = await _dispatch_scraped_message(parsed_channel, message)
-                    total_links_found += len(resources)
-            except Exception as exc:
-                logger.error(f"Failed to scrape channel {channel_ref}: {exc}")
-
-        logger.info(f"Telegram history scraping finished. Found {total_links_found} links added to queue.")
-    except Exception as exc:
-        logger.error(f"Error during Telegram history scraping: {exc}")
-    finally:
-        if disconnect_after:
-            await client_to_use.disconnect()
+            logger.info(f"Telegram history scraping finished. Found {total_links_found} links added to queue.")
+        except Exception as exc:
+            logger.error(f"Error during Telegram history scraping: {exc}")
 
 
 async def sync_single_channel(
@@ -194,18 +192,15 @@ async def sync_single_channel(
     if channel_ref not in normalized_channels:
         raise TelegramValidationError("目标频道未在配置列表中")
 
-    client_to_use, disconnect_after, is_auth, auth_error = await _acquire_client(
+    async with _acquire_client_for_operation(
         api_id,
         api_hash,
         bot_token=bot_token,
         proxy=proxy,
-    )
-    if auth_error or not is_auth:
-        if disconnect_after:
-            await client_to_use.disconnect()
-        raise TelegramValidationError(auth_error or "Telegram client not authorized")
+    ) as (client_to_use, _disconnect_after, is_auth, auth_error):
+        if auth_error or not is_auth:
+            raise TelegramValidationError(auth_error or "Telegram client not authorized")
 
-    try:
         return await _sync_channel_history(
             client_to_use,
             channel_ref,
@@ -214,9 +209,6 @@ async def sync_single_channel(
             startup_mode=startup_mode,
             limit=limit or getattr(get_config().monitor.telegram, "history_limit", 100),
         )
-    finally:
-        if disconnect_after:
-            await client_to_use.disconnect()
 
 
 async def sync_configured_channels(
@@ -274,7 +266,18 @@ async def _acquire_client(
         return telegram_monitor.client, False, is_auth, None
 
     client_to_use = build_telegram_client(api_id, api_hash, proxy)
-    await client_to_use.connect()
+    try:
+        await client_to_use.connect()
+    except Exception:
+        try:
+            await client_to_use.disconnect()
+        except Exception as disconnect_exc:
+            logger.warning(f"Failed to disconnect temporary Telegram client after connect error: {disconnect_exc}")
+            close_telegram_session_connection_without_commit(
+                client_to_use,
+                context="temporary connect error",
+            )
+        raise
 
     if await client_to_use.is_user_authorized():
         return client_to_use, True, True, None
@@ -287,6 +290,52 @@ async def _acquire_client(
             return client_to_use, True, False, f"Bot Token 登录失败: {exc}"
 
     return client_to_use, True, False, None
+
+
+@asynccontextmanager
+async def _acquire_client_for_operation(
+    api_id: str,
+    api_hash: str,
+    *,
+    bot_token: str = "",
+    proxy: str = "",
+):
+    if telegram_monitor.client and telegram_monitor.client.is_connected():
+        is_auth = await telegram_monitor.client.is_user_authorized()
+        yield telegram_monitor.client, False, is_auth, None
+        return
+
+    async with telegram_session_operation_lock:
+        for attempt in range(1, TELEGRAM_SESSION_RETRY_ATTEMPTS + 1):
+            try:
+                client_to_use, disconnect_after, is_auth, auth_error = await _acquire_client(
+                    api_id,
+                    api_hash,
+                    bot_token=bot_token,
+                    proxy=proxy,
+                )
+                break
+            except Exception as exc:
+                if _is_telegram_session_locked(exc) and attempt < TELEGRAM_SESSION_RETRY_ATTEMPTS:
+                    logger.warning(
+                        "Telegram session database is locked during temporary operation; "
+                        f"retrying {attempt}/{TELEGRAM_SESSION_RETRY_ATTEMPTS}"
+                    )
+                    await asyncio.sleep(TELEGRAM_SESSION_RETRY_DELAY_SECONDS)
+                    continue
+                raise
+        try:
+            yield client_to_use, disconnect_after, is_auth, auth_error
+        finally:
+            if disconnect_after:
+                try:
+                    await client_to_use.disconnect()
+                except Exception as exc:
+                    logger.warning(f"Failed to disconnect temporary Telegram client cleanly: {exc}")
+                    close_telegram_session_connection_without_commit(
+                        client_to_use,
+                        context="temporary operation disconnect failure",
+                    )
 
 
 async def _dispatch_scraped_message(channel: int | str, message, *, emit_events: bool = True) -> list[dict]:

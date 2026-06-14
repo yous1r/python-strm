@@ -1,16 +1,28 @@
+import asyncio
 import json
 import re
+import sqlite3
 from loguru import logger
-from telethon import TelegramClient, events
+from telethon import events
 from app.config import get_config
 from app.core.monitor.telegram_runtime import (
     build_telegram_client,
+    close_telegram_session_connection_without_commit,
     extract_message_text,
     extract_message_torrent_files,
     parse_channels,
+    telegram_session_operation_lock,
 )
 from app.services.telegram_resource_transfer_service import normalize_resource_payload, process_resource_transfer
 from app.utils.background_tasks import CLOUD_API_POOL, spawn_background_task
+
+TELEGRAM_SESSION_RETRY_ATTEMPTS = 3
+TELEGRAM_SESSION_RETRY_DELAY_SECONDS = 2.0
+
+
+def _is_telegram_session_locked(exc: Exception) -> bool:
+    return isinstance(exc, sqlite3.OperationalError) and "database is locked" in str(exc).lower()
+
 
 class TelegramMonitor:
     def __init__(self):
@@ -29,21 +41,62 @@ class TelegramMonitor:
             logger.error("Telegram API ID or Hash is missing.")
             return
 
+        parsed_channels = parse_channels(self.config.channels or [])
+
+        for attempt in range(1, TELEGRAM_SESSION_RETRY_ATTEMPTS + 1):
+            should_retry = False
+            async with telegram_session_operation_lock:
+                if self.client and self.client.is_connected():
+                    logger.info("Telegram monitor already connected.")
+                    return
+
+                self.client = self._build_client()
+                self._attach_message_handler(parsed_channels)
+
+                try:
+                    await self.client.connect()
+                    if not await self.client.is_user_authorized():
+                        if getattr(self.config, 'bot_token', ''):
+                            await self.client.start(bot_token=self.config.bot_token)
+                        else:
+                            logger.error("Telegram Monitor not authorized! Please run login_tg.py manually.")
+                            await self.client.disconnect()
+                            return
+                    else:
+                        await self.client.start()
+                except Exception as exc:
+                    await self._disconnect_current_client_safely()
+                    if _is_telegram_session_locked(exc) and attempt < TELEGRAM_SESSION_RETRY_ATTEMPTS:
+                        should_retry = True
+                        logger.warning(
+                            "Telegram session database is locked during startup; "
+                            f"retrying {attempt}/{TELEGRAM_SESSION_RETRY_ATTEMPTS}"
+                        )
+                    else:
+                        raise
+
+            if should_retry:
+                await asyncio.sleep(TELEGRAM_SESSION_RETRY_DELAY_SECONDS)
+                continue
+            break
+
+        logger.info("Telegram monitor started.")
+
+    def _build_client(self):
         try:
-            self.client = build_telegram_client(self.config.api_id, self.config.api_hash, self.config.proxy)
+            return build_telegram_client(self.config.api_id, self.config.api_hash, self.config.proxy)
         except Exception as exc:
             logger.error(f"Failed to parse monitor proxy: {exc}")
-            self.client = build_telegram_client(self.config.api_id, self.config.api_hash)
+            return build_telegram_client(self.config.api_id, self.config.api_hash)
 
-        parsed_channels = parse_channels(self.config.channels or [])
-        
+    def _attach_message_handler(self, parsed_channels):
         @self.client.on(events.NewMessage(chats=parsed_channels))
         async def handler(event):
             """接收到新消息后的回调"""
             self.config = get_config().monitor.telegram
             text = extract_message_text(event.message)
             torrent_files = extract_message_torrent_files(event.message)
-            
+
             # Keyword matching
             if self.config.keywords:
                 valid_kws = [kw.strip().lower() for kw in self.config.keywords if kw.strip()]
@@ -70,23 +123,24 @@ class TelegramMonitor:
                         pool=CLOUD_API_POOL,
                     )
 
-        await self.client.connect()
-        if not await self.client.is_user_authorized():
-            if getattr(self.config, 'bot_token', ''):
-                await self.client.start(bot_token=self.config.bot_token)
-            else:
-                logger.error("Telegram Monitor not authorized! Please run login_tg.py manually.")
-                await self.client.disconnect()
-                return
-        else:
-            await self.client.start()
+        return handler
 
-        logger.info("Telegram monitor started.")
+    async def _disconnect_current_client_safely(self):
+        client = self.client
+        self.client = None
+        if not client:
+            return
+        try:
+            await client.disconnect()
+        except Exception as exc:
+            logger.warning(f"Failed to disconnect Telegram client cleanly after startup error: {exc}")
+            close_telegram_session_connection_without_commit(client, context="startup disconnect failure")
 
     async def stop(self):
         """停止监听"""
         if self.client:
-            await self.client.disconnect()
+            async with telegram_session_operation_lock:
+                await self.client.disconnect()
 
     def _clean_url(self, url: str) -> str:
         return (url or "").strip().rstrip('.,);!>')

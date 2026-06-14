@@ -138,6 +138,8 @@ class TelegramConfig(BaseModel):
     scheduled_sync_interval_minutes: int = 5
     scheduled_sync_limit: int = 20
     full_sync_skip_if_scheduled_within_minutes: int = 20
+    transfer_concurrency: int = 2
+    transfer_cooldown_seconds: float = 0
 
 class StartupPipelineConfig(BaseModel):
     """启动时工作流执行全局配置"""

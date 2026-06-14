@@ -26,7 +26,7 @@ from app.events import (
 )
 from app.services.telegram_service import (
     TelegramValidationError,
-    _acquire_client,
+    _acquire_client_for_operation,
     _dispatch_scraped_message,
     validate_monitor_request,
 )
@@ -273,8 +273,6 @@ class TelegramHistorySyncService:
 
     async def handle_history_sync_requested(self, request: dict | TelegramHistorySyncRequest):
         sync_request = request if isinstance(request, TelegramHistorySyncRequest) else TelegramHistorySyncRequest(**request)
-        client_to_use = None
-        disconnect_after = False
 
         try:
             normalized_channels = validate_monitor_request(
@@ -283,106 +281,104 @@ class TelegramHistorySyncService:
                 sync_request.channels,
                 empty_channels_message="未配置任何监听频道，无法执行历史同步",
             )
-            client_to_use, disconnect_after, is_auth, auth_error = await _acquire_client(
+            async with _acquire_client_for_operation(
                 sync_request.api_id,
                 sync_request.api_hash,
                 bot_token=sync_request.bot_token,
                 proxy=sync_request.proxy,
-            )
+            ) as (client_to_use, _disconnect_after, is_auth, auth_error):
 
-            if auth_error or not is_auth:
-                raise TelegramValidationError(auth_error or "Telegram client not authorized")
+                if auth_error or not is_auth:
+                    raise TelegramValidationError(auth_error or "Telegram client not authorized")
 
-            channel_results = []
-            total_processed = 0
-            total_inserted = 0
+                channel_results = []
+                total_processed = 0
+                total_inserted = 0
 
-            for channel_ref in normalized_channels:
-                channel_start = channel_end = None
-                if sync_request.mode == "all":
-                    channel_start, channel_end = await self.inspect_channel_bounds(client_to_use, channel_ref)
-                    if channel_start is None or channel_end is None:
-                        channel_results.append({
-                            "channel_ref": channel_ref,
-                            "status": "skipped",
-                            "reason": "channel_has_no_messages",
-                            "processed": 0,
-                            "inserted": 0,
-                            "chunks": [],
-                        })
-                        continue
+                for channel_ref in normalized_channels:
+                    channel_start = channel_end = None
+                    if sync_request.mode == "all":
+                        channel_start, channel_end = await self.inspect_channel_bounds(client_to_use, channel_ref)
+                        if channel_start is None or channel_end is None:
+                            channel_results.append({
+                                "channel_ref": channel_ref,
+                                "status": "skipped",
+                                "reason": "channel_has_no_messages",
+                                "processed": 0,
+                                "inserted": 0,
+                                "chunks": [],
+                            })
+                            continue
 
-                range_start, range_end = self.resolve_requested_range(
-                    sync_request,
-                    channel_start=channel_start,
-                    channel_end=channel_end,
-                )
-                chunks = self.build_chunks(channel_ref, range_start, range_end, chunk_days=sync_request.chunk_days)
-                chunk_results = []
-                channel_processed = 0
-                channel_inserted = 0
-                highest_message_id = None
-                highest_message_date = None
+                    range_start, range_end = self.resolve_requested_range(
+                        sync_request,
+                        channel_start=channel_start,
+                        channel_end=channel_end,
+                    )
+                    chunks = self.build_chunks(channel_ref, range_start, range_end, chunk_days=sync_request.chunk_days)
 
-                for chunk in chunks:
-                    event_bus.emit_background(
-                        EVENT_TELEGRAM_HISTORY_SYNC_CHUNK_REQUESTED,
-                        name=f"telegram_history_sync_chunk:{channel_ref}",
+                    for chunk in chunks:
+                        event_bus.emit_background(
+                            EVENT_TELEGRAM_HISTORY_SYNC_CHUNK_REQUESTED,
+                            name=f"telegram_history_sync_chunk:{channel_ref}",
+                            channel_ref=channel_ref,
+                            range_start=chunk.range_start,
+                            range_end=chunk.range_end,
+                            source=sync_request.source,
+                        )
+
+                    chunk_results = await self._run_channel_chunks(client_to_use, sync_request, channel_ref, chunks)
+                    channel_processed = sum(int(item.get("processed", 0) or 0) for item in chunk_results)
+                    channel_inserted = sum(int(item.get("inserted", 0) or 0) for item in chunk_results)
+                    highest_message_id = None
+                    highest_message_date = None
+                    for chunk_result in chunk_results:
+                        if chunk_result.get("last_message_id") is not None:
+                            if highest_message_id is None or chunk_result["last_message_id"] > highest_message_id:
+                                highest_message_id = chunk_result["last_message_id"]
+                                highest_message_date = chunk_result.get("last_message_date")
+
+                    await upsert_telegram_monitor_state(
                         channel_ref=channel_ref,
-                        range_start=chunk.range_start,
-                        range_end=chunk.range_end,
+                        resolved_channel_id=str(parse_channel_reference(channel_ref)),
+                        last_message_id=highest_message_id,
+                        last_message_date=highest_message_date,
+                        last_error="",
+                    )
+
+                    channel_result = {
+                        "channel_ref": channel_ref,
+                        "status": "success",
+                        "processed": channel_processed,
+                        "inserted": channel_inserted,
+                        "chunks": chunk_results,
+                        "last_message_id": highest_message_id,
+                    }
+                    channel_results.append(channel_result)
+                    total_processed += channel_processed
+                    total_inserted += channel_inserted
+                    event_bus.emit_background(
+                        EVENT_TELEGRAM_HISTORY_SYNC_CHANNEL_COMPLETED,
+                        name=f"telegram_history_sync_channel_completed:{channel_ref}",
+                        channel_ref=channel_ref,
+                        result=channel_result,
                         source=sync_request.source,
                     )
-                    chunk_result = await self._run_chunk(client_to_use, sync_request, chunk)
-                    chunk_results.append(chunk_result)
-                    channel_processed += chunk_result["processed"]
-                    channel_inserted += chunk_result["inserted"]
-                    if chunk_result.get("last_message_id") is not None:
-                        if highest_message_id is None or chunk_result["last_message_id"] > highest_message_id:
-                            highest_message_id = chunk_result["last_message_id"]
-                            highest_message_date = chunk_result.get("last_message_date")
 
-                await upsert_telegram_monitor_state(
-                    channel_ref=channel_ref,
-                    resolved_channel_id=str(parse_channel_reference(channel_ref)),
-                    last_message_id=highest_message_id,
-                    last_message_date=highest_message_date,
-                    last_error="",
-                )
-
-                channel_result = {
-                    "channel_ref": channel_ref,
+                summary = {
                     "status": "success",
-                    "processed": channel_processed,
-                    "inserted": channel_inserted,
-                    "chunks": chunk_results,
-                    "last_message_id": highest_message_id,
+                    "source": sync_request.source,
+                    "mode": sync_request.mode,
+                    "processed": total_processed,
+                    "inserted": total_inserted,
+                    "channels": channel_results,
                 }
-                channel_results.append(channel_result)
-                total_processed += channel_processed
-                total_inserted += channel_inserted
                 event_bus.emit_background(
-                    EVENT_TELEGRAM_HISTORY_SYNC_CHANNEL_COMPLETED,
-                    name=f"telegram_history_sync_channel_completed:{channel_ref}",
-                    channel_ref=channel_ref,
-                    result=channel_result,
-                    source=sync_request.source,
+                    EVENT_TELEGRAM_HISTORY_SYNC_COMPLETED,
+                    name=f"telegram_history_sync_completed:{sync_request.source}",
+                    result=summary,
                 )
-
-            summary = {
-                "status": "success",
-                "source": sync_request.source,
-                "mode": sync_request.mode,
-                "processed": total_processed,
-                "inserted": total_inserted,
-                "channels": channel_results,
-            }
-            event_bus.emit_background(
-                EVENT_TELEGRAM_HISTORY_SYNC_COMPLETED,
-                name=f"telegram_history_sync_completed:{sync_request.source}",
-                result=summary,
-            )
-            return summary
+                return summary
         except Exception as exc:
             logger.error(f"Telegram history sync failed: {exc}")
             event_bus.emit_background(
@@ -395,8 +391,160 @@ class TelegramHistorySyncService:
             raise
         finally:
             self._release_request_key(sync_request)
-            if disconnect_after and client_to_use:
-                await client_to_use.disconnect()
+
+    async def _run_channel_chunks(
+        self,
+        client_to_use,
+        request: TelegramHistorySyncRequest,
+        channel_ref: str,
+        chunks: list[TelegramHistorySyncChunk],
+    ) -> list[dict[str, object]]:
+        valid_kws = [keyword.strip().lower() for keyword in (request.keywords or []) if keyword and keyword.strip()]
+        states: list[dict[str, object]] = []
+        for chunk in chunks:
+            existing_checkpoint = await get_telegram_history_sync_checkpoint(chunk.checkpoint_key)
+            if existing_checkpoint and existing_checkpoint.get("status") == "completed":
+                states.append(
+                    {
+                        "chunk": chunk,
+                        "completed": True,
+                        "result": {
+                            "channel_ref": chunk.channel_ref,
+                            "range_start": chunk.range_start,
+                            "range_end": chunk.range_end,
+                            "status": "skipped",
+                            "processed": existing_checkpoint.get("processed_count", 0),
+                            "inserted": existing_checkpoint.get("inserted_count", 0),
+                            "last_message_id": existing_checkpoint.get("last_message_id"),
+                            "last_message_date": existing_checkpoint.get("last_message_date"),
+                        },
+                    }
+                )
+                continue
+
+            states.append(
+                {
+                    "chunk": chunk,
+                    "completed": False,
+                    "range_start": _coerce_datetime(chunk.range_start),
+                    "range_end": _coerce_datetime(chunk.range_end),
+                    "resume_last_message_id": existing_checkpoint.get("last_message_id") if existing_checkpoint else None,
+                    "processed": 0,
+                    "inserted": 0,
+                    "highest_message_id": existing_checkpoint.get("last_message_id") if existing_checkpoint else None,
+                    "highest_message_date": existing_checkpoint.get("last_message_date") if existing_checkpoint else None,
+                }
+            )
+
+        pending_states = [state for state in states if not state["completed"]]
+        if pending_states:
+            parsed_channel = parse_channel_reference(channel_ref)
+            min_start = min(state["range_start"] for state in pending_states if state["range_start"])
+            max_end = max(state["range_end"] for state in pending_states if state["range_end"])
+            current_state = None
+            try:
+                async for message in client_to_use.iter_messages(parsed_channel, limit=None):
+                    message_dt = _normalize_message_datetime(getattr(message, "date", None))
+                    if message_dt is None:
+                        continue
+                    if max_end and message_dt > max_end:
+                        continue
+                    if min_start and message_dt < min_start:
+                        break
+
+                    current_state = self._find_chunk_state_for_message(pending_states, message_dt)
+                    if current_state is None:
+                        continue
+
+                    resume_last_message_id = current_state.get("resume_last_message_id")
+                    if resume_last_message_id and getattr(message, "id", 0) >= resume_last_message_id:
+                        continue
+
+                    text = extract_message_text(message)
+                    if valid_kws and not any(keyword in text.lower() for keyword in valid_kws):
+                        continue
+
+                    current_state["processed"] += 1
+                    resources = await _dispatch_scraped_message(parsed_channel, message, emit_events=request.emit_events)
+                    current_state["inserted"] += len(resources)
+                    highest_message_id = current_state.get("highest_message_id")
+                    if highest_message_id is None or message.id > highest_message_id:
+                        current_state["highest_message_id"] = message.id
+                        current_state["highest_message_date"] = str(message.date)
+            except Exception as exc:
+                failed_states = [current_state] if current_state else pending_states
+                for failed_state in failed_states:
+                    if failed_state:
+                        await self._mark_chunk_failed(failed_state, exc)
+                raise
+
+        results: list[dict[str, object]] = []
+        for state in states:
+            if state["completed"]:
+                results.append(state["result"])
+                continue
+
+            chunk = state["chunk"]
+            await upsert_telegram_history_sync_checkpoint(
+                chunk.checkpoint_key,
+                channel_ref=chunk.channel_ref,
+                range_start=chunk.range_start,
+                range_end=chunk.range_end,
+                status="completed",
+                last_message_id=state.get("highest_message_id"),
+                last_message_date=state.get("highest_message_date"),
+                processed_count=state["processed"],
+                inserted_count=state["inserted"],
+                last_error="",
+            )
+            result = {
+                "channel_ref": chunk.channel_ref,
+                "range_start": chunk.range_start,
+                "range_end": chunk.range_end,
+                "status": "completed",
+                "processed": state["processed"],
+                "inserted": state["inserted"],
+                "last_message_id": state.get("highest_message_id"),
+                "last_message_date": state.get("highest_message_date"),
+            }
+            event_bus.emit_background(
+                EVENT_TELEGRAM_HISTORY_SYNC_CHUNK_COMPLETED,
+                name=f"telegram_history_sync_chunk_completed:{chunk.channel_ref}",
+                result=result,
+                source=request.source,
+            )
+            results.append(result)
+        return results
+
+    def _find_chunk_state_for_message(
+        self,
+        states: list[dict[str, object]],
+        message_dt: datetime,
+    ) -> dict[str, object] | None:
+        for state in states:
+            range_start = state.get("range_start")
+            range_end = state.get("range_end")
+            if range_start and message_dt < range_start:
+                continue
+            if range_end and message_dt > range_end:
+                continue
+            return state
+        return None
+
+    async def _mark_chunk_failed(self, state: dict[str, object], exc: Exception) -> None:
+        chunk = state["chunk"]
+        await upsert_telegram_history_sync_checkpoint(
+            chunk.checkpoint_key,
+            channel_ref=chunk.channel_ref,
+            range_start=chunk.range_start,
+            range_end=chunk.range_end,
+            status="failed",
+            last_message_id=state.get("highest_message_id"),
+            last_message_date=state.get("highest_message_date"),
+            processed_count=state.get("processed", 0),
+            inserted_count=state.get("inserted", 0),
+            last_error=str(exc),
+        )
 
     async def _run_chunk(
         self,

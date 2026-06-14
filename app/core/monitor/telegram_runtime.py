@@ -1,10 +1,22 @@
+import asyncio
+import hashlib
 import os
 import re
+import shutil
+import tempfile
 import urllib.parse
+from pathlib import Path
 from typing import Iterable
 
+from loguru import logger
 from telethon import TelegramClient
 
+
+telegram_session_operation_lock = asyncio.Lock()
+TELEGRAM_RUNTIME_SESSION_DIR = os.environ.get(
+    "PYTHON_STRM_TELEGRAM_RUNTIME_SESSION_DIR",
+    os.path.join(tempfile.gettempdir(), "python-strm-telegram-sessions"),
+)
 
 _VALID_PROXY_SCHEMES = ("http://", "https://", "socks5://", "socks5h://")
 _RESERVED_TELEGRAM_PATHS = {"c", "joinchat", "setlanguage"}
@@ -55,11 +67,96 @@ def build_telegram_client(
     if proxy_config:
         client_kwargs["proxy"] = proxy_config
 
-    session_dir = os.path.dirname(session_path)
-    if session_dir:
-        os.makedirs(session_dir, exist_ok=True)
+    runtime_session_path = prepare_runtime_session_path(session_path)
 
-    return TelegramClient(session_path, api_id, api_hash, **client_kwargs)
+    return TelegramClient(runtime_session_path, api_id, api_hash, **client_kwargs)
+
+
+def prepare_runtime_session_path(session_path: str = "data/session_strm") -> str:
+    """Return an isolated runtime session path seeded from the login session."""
+    canonical_session_file = _session_file_path(session_path)
+    canonical_dir = canonical_session_file.parent
+    if canonical_dir:
+        canonical_dir.mkdir(parents=True, exist_ok=True)
+
+    runtime_dir = Path(TELEGRAM_RUNTIME_SESSION_DIR)
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    runtime_base = _runtime_session_base(canonical_session_file, runtime_dir)
+    runtime_session_file = _session_file_path(str(runtime_base))
+
+    _remove_runtime_session_sidecars(runtime_session_file)
+    if canonical_session_file.exists():
+        shutil.copy2(canonical_session_file, runtime_session_file)
+        _chmod_owner_only(runtime_session_file)
+        _copy_session_sidecars(canonical_session_file, runtime_session_file)
+
+    return str(runtime_base)
+
+
+def _session_file_path(session_path: str) -> Path:
+    path = Path(session_path)
+    if str(path).endswith(".session"):
+        return path
+    return Path(f"{path}.session")
+
+
+def _runtime_session_base(canonical_session_file: Path, runtime_dir: Path) -> Path:
+    digest = hashlib.sha1(str(canonical_session_file.resolve()).encode("utf-8")).hexdigest()[:12]
+    return runtime_dir / f"{canonical_session_file.stem}-{os.getpid()}-{digest}"
+
+
+def _remove_runtime_session_sidecars(runtime_session_file: Path) -> None:
+    for suffix in ("", "-journal", "-wal", "-shm"):
+        candidate = Path(f"{runtime_session_file}{suffix}")
+        try:
+            candidate.unlink()
+        except FileNotFoundError:
+            continue
+
+
+def _copy_session_sidecars(canonical_session_file: Path, runtime_session_file: Path) -> None:
+    for suffix in ("-journal", "-wal", "-shm"):
+        source = Path(f"{canonical_session_file}{suffix}")
+        if not source.exists():
+            continue
+
+        target = Path(f"{runtime_session_file}{suffix}")
+        shutil.copy2(source, target)
+        _chmod_owner_only(target)
+        if suffix == "-journal":
+            logger.warning(
+                "Telegram canonical session has a journal file; "
+                f"using isolated runtime copy at {runtime_session_file}"
+            )
+
+
+def _chmod_owner_only(path: Path) -> None:
+    try:
+        path.chmod(0o600)
+    except OSError as exc:
+        logger.warning(f"Failed to restrict Telegram runtime session permissions for {path}: {exc}")
+
+
+def close_telegram_session_connection_without_commit(client, *, context: str) -> bool:
+    """Close Telethon's SQLite connection after a failed disconnect path."""
+    session = getattr(client, "session", None)
+    connection = getattr(session, "_conn", None)
+    if connection is None:
+        return False
+
+    # Telethon's SQLiteSession.close() commits first, which can hit the same lock.
+    try:
+        connection.close()
+        return True
+    except Exception as exc:
+        logger.warning(f"Failed to force close Telegram session connection after {context}: {exc}")
+        return False
+    finally:
+        try:
+            if getattr(session, "_conn", None) is connection:
+                session._conn = None
+        except Exception as exc:
+            logger.warning(f"Failed to detach Telegram session connection after {context}: {exc}")
 
 
 def parse_channel_reference(channel: str) -> int | str:

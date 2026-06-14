@@ -8,6 +8,7 @@ from app.core.transfer.classifier import classify
 from app.core.transfer.placement import derive_series_scope_path
 from app.core.transfer.receive_target import prepare_receive_target
 from app.core.transfer.strm_manifest import list_records_for_rewrite
+from app.services.transfer_destination_service import resolve_transfer_destination
 from app.events import (
     EVENT_ROLLBACK_START,
     EVENT_TRANSFER_MOVED,
@@ -33,7 +34,7 @@ async def receive_share_task(
 ) -> dict[str, object]:
     """接收 115 分享链接并触发转存整理事件。
 
-    非 debug 入口固定以 transfer.archive_dir_id 为根目录，target_dir_id 参数仅保留兼容性。
+    非 debug 入口以 115 STRM 扫描源目录为根目录，target_dir_id 为用户确认的根目录。
     """
     config = get_config()
     transfer_cfg = config.transfer
@@ -41,9 +42,11 @@ async def receive_share_task(
     if not transfer_cfg.enabled:
         raise TransferServiceError("转存整理管道未启用")
 
-    archive_dir_id = getattr(transfer_cfg, "archive_dir_id", "")
-    if not archive_dir_id or archive_dir_id == "0":
-        raise TransferServiceError("未配置归档目录 (archive_dir_id)")
+    try:
+        destination = resolve_transfer_destination("115", target_dir_id, config=config)
+    except ValueError as exc:
+        raise TransferServiceError(str(exc)) from exc
+    archive_dir_id = destination["dir_id"]
 
     strm_cfg = config.strm
 
@@ -105,25 +108,12 @@ async def receive_share_task(
             "strm_updated_count": int(strm_stats.get("updated", 0) or 0),
         }
 
-    inbox_dir_id = transfer_cfg.inbox_dir_id
-    files = await _list_regular_files(inbox_dir_id, limit=50)
-
-    spawn_task(
-        event_bus.emit(
-            EVENT_TRANSFER_RECEIVED,
-            share_url=share_url,
-            inbox_dir_id=inbox_dir_id,
-            temp_dir_id=target_dir,
-            files=files,
-            task_id=task_id,
-        ),
-        name="transfer_receive",
-    )
-
     return {
         "status": "success",
         "task_id": task_id,
-        "msg": f"转存已接收，共 {len(files)} 个文件，正在后台处理",
+        "msg": "转存已完成，未识别到可生成 STRM 的归档路径",
+        "target_dir_id": target_dir,
+        "share_files": share_files,
     }
 
 
@@ -166,12 +156,12 @@ async def get_transfer_task_detail(task_id: str) -> dict:
 
 async def run_manual_organize_task(temp_dir_id: str) -> dict[str, object]:
     transfer_cfg = get_config().transfer
-    archive_dir_id = transfer_cfg.archive_dir_id
+    archive_dir_id = getattr(transfer_cfg, "archive_dir_id", "")
 
     if not temp_dir_id:
         raise TransferServiceError("未提供临时目录")
     if not archive_dir_id or archive_dir_id == "0":
-        raise TransferServiceError("未配置归档目录")
+        raise TransferServiceError("旧版归档目录配置已移除，请使用 STRM 扫描源目录转存")
 
     files = await _list_regular_files(temp_dir_id, limit=200)
     task_id = str(uuid.uuid4())

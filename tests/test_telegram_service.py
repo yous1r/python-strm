@@ -1,5 +1,7 @@
 from unittest.mock import AsyncMock
 
+import asyncio
+import sqlite3
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -287,3 +289,131 @@ def test_get_telegram_status_endpoint(monkeypatch):
     response = client.get("/system/telegram/status")
     assert response.status_code == 200
     assert response.json()["enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_test_monitor_connection_serializes_temporary_session_clients(monkeypatch):
+    from app.services.telegram_service import test_monitor_connection
+
+    active_reads = 0
+    max_active_reads = 0
+    disconnect_count = 0
+
+    class FakeMessage:
+        text = "ok"
+
+    class FakeClient:
+        async def get_messages(self, channel, limit=1):
+            nonlocal active_reads, max_active_reads
+            active_reads += 1
+            max_active_reads = max(max_active_reads, active_reads)
+            await asyncio.sleep(0.01)
+            active_reads -= 1
+            return [FakeMessage()]
+
+        async def disconnect(self):
+            nonlocal disconnect_count
+            disconnect_count += 1
+
+    async def fake_acquire_client(*args, **kwargs):
+        return FakeClient(), True, True, None
+
+    monkeypatch.setattr("app.services.telegram_service._acquire_client", fake_acquire_client)
+
+    results = await asyncio.gather(
+        test_monitor_connection("1", "hash", channels=["@demo"]),
+        test_monitor_connection("1", "hash", channels=["@demo"]),
+    )
+
+    assert [result["status"] for result in results] == ["success", "success"]
+    assert max_active_reads == 1
+    assert disconnect_count == 2
+
+
+@pytest.mark.asyncio
+async def test_test_monitor_connection_retries_when_temporary_session_database_is_locked(monkeypatch):
+    from app.services.telegram_service import test_monitor_connection
+
+    acquire_calls = 0
+
+    class FakeMessage:
+        text = "ok"
+
+    class FakeClient:
+        async def get_messages(self, channel, limit=1):
+            return [FakeMessage()]
+
+        async def disconnect(self):
+            return None
+
+    async def fake_acquire_client(*args, **kwargs):
+        nonlocal acquire_calls
+        acquire_calls += 1
+        if acquire_calls == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return FakeClient(), True, True, None
+
+    monkeypatch.setattr("app.services.telegram_service._acquire_client", fake_acquire_client)
+    monkeypatch.setattr("app.services.telegram_service.TELEGRAM_SESSION_RETRY_DELAY_SECONDS", 0)
+
+    result = await test_monitor_connection("1", "hash", channels=["@demo"])
+
+    assert result["status"] == "success"
+    assert acquire_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_test_monitor_connection_force_closes_temp_session_when_disconnect_is_locked(monkeypatch):
+    from app.services.telegram_service import test_monitor_connection
+
+    class FakeRawConnection:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    class FakeSession:
+        def __init__(self):
+            self.raw_connection = FakeRawConnection()
+            self._conn = self.raw_connection
+
+    class FakeMessage:
+        text = "ok"
+
+    class FakeClient:
+        def __init__(self, *, locked: bool):
+            self.locked = locked
+            self.session = FakeSession()
+
+        async def connect(self):
+            if self.locked:
+                raise sqlite3.OperationalError("database is locked")
+
+        async def is_user_authorized(self):
+            return True
+
+        async def get_messages(self, channel, limit=1):
+            return [FakeMessage()]
+
+        async def disconnect(self):
+            if self.locked:
+                raise sqlite3.OperationalError("database is locked")
+
+    clients = [FakeClient(locked=True), FakeClient(locked=False)]
+    built_clients = []
+
+    def fake_build_client(*args, **kwargs):
+        client = clients.pop(0)
+        built_clients.append(client)
+        return client
+
+    monkeypatch.setattr("app.services.telegram_service.build_telegram_client", fake_build_client)
+    monkeypatch.setattr("app.services.telegram_service.TELEGRAM_SESSION_RETRY_DELAY_SECONDS", 0)
+
+    result = await test_monitor_connection("1", "hash", channels=["@demo"])
+
+    failed_client = built_clients[0]
+    assert result["status"] == "success"
+    assert failed_client.session.raw_connection.closed is True
+    assert failed_client.session._conn is None

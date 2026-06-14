@@ -14,23 +14,23 @@ def init_transfer_pipeline():
     config = get_config()
     transfer_cfg = config.transfer
 
-    if not transfer_cfg.enabled:
-        logger.info("[Transfer] 转存整理管道未启用")
-        return
+    temp_dir_id = getattr(transfer_cfg, "temp_dir_id", "")
+    archive_dir_id = getattr(transfer_cfg, "archive_dir_id", "")
+    inbox_dir_id = getattr(transfer_cfg, "inbox_dir_id", "0")
 
-    init_scope(
-        temp_dir_id=transfer_cfg.temp_dir_id,
-        archive_dir_id=transfer_cfg.archive_dir_id,
-        inbox_dir_id=transfer_cfg.inbox_dir_id
-    )
+    if getattr(transfer_cfg, "enabled", False) and temp_dir_id and archive_dir_id:
+        init_scope(
+            temp_dir_id=temp_dir_id,
+            archive_dir_id=archive_dir_id,
+            inbox_dir_id=inbox_dir_id,
+        )
+        init_mover()
+        init_organizer()
+    else:
+        logger.info("[Transfer] 旧版转存管线未启用或目录配置不存在，跳过 mover/organizer 管线")
 
-    init_mover()
-    init_organizer()
     init_rollback()
     init_batch_transfer()
 
     logger.info("[Transfer] 转存整理管道初始化完成")
-    logger.info(
-        f"[Transfer] inbox={transfer_cfg.inbox_dir_id}, "
-        f"temp={transfer_cfg.temp_dir_id}, archive={transfer_cfg.archive_dir_id}"
-    )
+    logger.info(f"[Transfer] inbox={inbox_dir_id}, temp={temp_dir_id}, archive={archive_dir_id}")

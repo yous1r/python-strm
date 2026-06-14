@@ -204,7 +204,7 @@ def spawn_task(coro: Awaitable[Any], name: str = "", task_type: str = "async", p
                     task_tracker._tasks[task_id]["error"] = str(e)[:200]
                     task_tracker._tasks[task_id]["duration"] = time.time() - started_at
             logger.error(f"[TaskTracker] ✗ {task_id} ({name}): {e}")
-            raise
+            return None
 
     asyncio.create_task(_deferred())
     return task_id

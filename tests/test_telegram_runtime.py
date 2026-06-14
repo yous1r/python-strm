@@ -1,8 +1,10 @@
 from types import SimpleNamespace
+from pathlib import Path
 
 from app.config import TelegramConfig
 from app.core.monitor.telegram import TelegramMonitor
 from app.core.monitor.telegram_runtime import (
+    build_telegram_client,
     extract_message_text,
     extract_message_torrent_files,
     parse_channel_reference,
@@ -29,6 +31,57 @@ def test_telegram_config_defaults_for_background_sync():
 
 def test_parse_channel_reference_supports_t_me_c_links():
     assert parse_channel_reference("https://t.me/c/123456/99") == -100123456
+
+
+def test_build_telegram_client_uses_isolated_runtime_session_copy(tmp_path, monkeypatch):
+    from app.core.monitor import telegram_runtime
+
+    canonical_base = tmp_path / "data" / "session_strm"
+    canonical_file = Path(f"{canonical_base}.session")
+    canonical_file.parent.mkdir()
+    canonical_file.write_bytes(b"session-db")
+    Path(f"{canonical_file}-journal").write_bytes(b"session-journal")
+
+    runtime_dir = tmp_path / "runtime-sessions"
+    captured = {}
+
+    class FakeTelegramClient:
+        def __init__(self, session_path, api_id, api_hash, **kwargs):
+            captured["session_path"] = session_path
+            captured["api_id"] = api_id
+            captured["api_hash"] = api_hash
+            captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(telegram_runtime, "TELEGRAM_RUNTIME_SESSION_DIR", str(runtime_dir), raising=False)
+    monkeypatch.setattr(telegram_runtime, "TelegramClient", FakeTelegramClient)
+
+    build_telegram_client("1", "hash", session_path=str(canonical_base))
+
+    assert captured["session_path"] != str(canonical_base)
+    assert captured["session_path"].startswith(str(runtime_dir))
+    assert Path(f"{captured['session_path']}.session").read_bytes() == b"session-db"
+    assert Path(f"{captured['session_path']}.session-journal").read_bytes() == b"session-journal"
+
+
+def test_build_telegram_client_uses_isolated_runtime_session_when_canonical_missing(tmp_path, monkeypatch):
+    from app.core.monitor import telegram_runtime
+
+    canonical_base = tmp_path / "data" / "session_strm"
+    runtime_dir = tmp_path / "runtime-sessions"
+    captured = {}
+
+    class FakeTelegramClient:
+        def __init__(self, session_path, api_id, api_hash, **kwargs):
+            captured["session_path"] = session_path
+
+    monkeypatch.setattr(telegram_runtime, "TELEGRAM_RUNTIME_SESSION_DIR", str(runtime_dir), raising=False)
+    monkeypatch.setattr(telegram_runtime, "TelegramClient", FakeTelegramClient)
+
+    build_telegram_client("1", "hash", session_path=str(canonical_base))
+
+    assert captured["session_path"] != str(canonical_base)
+    assert captured["session_path"].startswith(str(runtime_dir))
+    assert not Path(f"{captured['session_path']}.session").exists()
 
 
 def test_extract_message_text_prefers_caption_and_text_fields():

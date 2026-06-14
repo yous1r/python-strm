@@ -100,6 +100,55 @@ class StartupBootstrapTests(unittest.IsolatedAsyncioTestCase):
         queue_request_mock.assert_not_called()
         strm_sync.assert_awaited_once_with(force=False)
 
+    async def test_queue_startup_workflows_uses_unique_background_tasks(self):
+        from app.main import queue_startup_workflows
+
+        calls = []
+
+        async def fake_spawn_unique(key, factory, *, name, pool):
+            calls.append({"key": key, "name": name, "pool": pool, "factory": factory})
+            return SimpleNamespace(task_id=f"task-{key}", queued=True)
+
+        config = AppConfig(
+            monitor=MonitorConfig(
+                telegram=TelegramConfig(enabled=True),
+                startup_pipeline={"enabled": True},
+            )
+        )
+
+        with patch("app.main.background_task_coordinator.spawn_unique", fake_spawn_unique):
+            result = await queue_startup_workflows(config)
+
+        self.assertEqual(
+            [item["key"] for item in calls],
+            ["startup_pipeline", "telegram_monitor", "standalone_proxy"],
+        )
+        self.assertEqual(result["startup_pipeline"].task_id, "task-startup_pipeline")
+        self.assertEqual(result["telegram_monitor"].task_id, "task-telegram_monitor")
+        self.assertEqual(result["standalone_proxy"].task_id, "task-standalone_proxy")
+
+    async def test_lifespan_registers_transfer_pipeline_events(self):
+        from app.main import lifespan
+
+        config = AppConfig()
+
+        with patch("app.main.init_db", AsyncMock()), \
+             patch("app.main.start_scheduler"), \
+             patch("app.main.init_cloud115_full_sync_events"), \
+             patch("app.main.init_telegram_history_sync_events"), \
+             patch("app.main.init_transfer_pipeline") as mocked_init_transfer, \
+             patch("app.main.add_job"), \
+             patch("app.main.telegram_background_sync_service.configure_scheduled_sync_job"), \
+             patch("app.main.get_config", return_value=config), \
+             patch("app.main.queue_startup_workflows", AsyncMock()), \
+             patch("app.main.stop_standalone_proxy", AsyncMock()), \
+             patch("app.main.telegram_monitor.stop", AsyncMock()), \
+             patch("app.main.stop_scheduler"):
+            async with lifespan(SimpleNamespace()):
+                pass
+
+        mocked_init_transfer.assert_called_once()
+
 
 class TelegramMonitorTests(unittest.IsolatedAsyncioTestCase):
     async def test_start_does_not_schedule_startup_sync(self):

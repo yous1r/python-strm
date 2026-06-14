@@ -7,17 +7,43 @@ from app.core.cloud115.client import Cloud115Client
 from app.core.media.parser import parse_filename
 from app.core.transfer.classifier import _sanitize, classify
 from app.core.transfer.batch import (
+    _batch_completion_states,
     _batch_states,
     _build_batch_sample_name,
+    _finalize_transfer_task,
     handle_batch_db_sync_completed,
     handle_batch_db_sync_requested,
     handle_batch_done,
     handle_batch_item_done,
+    handle_strm_batch_completed,
     handle_strm_batch_rewrite_requested,
     handle_batch_requested,
 )
 from app.core.cloud115.strm import StrmGenerator115
 from app.core.media.organizer import MediaOrganizer
+
+
+class _RecordingDb:
+    def __init__(self):
+        self.calls = []
+        self.commits = 0
+
+    async def execute(self, query, params=()):
+        self.calls.append((query, params))
+
+    async def commit(self):
+        self.commits += 1
+
+
+class _RecordingDbContext:
+    def __init__(self, db):
+        self.db = db
+
+    async def __aenter__(self):
+        return self.db
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
 
 
 class ParseFilenameTests(unittest.TestCase):
@@ -92,6 +118,7 @@ class ClassifyTests(unittest.IsolatedAsyncioTestCase):
 class BatchPrepareTests(unittest.IsolatedAsyncioTestCase):
     def tearDown(self):
         _batch_states.clear()
+        _batch_completion_states.clear()
 
     def test_build_batch_sample_name_prefers_base_title_and_preserves_episode_hint(self):
         sample_name = _build_batch_sample_name(
@@ -120,7 +147,7 @@ class BatchPrepareTests(unittest.IsolatedAsyncioTestCase):
         )
         mocked_emit = AsyncMock()
         config = SimpleNamespace(
-            transfer=SimpleNamespace(archive_dir_id="archive-root"),
+            transfer=SimpleNamespace(),
         )
 
         with patch("app.core.transfer.batch.classify", AsyncMock(return_value=classify_result)) as mocked_classify, patch(
@@ -133,7 +160,13 @@ class BatchPrepareTests(unittest.IsolatedAsyncioTestCase):
             "app.core.transfer.batch.event_bus.emit",
             mocked_emit,
         ):
-            await handle_batch_requested("task-1", rows, base_title="秘恋稽核中")
+            await handle_batch_requested(
+                "task-1",
+                rows,
+                base_title="秘恋稽核中",
+                target_dir_id="archive-root",
+                target_dir_name="115 STRM 扫描源目录",
+            )
 
         mocked_classify.assert_awaited_once_with("秘恋稽核中 (2026) S01E01")
         mocked_create_path.assert_awaited_once_with(
@@ -142,6 +175,58 @@ class BatchPrepareTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(_batch_states["task-1"]["series_path_str"], "剧集/日韩剧集/秘恋稽核中 (2026) {tmdb-297640}/Season 1")
         mocked_emit.assert_awaited_once()
+
+    async def test_handle_batch_requested_uses_selected_strm_destination_root(self):
+        rows = [{
+            "id": 1,
+            "title": "📺 秘恋稽核中 (2026) S01E01 1080P WEB-DL DDP (2026)",
+            "base_title": "秘恋稽核中",
+            "link": "https://115.com/s/demo",
+            "password": "",
+        }]
+        classify_result = SimpleNamespace(
+            category="剧集",
+            subcategory="日韩剧集",
+            title="秘恋稽核中",
+            year="2026",
+            tmdb_id="297640",
+            season=1,
+            media_type="tv",
+        )
+        mocked_emit = AsyncMock()
+        config = SimpleNamespace(transfer=SimpleNamespace())
+
+        with patch("app.core.transfer.batch.classify", AsyncMock(return_value=classify_result)), patch(
+            "app.core.transfer.batch.client_115.create_path",
+            AsyncMock(return_value={"id": "cid-123"}),
+        ) as mocked_create_path, patch(
+            "app.core.transfer.batch.get_config",
+            return_value=config,
+        ), patch(
+            "app.core.transfer.batch.event_bus.emit",
+            mocked_emit,
+        ):
+            await handle_batch_requested(
+                "task-selected-root",
+                rows,
+                base_title="秘恋稽核中",
+                cloud_type="115",
+                target_dir_id="strm-root",
+                target_dir_name="115 STRM 扫描源目录",
+            )
+
+        mocked_create_path.assert_awaited_once_with(
+            "strm-root",
+            "剧集/日韩剧集/秘恋稽核中 (2026) {tmdb-297640}/Season 1",
+        )
+        self.assertEqual(_batch_states["task-selected-root"]["target_dir_id"], "cid-123")
+        self.assertEqual(_batch_states["task-selected-root"]["destination_dir_id"], "strm-root")
+        self.assertEqual(_batch_states["task-selected-root"]["target_dir_name"], "115 STRM 扫描源目录")
+        mocked_emit.assert_awaited_once()
+        _, kwargs = mocked_emit.await_args
+        self.assertEqual(kwargs["target_dir_id"], "cid-123")
+        self.assertEqual(kwargs["destination_dir_id"], "strm-root")
+        self.assertEqual(kwargs["cloud_type"], "115")
 
     async def test_handle_batch_item_done_accumulates_share_files(self):
         _batch_states["task-2"] = {
@@ -219,6 +304,46 @@ class BatchPrepareTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
         self.assertNotIn("task-3", _batch_states)
+        self.assertEqual(_batch_completion_states["task-3"]["task_id"], "task-3")
+
+    async def test_finalize_transfer_task_keeps_successful_batch_running_until_strm_completed(self):
+        db = _RecordingDb()
+        batch_state = {
+            "episode_count": 2,
+            "success_count": 2,
+            "failed_links": [],
+            "target_dir_id": "cid-8",
+        }
+
+        with patch("app.core.transfer.batch.get_db_conn", return_value=_RecordingDbContext(db)):
+            await _finalize_transfer_task("task-8", batch_state)
+
+        query, params = db.calls[0]
+        self.assertIn("UPDATE transfer_tasks", query)
+        self.assertEqual(params[0], "running")
+        self.assertNotIn("completed_at=CURRENT_TIMESTAMP", query)
+
+    async def test_handle_strm_batch_completed_marks_task_done_after_ingest(self):
+        db = _RecordingDb()
+        _batch_completion_states["task-9"] = {
+            "task_id": "task-9",
+            "success_count": 2,
+            "failed_links": [],
+        }
+
+        with patch("app.core.transfer.batch.get_db_conn", return_value=_RecordingDbContext(db)):
+            await handle_strm_batch_completed(
+                task_id="task-9",
+                archive_dir_id="cid-9",
+                archive_rel_path="剧集/国产剧集/示例剧/Season 1",
+                files=[],
+                strm_stats={"failed": 0},
+            )
+
+        query, params = db.calls[0]
+        self.assertIn("completed_at=CURRENT_TIMESTAMP", query)
+        self.assertEqual(params, ("done", "task-9"))
+        self.assertNotIn("task-9", _batch_completion_states)
 
     async def test_handle_batch_db_sync_requested_emits_followup_event_after_sync(self):
         mocked_emit = AsyncMock()
@@ -494,6 +619,34 @@ class Cloud115LocalCacheTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, [])
         mocked_list.assert_called_once_with("cid-root", recursive=False)
+
+
+class TransferPipelineInitTests(unittest.TestCase):
+    def test_init_transfer_pipeline_registers_batch_events_without_legacy_transfer_enabled(self):
+        from app.core.transfer import init_transfer_pipeline
+
+        config = SimpleNamespace(
+            transfer=SimpleNamespace(
+                enabled=False,
+                temp_dir_id="",
+                archive_dir_id="",
+                inbox_dir_id="0",
+            )
+        )
+
+        with patch("app.core.transfer.get_config", return_value=config), \
+             patch("app.core.transfer.batch.init_batch_transfer") as mocked_batch, \
+             patch("app.core.transfer.rollback.init_rollback") as mocked_rollback, \
+             patch("app.core.transfer.mover.init_mover") as mocked_mover, \
+             patch("app.core.transfer.organizer.init_organizer") as mocked_organizer, \
+             patch("app.core.transfer.scope.init_scope") as mocked_scope:
+            init_transfer_pipeline()
+
+        mocked_batch.assert_called_once()
+        mocked_rollback.assert_called_once()
+        mocked_mover.assert_not_called()
+        mocked_organizer.assert_not_called()
+        mocked_scope.assert_not_called()
 
 
 class MediaOrganizerRegionTests(unittest.IsolatedAsyncioTestCase):

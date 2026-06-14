@@ -1767,8 +1767,9 @@ dependencies = [
     { name = "python-multipart" },
     { name = "python-socks" },
     { name = "pyyaml" },
+    { name = "requests" },
     { name = "telethon" },
-    { name = "tmdbv3api" },
+    { name = "tmdbsimple" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "websockets" },
     { name = "x123pan" },
@@ -1795,8 +1796,9 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "python-socks", extras = ["asyncio"], specifier = ">=2.4.4" },
     { name = "pyyaml", specifier = ">=6.0.0" },
+    { name = "requests", specifier = ">=2.34.2" },
     { name = "telethon", specifier = ">=1.33.1" },
-    { name = "tmdbv3api", specifier = ">=1.9.0" },
+    { name = "tmdbsimple", specifier = ">=2.9.6" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0" },
     { name = "websockets", specifier = ">=12.0" },
     { name = "x123pan", specifier = ">=0.0.1" },
@@ -2148,15 +2150,15 @@ wheels = [
 ]
 
 [[package]]
-name = "tmdbv3api"
-version = "1.9.0"
+name = "tmdbsimple"
+version = "2.9.6"
 source = { registry = "https://mirrors.hust.edu.cn/pypi/web/simple" }
 dependencies = [
     { name = "requests" },
 ]
-sdist = { url = "https://mirrors.hust.edu.cn/pypi/web/packages/d7/1b/b1c4d45e7df81e92c92944f4835af2caa5d7fe55c61f717255da6e6c9c8e/tmdbv3api-1.9.0.tar.gz", hash = "sha256:504c5da6b99c4516ff160a01576112d097f209c0534f943c15c4b56cbd92c33b" }
+sdist = { url = "https://mirrors.hust.edu.cn/pypi/web/packages/34/98/d5e8fa15647eda4410d120e869f42fa8674a758742937baa7bfc327112a2/tmdbsimple-2.9.6.tar.gz", hash = "sha256:68ae5700a6297c66fe6d2eb849f1b76d42aa759adee51df59e2a86970055ee31" }
 wheels = [
-    { url = "https://mirrors.hust.edu.cn/pypi/web/packages/35/fb/9d575292bb7794a7a85bcdbf6c09928aae5ca2ae9f684f7fbbd902e281c4/tmdbv3api-1.9.0-py3-none-any.whl", hash = "sha256:2bcd8c6e8902397860715a71045f200ecc3ee06804ecf786cb4c1e09b2deeba8" },
+    { url = "https://mirrors.hust.edu.cn/pypi/web/packages/8c/53/ef0e08fcba60fce2ed7541c7aac682f7ed1bcdcf7b8954b01839996d1b0c/tmdbsimple-2.9.6-py3-none-any.whl", hash = "sha256:42052f2a77cd237553a620b1f090f54e9f5ea3e5a8d8a4081cb12e77c5dc1c4f" },
 ]
 
 [[package]]

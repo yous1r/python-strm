@@ -9,6 +9,12 @@ from loguru import logger
 from app.database import get_db_conn, insert_tg_resource
 from app.core.monitor.telegram import telegram_monitor
 from app.services.telegram_resource_transfer_service import normalize_resource_payload, process_resource_transfer
+from app.services.transfer_destination_service import (
+    get_cloud_display_name,
+    list_transfer_destinations,
+    normalize_cloud_type,
+    resolve_transfer_destination,
+)
 from app.utils.background_tasks import CLOUD_API_POOL, LOCAL_DB_POOL, spawn_background_task
 
 
@@ -94,6 +100,28 @@ def _normalize_transfer_rows(rows: list[dict]) -> tuple[list[dict], int]:
     transferable_rows = [row for row in normalized_rows if row.get("type") == "115" and row.get("url")]
     skipped_count = len(normalized_rows) - len(transferable_rows)
     return transferable_rows, skipped_count
+
+
+def _resolve_library_transfer_destination(cloud_type: str, target_dir_id: str) -> dict[str, str]:
+    normalized_cloud = normalize_cloud_type(cloud_type)
+    if normalized_cloud != "115":
+        raise HTTPException(status_code=400, detail=f"当前仅支持转存 115 网盘资源，暂不支持 {get_cloud_display_name(normalized_cloud)}")
+    try:
+        return resolve_transfer_destination(normalized_cloud, target_dir_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/transfer_destinations")
+async def get_transfer_destinations(cloud_type: str = "115"):
+    normalized_cloud = normalize_cloud_type(cloud_type)
+    destinations = list_transfer_destinations(normalized_cloud)
+    return {
+        "status": "success",
+        "cloud_type": normalized_cloud,
+        "cloud_name": get_cloud_display_name(normalized_cloud),
+        "destinations": destinations,
+    }
 
 @router.post("/upload_json")
 async def upload_tg_json(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
@@ -188,7 +216,8 @@ async def upload_tg_json(background_tasks: BackgroundTasks, file: UploadFile = F
     return {"status": "success", "message": f"成功接收到 {len(messages)} 条历史消息，正在后台清洗解析并入库。"}
 
 @router.post("/transfer/{res_id}")
-async def manual_transfer(res_id: int):
+async def manual_transfer(res_id: int, cloud_type: str = "115", target_dir_id: str = ""):
+    destination = _resolve_library_transfer_destination(cloud_type, target_dir_id)
     async with get_db_conn() as db:
         db.row_factory = dict_factory
         cursor = await db.execute("SELECT * FROM tg_resources WHERE id = ?", (res_id,))
@@ -208,6 +237,9 @@ async def manual_transfer(res_id: int):
         "password": normalized_row["password"],
         "type": normalized_row["type"],
         "db_id": res_id,  # 传入 db_id 以便转存成功后更新状态
+        "cloud_type": normalize_cloud_type(cloud_type),
+        "target_dir_id": destination["dir_id"],
+        "target_dir_name": destination["name"],
         "ignore_filters": True
     }
     spawn_background_task(
@@ -218,9 +250,15 @@ async def manual_transfer(res_id: int):
     return {"status": "success"}
 
 @router.post("/transfer_batch")
-async def transfer_batch(base_title: str = Form(...)):
+async def transfer_batch(
+    base_title: str = Form(...),
+    cloud_type: str = Form("115"),
+    target_dir_id: str = Form(""),
+):
     import uuid
     from app.events import event_bus, EVENT_TRANSFER_BATCH_REQUESTED
+
+    destination = _resolve_library_transfer_destination(cloud_type, target_dir_id)
     
     async with get_db_conn() as db:
         db.row_factory = dict_factory
@@ -246,8 +284,8 @@ async def transfer_batch(base_title: str = Form(...)):
         await db.execute(
             """INSERT OR REPLACE INTO transfer_tasks
                (task_id, status, source_dir_id, archive_dir_id, file_count)
-               VALUES (?, 'pending', 'library_batch', 'library_batch', ?)""",
-            (task_id, len(rows))
+               VALUES (?, 'pending', 'library_batch', ?, ?)""",
+            (task_id, destination["dir_id"], len(rows))
         )
         await db.commit()
 
@@ -256,6 +294,9 @@ async def transfer_batch(base_title: str = Form(...)):
         task_id=task_id,
         rows=rows,
         base_title=base_title,
+        cloud_type=normalize_cloud_type(cloud_type),
+        target_dir_id=destination["dir_id"],
+        target_dir_name=destination["name"],
         name=f"batch_transfer:{task_id}",
     )
         
@@ -268,6 +309,8 @@ class TransferSelectedRequest(BaseModel):
     ids: List[int]
     base_title: str = ""
     transfer_all: bool = False
+    cloud_type: str = "115"
+    target_dir_id: str = ""
 
 @router.post("/transfer_selected")
 async def transfer_selected(req: TransferSelectedRequest):
@@ -276,6 +319,7 @@ async def transfer_selected(req: TransferSelectedRequest):
     from app.events import event_bus, EVENT_TRANSFER_BATCH_REQUESTED
 
     task_id = str(uuid.uuid4())
+    destination = _resolve_library_transfer_destination(req.cloud_type, req.target_dir_id)
 
     async with get_db_conn() as db:
         db.row_factory = dict_factory
@@ -319,8 +363,8 @@ async def transfer_selected(req: TransferSelectedRequest):
         await db.execute(
             """INSERT OR REPLACE INTO transfer_tasks
                (task_id, status, source_dir_id, archive_dir_id, file_count)
-               VALUES (?, 'pending', 'library_batch', 'library_batch', ?)""",
-            (task_id, len(rows))
+               VALUES (?, 'pending', 'library_batch', ?, ?)""",
+            (task_id, destination["dir_id"], len(rows))
         )
         await db.commit()
     
@@ -329,6 +373,9 @@ async def transfer_selected(req: TransferSelectedRequest):
         task_id=task_id,
         rows=rows,
         base_title=req.base_title,
+        cloud_type=normalize_cloud_type(req.cloud_type),
+        target_dir_id=destination["dir_id"],
+        target_dir_name=destination["name"],
         name=f"batch_transfer:{task_id}",
     )
     

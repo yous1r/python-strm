@@ -83,7 +83,7 @@ async def step1_share_receive(share_url: str, receive_code: str = "", target_dir
 async def step2_list_files(dir_id: str = "0", limit: int = 50):
     """列出指定目录的文件"""
     config = get_config()
-    archive_id = config.transfer.archive_dir_id
+    archive_id = getattr(config.transfer, "archive_dir_id", "")
     res = await client_115.list_files(dir_id, limit=limit)
     files = []
     if not res.get("error"):
@@ -209,8 +209,11 @@ class OrganizeOneRequest(BaseModel):
 async def step8_organize_one(req: OrganizeOneRequest):
     """完整整理单个文件：分类→建目录→移动"""
     config = get_config()
-    archive_id = config.transfer.archive_dir_id or "0"
+    archive_id = getattr(config.transfer, "archive_dir_id", "") or "0"
     steps = []
+
+    if archive_id == "0":
+        return DebugResult(step="organize_one", success=False, error="旧版归档目录配置已移除，请使用 STRM 扫描源目录转存").model_dump()
 
     # 1. 分类
     cr = await classify(req.file_name)

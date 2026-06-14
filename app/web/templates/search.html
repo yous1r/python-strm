@@ -73,7 +73,14 @@
       <div style="padding: 1.5rem;">
         <div style="margin-bottom: 1.5rem; padding: 0.85rem 1rem; border: 1px solid var(--border); border-radius: 0.75rem; color: var(--text-secondary); background: rgba(255,255,255,0.03); font-size: 0.9rem; line-height: 1.6;">
             <i class="fa-solid fa-circle-info"></i>
-            除 debug 页面外，这里的转存任务都会自动写入“媒体库引擎 → 转存管道”中配置的归档根目录，不支持单次自定义 `target_dir_id`。
+            转存目的地来自对应网盘的 STRM 远程扫描源目录。
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.5rem;">
+            <label class="form-label" for="searchTransferDestinationSelect">STRM 远程扫描路径</label>
+            <select class="form-control" id="searchTransferDestinationSelect">
+                <option value="">加载中...</option>
+            </select>
         </div>
         
         <div id="receiveCodeContainer" style="display: none; margin-bottom: 1.5rem;">
@@ -386,8 +393,33 @@
     
     let currentTransferCloudType = '115';
     let currentTransferLinkType = '';
+    let searchTransferDestinations = [];
+
+    async function loadSearchTransferDestinations(cloudType = '115') {
+        const select = document.getElementById('searchTransferDestinationSelect');
+        select.innerHTML = '<option value="">加载中...</option>';
+        try {
+            const res = await fetch(`/api/v1/library/transfer_destinations?cloud_type=${encodeURIComponent(cloudType)}`);
+            const data = await res.json();
+            if (data.status !== 'success') {
+                throw new Error(data.message || data.detail || '加载目的地失败');
+            }
+            searchTransferDestinations = data.destinations || [];
+            if (searchTransferDestinations.length === 0) {
+                select.innerHTML = '<option value="">未配置 STRM 扫描源目录</option>';
+                return;
+            }
+            select.innerHTML = searchTransferDestinations
+                .map(item => `<option value="${item.dir_id}">${item.name} (${item.dir_id})</option>`)
+                .join('');
+        } catch (error) {
+            searchTransferDestinations = [];
+            select.innerHTML = '<option value="">加载失败</option>';
+            showNotification(error.message || '加载目的地失败', 'error');
+        }
+    }
     
-    function openTransferModal(url, password, cloudType, linkType) {
+    async function openTransferModal(url, password, cloudType, linkType) {
         currentTransferCloudType = cloudType || '115';
         currentTransferLinkType = linkType || '';
         document.getElementById('transferUrlInput').value = url;
@@ -408,12 +440,18 @@
         if (modal) {
             modal.classList.add('show');
         }
+        await loadSearchTransferDestinations(currentTransferCloudType);
     }
     
     async function submitTransfer() {
         const url = document.getElementById('transferUrlInput').value;
         const receiveCode = document.getElementById('receiveCodeInput').value;
+        const targetDirId = document.getElementById('searchTransferDestinationSelect').value;
         const btn = document.getElementById('confirmTransferBtn');
+        if (!targetDirId) {
+            showNotification('请选择 STRM 远程扫描路径', 'warning');
+            return;
+        }
         
         btn.disabled = true;
         const oldText = btn.innerHTML;
@@ -426,14 +464,16 @@
                 url: url,
                 receive_code: receiveCode,
                 cloud_type: currentTransferCloudType,
-                link_type: currentTransferLinkType
+                link_type: currentTransferLinkType,
+                target_dir_id: targetDirId
             };
             
             if (currentTransferCloudType === '115' && (currentTransferLinkType === '115' || url.includes('115.com/s/'))) {
                 endpoint = '/api/v1/transfer/receive';
                 payload = {
                     share_url: url,
-                    receive_code: receiveCode
+                    receive_code: receiveCode,
+                    target_dir_id: targetDirId
                 };
             }
             

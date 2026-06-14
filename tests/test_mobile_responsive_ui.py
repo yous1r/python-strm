@@ -69,6 +69,20 @@ def test_high_frequency_pages_expose_responsive_hooks():
             "cloud115-select-row",
             "cloud115-actions",
         ],
+        "app/web/templates/library_detail.html": [
+            "transferDestinationModal",
+            "loadTransferDestinations",
+            "target_dir_id",
+            "剧集资源类型",
+            "目标网盘",
+            "/api/v1/library/transfer_destinations",
+        ],
+        "app/web/templates/emby.html": [
+            "emby-instances",
+            "emby-instance-table",
+            "emby-instance-card",
+            "emby-instance-actions",
+        ],
     }
 
     for template, hooks in expected.items():
@@ -89,5 +103,8 @@ def test_mobile_styles_cover_high_frequency_page_hooks():
         ".strm-settings-grid",
         ".category-rule-row",
         ".cloud115-select-row",
+        ".transfer-destination-summary",
+        ".emby-instances",
+        ".emby-instance-card",
     ]:
         assert selector in css

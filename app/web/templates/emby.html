@@ -45,22 +45,27 @@
         </button>
     </div>
     
-    <div class="table-responsive">
-        <table class="table" style="color: var(--text-primary);">
-            <thead>
-                <tr>
-                    <th>实例名称</th>
-                    <th>代理端口</th>
-                    <th>上游服务器地址</th>
-                    <th>API Key</th>
-                    <th>STRM映射</th>
-                    <th style="text-align: right;">操作</th>
-                </tr>
-            </thead>
-            <tbody id="instanceList">
-                <tr><td colspan="6" style="text-align: center; padding: 2rem;">正在加载配置...</td></tr>
-            </tbody>
-        </table>
+    <div class="emby-instances">
+        <div class="table-responsive emby-instance-table">
+            <table class="table" style="color: var(--text-primary);">
+                <thead>
+                    <tr>
+                        <th>实例名称</th>
+                        <th>代理端口</th>
+                        <th>上游服务器地址</th>
+                        <th>API Key</th>
+                        <th>STRM映射</th>
+                        <th style="text-align: right;">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="instanceList">
+                    <tr><td colspan="6" style="text-align: center; padding: 2rem;">正在加载配置...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div id="instanceCards" class="emby-instance-cards">
+            <div class="emby-instance-card">正在加载配置...</div>
+        </div>
     </div>
 </div>
 
@@ -128,21 +133,26 @@ async function loadConfig() {
 
 function renderInstances(instances) {
     const tbody = document.getElementById('instanceList');
+    const cards = document.getElementById('instanceCards');
     tbody.innerHTML = '';
+    cards.innerHTML = '';
     
     if (instances.length === 0) {
         tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 2rem; color: var(--text-secondary);">暂无配置实例，请添加</td></tr>';
+        cards.innerHTML = '<div class="emby-instance-card" style="color: var(--text-secondary); text-align: center;">暂无配置实例，请添加</div>';
         return;
     }
     
     instances.forEach((inst, index) => {
+        const apiKeyText = inst.api_key ? (inst.api_key.length > 8 ? inst.api_key.substring(0,4) + '...' + inst.api_key.substring(inst.api_key.length-4) : '已配置') : '未配置';
+        const mappingCount = (inst.strm_path_mappings || []).length || '未配置';
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td style="vertical-align: middle;"><strong>${inst.name}</strong></td>
             <td style="vertical-align: middle;"><code>${inst.proxy_port || '未设置'}</code></td>
             <td style="vertical-align: middle;"><code>${inst.url}</code></td>
-            <td style="vertical-align: middle;"><code>${inst.api_key ? (inst.api_key.length > 8 ? inst.api_key.substring(0,4) + '...' + inst.api_key.substring(inst.api_key.length-4) : '已配置') : '未配置'}</code></td>
-            <td style="vertical-align: middle;"><code>${(inst.strm_path_mappings || []).length || '未配置'}</code></td>
+            <td style="vertical-align: middle;"><code>${apiKeyText}</code></td>
+            <td style="vertical-align: middle;"><code>${mappingCount}</code></td>
             <td style="text-align: right; vertical-align: middle; white-space: nowrap;">
                 <button class="btn btn-sm btn-info" onclick="testConnection(${index})" title="测试连接">
                     <i class="fa-solid fa-bolt"></i>
@@ -156,6 +166,32 @@ function renderInstances(instances) {
             </td>
         `;
         tbody.appendChild(tr);
+
+        const card = document.createElement('div');
+        card.className = 'emby-instance-card';
+        card.innerHTML = `
+            <div class="emby-instance-card-head">
+                <strong>${inst.name}</strong>
+                <code>${inst.proxy_port || '未设置'}</code>
+            </div>
+            <dl>
+                <div><dt>上游服务器地址</dt><dd><code>${inst.url}</code></dd></div>
+                <div><dt>API Key</dt><dd><code>${apiKeyText}</code></dd></div>
+                <div><dt>STRM映射</dt><dd><code>${mappingCount}</code></dd></div>
+            </dl>
+            <div class="emby-instance-actions">
+                <button class="btn btn-sm btn-info" onclick="testConnection(${index})" title="测试连接">
+                    <i class="fa-solid fa-bolt"></i>
+                </button>
+                <button class="btn btn-sm btn-secondary" onclick="openInstanceModal(${index})" title="编辑">
+                    <i class="fa-solid fa-pen"></i>
+                </button>
+                <button class="btn btn-sm btn-danger" onclick="deleteInstance(${index})" title="删除" style="background: var(--error); border-color: var(--error);">
+                    <i class="fa-solid fa-trash"></i>
+                </button>
+            </div>
+        `;
+        cards.appendChild(card);
     });
 }
 

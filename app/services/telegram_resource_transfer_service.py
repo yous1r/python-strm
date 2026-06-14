@@ -14,12 +14,38 @@ from app.core.transfer.classifier import classify
 from app.core.transfer.placement import derive_series_scope_path
 from app.core.transfer.receive_target import infer_archive_rel_path, prepare_receive_target
 from app.database import get_db_conn
+from app.services.transfer_destination_service import resolve_transfer_destination
 from app.utils.background_tasks import LOCAL_DB_POOL, run_in_background_pool
 
 
-transfer_semaphore = asyncio.Semaphore(1)
+transfer_semaphore = asyncio.Semaphore(2)
+_transfer_semaphore_limit = 2
 
 _SUPPORTED_LINK_PRIORITY = {"115": 0, "123": 1, "magnet": 2}
+
+
+def _get_transfer_semaphore(limit: int) -> asyncio.Semaphore:
+    global transfer_semaphore, _transfer_semaphore_limit
+
+    normalized_limit = max(int(limit or 1), 1)
+    if normalized_limit != _transfer_semaphore_limit:
+        transfer_semaphore = asyncio.Semaphore(normalized_limit)
+        _transfer_semaphore_limit = normalized_limit
+    return transfer_semaphore
+
+
+def _get_transfer_cooldown_seconds(monitor_cfg) -> float:
+    try:
+        return max(float(getattr(monitor_cfg, "transfer_cooldown_seconds", 0) or 0), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _get_transfer_concurrency(monitor_cfg) -> int:
+    try:
+        return max(int(getattr(monitor_cfg, "transfer_concurrency", 2) or 2), 1)
+    except (TypeError, ValueError):
+        return 2
 
 
 def _clean_resource_url(url: str) -> str:
@@ -185,9 +211,18 @@ async def process_resource_transfer(resource: dict, *, source: str = "telegram")
 
     config = get_config()
     monitor_cfg = config.monitor.telegram
-    transfer_cfg = config.transfer
-    archive_dir_id = transfer_cfg.archive_dir_id
-    target_dir_id = link_data.get("series_folder_id") or archive_dir_id
+    destination_dir_id = str(
+        link_data.get("destination_dir_id")
+        or link_data.get("target_dir_id")
+        or ""
+    ).strip()
+    series_folder_id = str(link_data.get("series_folder_id") or "").strip()
+    if not destination_dir_id and not series_folder_id:
+        try:
+            destination_dir_id = resolve_transfer_destination("115", "", config=config)["dir_id"]
+        except ValueError:
+            destination_dir_id = ""
+    target_dir_id = series_folder_id or destination_dir_id
 
     share_url = link_data.get("url")
     receive_code = link_data.get("password", "")
@@ -199,21 +234,22 @@ async def process_resource_transfer(resource: dict, *, source: str = "telegram")
     if not client_115.client:
         await _update_tg_status(db_id, "failed")
         return {"status": "failed", "error": "115 client not initialized", "resource": link_data, "source": source}
-    if not archive_dir_id or archive_dir_id == "0":
+    if not target_dir_id or target_dir_id == "0":
         await _update_tg_status(db_id, "failed")
-        return {"status": "failed", "error": "archive_dir_id 未配置", "resource": link_data, "source": source}
+        return {"status": "failed", "error": "未选择 STRM 远程扫描源目录", "resource": link_data, "source": source}
 
     try:
-        async with transfer_semaphore:
+        transfer_cooldown_seconds = _get_transfer_cooldown_seconds(monitor_cfg)
+        async with _get_transfer_semaphore(_get_transfer_concurrency(monitor_cfg)):
             logger.info(f"Processing Telegram 115 link: {share_url} source={source}")
             filter_rules = None if link_data.get("ignore_filters") else monitor_cfg.filter_rules
             receive_target = None
-            if not link_data.get("series_folder_id") and archive_dir_id and archive_dir_id != "0":
+            if not series_folder_id and destination_dir_id and destination_dir_id != "0":
                 receive_target = await prepare_receive_target(
                     share_url=share_url,
                     receive_code=receive_code,
-                    archive_dir_id=archive_dir_id,
-                    fallback_dir_id=archive_dir_id,
+                    archive_dir_id=destination_dir_id,
+                    fallback_dir_id=destination_dir_id,
                     classifier=classify,
                 )
                 if receive_target.target_dir_id:
@@ -229,7 +265,9 @@ async def process_resource_transfer(resource: dict, *, source: str = "telegram")
                 target_dir_id,
                 filter_rules=filter_rules,
             )
-            await asyncio.sleep(3)
+
+        if transfer_cooldown_seconds:
+            await asyncio.sleep(transfer_cooldown_seconds)
 
         if not transfer_res.get("state"):
             error_message = transfer_res.get("error") or "转存失败"
